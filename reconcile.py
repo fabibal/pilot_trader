@@ -60,10 +60,14 @@ def reconcile(trades_file=TRADES_FILE, positions_file=POSITIONS_FILE):
         if pos is None:
             pos = {
                 "account": e.get("account"),
+                "source_type": e.get("source_type", "portfolio"),
                 "portfolio": e.get("portfolio"),
                 "ticker": ticker,
+                "asset_type": e.get("asset_type", "unknown"),
                 "status": None,
                 "entry_price": None,
+                "stop_loss": None,
+                "target": None,
                 "size_pct": None,
                 "trade_date": None,
                 "opened_at": None,
@@ -80,6 +84,10 @@ def reconcile(trades_file=TRADES_FILE, positions_file=POSITIONS_FILE):
             "url": e.get("url"),
         })
 
+        # asset_type: upgrade from "unknown" to a concrete value when seen.
+        if e.get("asset_type") and e["asset_type"] != "unknown":
+            pos["asset_type"] = e["asset_type"]
+
         st = e.get("signal_type")
         if st == "buy":
             if pos["status"] != "open":
@@ -92,6 +100,10 @@ def reconcile(trades_file=TRADES_FILE, positions_file=POSITIONS_FILE):
                 pos["trade_date"] = e["trade_date"]
             if e.get("position_size_pct") is not None:
                 pos["size_pct"] = e["position_size_pct"]
+            if e.get("stop_loss") is not None:
+                pos["stop_loss"] = e["stop_loss"]
+            if e.get("target") is not None:
+                pos["target"] = e["target"]
         elif st == "sell":
             pos["status"] = "closed"
             pos["closed_at"] = e.get("timestamp")
@@ -105,6 +117,10 @@ def reconcile(trades_file=TRADES_FILE, positions_file=POSITIONS_FILE):
                 pos["entry_price"] = e["entry_price"]
             if pos["trade_date"] is None and e.get("trade_date"):
                 pos["trade_date"] = e["trade_date"]
+            if e.get("stop_loss") is not None:
+                pos["stop_loss"] = e["stop_loss"]
+            if e.get("target") is not None:
+                pos["target"] = e["target"]
 
     result = sorted(positions.values(),
                     key=lambda p: (p["account"], p["ticker"]))

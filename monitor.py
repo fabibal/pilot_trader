@@ -48,7 +48,12 @@ from reconcile import reconcile, write_json_atomic
 # X bearer token is loaded from .env (X_BEARER_TOKEN) — never hardcoded.
 # Portfolio-bot accounts. @aifinancelabs is where the DeepSeek portfolio
 # experiment is published (no standalone DeepSeek handle exists).
-ACCOUNTS = ["grkportfolio", "theaiportfolios", "aifinancelabs"]
+ACCOUNTS = ["grkportfolio", "theaiportfolios", "aifinancelabs", "IncomeSharks"]
+# Account kind. "portfolio" = AI-run portfolio bot (its own trades / holdings).
+# "influencer" = a human trader/influencer posting frequent trade calls on
+# stocks AND crypto (e.g. @IncomeSharks). Influencer accounts bypass the
+# reply-skip gate (every tweet+reply is sent to the LLM).
+SOURCE_TYPE = {"IncomeSharks": "influencer"}
 HOME = "/home/fbazsa/pilot_trader"
 TRADES_FILE = os.path.join(HOME, "trades.json")
 POSITIONS_FILE = os.path.join(HOME, "positions.json")
@@ -59,6 +64,7 @@ RAW_FILES = {  # used by --backfill; accounts without a snapshot are skipped
     "grkportfolio": os.path.join(HOME, "tweets_raw.json"),
     "theaiportfolios": os.path.join(HOME, "tweets_theaiportfolios.json"),
     "aifinancelabs": os.path.join(HOME, "tweets_aifinancelabs.json"),
+    "IncomeSharks": os.path.join(HOME, "tweets_incomesharks.json"),
 }
 MAX_FETCH = 100
 API_BASE = "https://api.twitter.com/2"
@@ -77,38 +83,52 @@ HAIKU_OUTPUT_PER_1M = 5.00           # $ / 1M output tokens
 # --- LLM extraction --------------------------------------------------------
 # No pre-filter: every tweet is sent to Claude, which decides what is a signal.
 EXTRACTION_SYSTEM = (
-    "You extract stock trade signals from tweets posted by automated "
-    "portfolio accounts. Given one tweet (and the handle that posted it), "
-    "decide whether it reports that portfolio's OWN executed trade or current "
-    "holding, and extract the details.\n"
-    "Account-to-portfolio map: @grkportfolio = the Grok portfolio; "
+    "You extract trade signals from tweets posted by trading accounts. Given one "
+    "tweet (and the handle that posted it), decide whether it reports an "
+    "actionable trade (or a currently-held position) and extract the details.\n"
+    "There are two kinds of accounts:\n"
+    "(A) AUTOMATED PORTFOLIO BOTS — they post their OWN executed trades / "
+    "holdings. Account-to-portfolio map: @grkportfolio = the Grok portfolio; "
     "@theaiportfolios = the Claude portfolio; @aifinancelabs = an umbrella lab "
     "account that posts updates for several model portfolios (Grok, Claude, "
     "DeepSeek, ChatGPT) — for its tweets, infer the portfolio from the text "
     "(e.g. 'DeepSeek's portfolio...' => deepseek).\n"
+    "(B) HUMAN TRADER / INFLUENCER — @IncomeSharks. It posts FREQUENT trade "
+    "ideas/calls on BOTH stocks AND crypto, and mixes pure analysis/opinion "
+    "with actionable calls. It often states entry prices, stop losses, and price "
+    "targets. For @IncomeSharks always set portfolio = null.\n"
     "Rules:\n"
-    "- action: \"buy\" if the account bought/initiated/added to a position; "
-    "\"sell\" if it sold/trimmed/exited/dumped; \"position\" if it discloses a "
-    "current holding or weight without a fresh transaction; \"none\" for market "
-    "commentary, opinions, replies about other people's trades, or model "
-    "ratings that are not the account's own executed action.\n"
-    "- ticker: the US stock ticker symbol (e.g. AVGO, MU, NOW). Resolve company "
-    "names to tickers (Broadcom->AVGO, ServiceNow->NOW, Micron->MU, etc.). "
-    "null if no specific stock is the subject.\n"
+    "- action: \"buy\" if the account bought/initiated/added OR (for an "
+    "influencer) is calling a long entry / saying it is buying or holding long; "
+    "\"sell\" if it sold/trimmed/exited/dumped OR is calling a short/exit; "
+    "\"position\" if it discloses a current holding or weight without a fresh "
+    "transaction; \"none\" for pure market commentary, opinion, analysis, "
+    "questions, or replies about other people's trades that are NOT an "
+    "actionable own trade/call.\n"
+    "- ticker: the ticker symbol. For stocks resolve company names to US tickers "
+    "(Broadcom->AVGO, ServiceNow->NOW, Micron->MU, etc.). For crypto use the "
+    "common symbol (Bitcoin->BTC, Ethereum->ETH, Solana->SOL). null if no "
+    "specific asset is the subject.\n"
+    "- asset_type: \"stock\" for equities/ETFs, \"crypto\" for cryptocurrencies, "
+    "\"unknown\" if unclear.\n"
     "- size_pct: position size as a percent of the portfolio/book if stated "
     "(e.g. 8.46), as a number. Do NOT use gain/return percentages. null if absent.\n"
     "- entry_price: the buy/entry price in dollars as a number, only if stated "
     "as an entry/purchase price (not a current price). null if absent.\n"
+    "- stop_loss: the stop-loss price in dollars as a number if stated. null if absent.\n"
+    "- target: the price target / take-profit in dollars as a number if stated. "
+    "null if absent.\n"
     "- trade_date: the actual date the trade was made, as ISO YYYY-MM-DD, if the "
     "tweet states or implies one (e.g. 'I bought it April 7' => 2026-04-07; "
     "'bought in early April' => 2026-04-05; 'since May 4th' => 2026-05-04). This "
     "is the TRANSACTION date and is often EARLIER than the tweet date — resolve "
     "relative phrases against the tweet date given below and use its year. null "
     "if no trade date is stated or implied.\n"
-    "- confidence: how confident you are this is a real own-account trade signal "
+    "- confidence: how confident you are this is a real actionable trade signal "
     "(\"high\", \"medium\", \"low\", or \"none\").\n"
-    "- portfolio: which model's portfolio the trade belongs to — \"grok\", "
-    "\"claude\", \"deepseek\", or \"chatgpt\". null if unclear.\n"
+    "- portfolio: for a portfolio bot, which model's portfolio the trade belongs "
+    "to — \"grok\", \"claude\", \"deepseek\", or \"chatgpt\". null if unclear or "
+    "for an influencer.\n"
     "- reasoning: one short sentence explaining the call.\n"
     "Return ONLY valid JSON matching the schema. No markdown, no preamble."
 )
@@ -117,9 +137,12 @@ SIGNAL_SCHEMA = {
     "type": "object",
     "properties": {
         "ticker": {"type": ["string", "null"]},
+        "asset_type": {"type": "string", "enum": ["stock", "crypto", "unknown"]},
         "action": {"type": "string", "enum": ["buy", "sell", "position", "none"]},
         "size_pct": {"type": ["number", "null"]},
         "entry_price": {"type": ["number", "null"]},
+        "stop_loss": {"type": ["number", "null"]},
+        "target": {"type": ["number", "null"]},
         "trade_date": {"type": ["string", "null"]},
         "confidence": {"type": "string",
                        "enum": ["high", "medium", "low", "none"]},
@@ -129,7 +152,8 @@ SIGNAL_SCHEMA = {
         ]},
         "reasoning": {"type": "string"},
     },
-    "required": ["ticker", "action", "size_pct", "entry_price", "trade_date",
+    "required": ["ticker", "asset_type", "action", "size_pct", "entry_price",
+                 "stop_loss", "target", "trade_date",
                  "confidence", "portfolio", "reasoning"],
     "additionalProperties": False,
 }
@@ -221,6 +245,7 @@ def record_from_parsed(account, tw, parsed):
         return None
     return {
         "account": account,
+        "source_type": SOURCE_TYPE.get(account, "portfolio"),
         "portfolio": parsed.get("portfolio"),
         "tweet_id": tw["id"],
         "timestamp": tw.get("created_at"),
@@ -228,8 +253,11 @@ def record_from_parsed(account, tw, parsed):
         "confidence": parsed["confidence"],
         "actionable": parsed["action"] in ("buy", "sell", "position"),
         "tickers": [parsed["ticker"]],
+        "asset_type": parsed.get("asset_type", "unknown"),
         "position_size_pct": parsed["size_pct"],
         "entry_price": parsed["entry_price"],
+        "stop_loss": parsed.get("stop_loss"),
+        "target": parsed.get("target"),
         "trade_date": parsed.get("trade_date"),
         "reasoning": parsed["reasoning"],
         "url": f"https://x.com/{account}/status/{tw['id']}",
@@ -381,8 +409,9 @@ def backfill_batch(interp):
     Rebuilds trades.json + positions.json from scratch (like --backfill)."""
     candidates, skipped = [], 0
     for account in ACCOUNTS:
+        influencer = SOURCE_TYPE.get(account) == "influencer"
         for tw in load_json(RAW_FILES.get(account, ""), []):
-            if not should_send_to_llm(tw.get("text", "")):
+            if not influencer and not should_send_to_llm(tw.get("text", "")):
                 skipped += 1
                 continue
             candidates.append((f"{account}__{tw['id']}", account, tw))
@@ -508,7 +537,9 @@ def main():
             if tw["id"] in seen_ids:
                 continue
             text = tw.get("text", "")
-            if is_reply(text):
+            # Influencer accounts (e.g. @IncomeSharks) bypass the reply gate —
+            # every tweet AND reply is sent to the LLM.
+            if is_reply(text) and SOURCE_TYPE.get(account) != "influencer":
                 # Replies are skipped UNLESS they mention a sell — those we keep
                 # so we don't miss exits disclosed in @-reply threads.
                 if reply_has_sell_verb(text):

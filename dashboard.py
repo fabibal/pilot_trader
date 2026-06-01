@@ -41,6 +41,28 @@ PORTFOLIO_LABELS = {"grok": "Grok", "claude": "Claude",
 # account (grkportfolio->grok, theaiportfolios->claude, aifinancelabs->deepseek).
 ACCOUNT_DEFAULT_PF = {"grkportfolio": "grok", "theaiportfolios": "claude",
                       "aifinancelabs": "deepseek"}
+# Human trader / influencer accounts. Kept entirely separate from the AI
+# portfolio views (own tab); excluded from the portfolio cards/charts.
+INFLUENCER_ACCOUNTS = {"IncomeSharks"}
+
+
+def is_influencer(account):
+    return account in INFLUENCER_ACCOUNTS
+
+
+def ai_positions(positions):
+    return [p for p in positions if not is_influencer(p.get("account"))]
+
+
+def influencer_positions(positions):
+    return [p for p in positions if is_influencer(p.get("account"))]
+
+
+def _yf_symbol(ticker, asset_type):
+    """yfinance needs a -USD suffix for crypto (BTC -> BTC-USD)."""
+    if asset_type == "crypto" and ticker and "-" not in ticker:
+        return f"{ticker}-USD"
+    return ticker
 
 
 def pf_of(p):
@@ -239,6 +261,20 @@ TABLE_COLUMNS = [
     {"name": "TWEET", "id": "text"},
 ]
 
+# Influencer (IncomeSharks) signals table — its own column set with the
+# influencer-specific fields (asset type, stop loss, target).
+INFLUENCER_TABLE_COLUMNS = [
+    {"name": "DATE", "id": "date"},
+    {"name": "TICKER", "id": "ticker"},
+    {"name": "ASSET", "id": "asset_type"},
+    {"name": "ACTION", "id": "signal_type"},
+    {"name": "CONF", "id": "confidence"},
+    {"name": "ENTRY $", "id": "entry_price"},
+    {"name": "STOP $", "id": "stop_loss"},
+    {"name": "TARGET $", "id": "target"},
+    {"name": "TWEET", "id": "link", "presentation": "markdown"},
+]
+
 
 # --- portfolio summary + holdings -------------------------------------------
 def spy_return_since(date_str):
@@ -420,6 +456,69 @@ def closed_trades_table(positions, limit=5):
                    "Exit", "Return %"], rows, empty="No closed trades yet")
 
 
+# --- influencer (IncomeSharks) views ----------------------------------------
+def influencer_signals_data(df):
+    """Rows for the influencer signals DataTable (most recent first)."""
+    if df.empty:
+        return []
+    sub = df[df["account"].isin(INFLUENCER_ACCOUNTS)].copy()
+    if sub.empty:
+        return []
+    sub = sub.sort_values("timestamp", ascending=False)
+
+    def _m(v):
+        return f"${v:,.2f}" if isinstance(v, (int, float)) and v else "—"
+
+    rows = []
+    for _, r in sub.iterrows():
+        rows.append({
+            "date": r.get("date"),
+            "ticker": r.get("ticker"),
+            "asset_type": r.get("asset_type") or "unknown",
+            "signal_type": r.get("signal_type"),
+            "confidence": r.get("confidence"),
+            "entry_price": _m(r.get("entry_price")),
+            "stop_loss": _m(r.get("stop_loss")),
+            "target": _m(r.get("target")),
+            "link": r.get("link") or "",
+        })
+    return rows
+
+
+def influencer_positions_table(positions):
+    """Open positions for the influencer accounts (stocks AND crypto)."""
+    rows = []
+    for p in influencer_positions(positions):
+        if p.get("status") != "open":
+            continue
+        atype = p.get("asset_type") or "unknown"
+        sym = _yf_symbol(p["ticker"], atype)
+        entry = p.get("entry_price")
+        if not entry:
+            tdate = p.get("trade_date") or (p.get("opened_at") or "")[:10] or None
+            entry = get_hist_close(sym, tdate) if tdate else None
+            est = entry is not None
+        else:
+            est = False
+        cur = get_price(sym)
+        ret = round((cur - entry) / entry * 100, 1) if (entry and cur) else None
+        tdate = p.get("trade_date") or (p.get("opened_at") or "")[:10] or None
+        rows.append((
+            (p["ticker"], C["blue"]),
+            atype,
+            tdate or "—",
+            _money(entry) + ("*" if est and entry else ""),
+            _money(cur),
+            (_fmt_pct(ret), _color(ret)),
+            _money(p.get("stop_loss")),
+            _money(p.get("target")),
+        ))
+    rows.sort(key=lambda r: r[2], reverse=True)
+    return _table(["Ticker", "Asset", "Trade Date", "Entry", "Current",
+                   "Return %", "Stop", "Target"], rows,
+                  empty="No open IncomeSharks positions")
+
+
 def holdings_figure(positions, portfolio):
     """Pie of ALL open positions for the portfolio. Sized positions use their
     real weight + a color; unsized ones get a neutral-grey placeholder slice
@@ -547,8 +646,8 @@ def performance_figure(positions):
     return _dark_chart(fig, "Cumulative return % vs S&P 500 (equal-weight, est.)")
 
 
-# initial scaffolding
-_portfolios = portfolios_in(load_positions())
+# initial scaffolding (AI portfolios only — influencers live in their own tab)
+_portfolios = portfolios_in(ai_positions(load_positions()))
 
 app = Dash(__name__)
 app.title = "Pilot Trader — Signal Monitor"
@@ -605,6 +704,17 @@ app.layout = html.Div(
                                               "fontSize": "0.72rem", "marginTop": "2px"}),
         ]),
         dcc.Interval(id="interval", interval=REFRESH_MS, n_intervals=0),
+
+        # Top-level split: AI Portfolios vs Influencers (two distinct worlds).
+        dcc.Tabs(id="main-tabs", value="ai", style={"marginTop": "14px"},
+                 children=[
+                     dcc.Tab(label="AI Portfolios", value="ai",
+                             style=_TAB_STYLE, selected_style=_TAB_SELECTED),
+                     dcc.Tab(label="Influencers", value="influencers",
+                             style=_TAB_STYLE, selected_style=_TAB_SELECTED),
+                 ]),
+
+        html.Div(id="ai-section", children=[
 
         html.Div("Portfolio Summary", style=_SECTION_H),
         html.Div(id="portfolio-summary",
@@ -668,8 +778,60 @@ app.layout = html.Div(
                  "fontWeight": "bold"},
             ],
         ),
+
+        ]),   # end ai-section
+
+        # --- Influencers tab (IncomeSharks) -- hidden until selected ---------
+        html.Div(id="influencer-section", style={"display": "none"}, children=[
+            html.Div("IncomeSharks — Open Positions", style=_SECTION_H),
+            html.Div(id="influencer-positions", style={"marginTop": "4px"}),
+
+            html.Div("IncomeSharks — Signals", style=_SECTION_H),
+            dash_table.DataTable(
+                id="influencer-signals",
+                columns=INFLUENCER_TABLE_COLUMNS,
+                sort_action="native",
+                filter_action="none",
+                page_size=25,
+                markdown_options={"link_target": "_blank"},
+                style_table={"overflowX": "auto", "marginTop": "10px"},
+                style_header={
+                    "backgroundColor": C["card"], "color": C["text"],
+                    "fontWeight": "bold", "fontFamily": MONO, "fontSize": "11px",
+                    "border": f"1px solid {C['border']}", "textAlign": "left",
+                    "letterSpacing": "0.04em",
+                },
+                style_cell={
+                    "backgroundColor": C["bg"], "color": C["text"],
+                    "fontFamily": MONO, "fontSize": "12px", "textAlign": "left",
+                    "border": f"1px solid {C['border']}", "padding": "6px 8px",
+                    "whiteSpace": "normal", "height": "auto", "maxWidth": "420px",
+                },
+                style_data={"backgroundColor": C["bg"]},
+                style_data_conditional=[
+                    {"if": {"filter_query": "{signal_type} = buy"},
+                     "backgroundColor": C["buy_bg"]},
+                    {"if": {"filter_query": "{signal_type} = sell"},
+                     "backgroundColor": C["sell_bg"]},
+                    {"if": {"column_id": "ticker"}, "color": C["blue"],
+                     "fontWeight": "bold"},
+                ],
+            ),
+        ]),
     ],
 )
+
+
+@app.callback(
+    Output("ai-section", "style"),
+    Output("influencer-section", "style"),
+    Input("main-tabs", "value"),
+)
+def switch_main_tab(tab):
+    show, hide = {"display": "block"}, {"display": "none"}
+    if tab == "influencers":
+        return hide, show
+    return show, hide
 
 
 @app.callback(
@@ -682,10 +844,12 @@ app.layout = html.Div(
 )
 def refresh(_n):
     df = load_trades()
-    positions = load_positions()
+    positions = ai_positions(load_positions())   # AI views exclude influencers
     cards = portfolio_cards(positions)   # also warms the price cache
     closed = closed_trades_table(positions)
 
+    if not df.empty:
+        df = df[~df["account"].isin(INFLUENCER_ACCOUNTS)]
     if df.empty:
         return [], "No signals yet.", cards, _asof_text(), closed
 
@@ -740,7 +904,18 @@ def refresh_pie(_n, portfolio):
     Input("interval", "n_intervals"),
 )
 def refresh_charts(_n):
-    return performance_figure(load_positions())
+    return performance_figure(ai_positions(load_positions()))
+
+
+@app.callback(
+    Output("influencer-signals", "data"),
+    Output("influencer-positions", "children"),
+    Input("interval", "n_intervals"),
+)
+def refresh_influencers(_n):
+    positions = load_positions()
+    return (influencer_signals_data(load_trades()),
+            influencer_positions_table(positions))
 
 
 if __name__ == "__main__":

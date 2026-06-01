@@ -1,5 +1,71 @@
 [
   {
+    "account": "IncomeSharks",
+    "source_type": "influencer",
+    "portfolio": null,
+    "tweet_id": "2061537870918410550",
+    "timestamp": "2026-06-01T19:58:24+00:00",
+    "signal_type": "position",
+    "confidence": "low",
+    "actionable": true,
+    "tickers": [
+      "USAR"
+    ],
+    "asset_type": "stock",
+    "position_size_pct": null,
+    "entry_price": null,
+    "stop_loss": null,
+    "target": null,
+    "trade_date": null,
+    "reasoning": "Tweet indicates current bullish positioning on $USAR noting technical resistance levels, but lacks specific entry, size, or trade execution details\u2014appears to be analysis/commentary rather than an actionable new trade call.",
+    "url": "https://x.com/IncomeSharks/status/2061537870918410550",
+    "text": "$USAR - Taking out another resistance, and one more to go before open skies for an ATH. https://t.co/zgj2cBhMp0"
+  },
+  {
+    "account": "IncomeSharks",
+    "source_type": "influencer",
+    "portfolio": null,
+    "tweet_id": "2061535856712933385",
+    "timestamp": "2026-06-01T19:50:24+00:00",
+    "signal_type": "buy",
+    "confidence": "medium",
+    "actionable": true,
+    "tickers": [
+      "USAS"
+    ],
+    "asset_type": "stock",
+    "position_size_pct": null,
+    "entry_price": null,
+    "stop_loss": null,
+    "target": 9,
+    "trade_date": null,
+    "reasoning": "@IncomeSharks highlights strong Q1 fundamentals (record production, profitability), operational improvements, and institutional interest, calling for a $9 target price on silver/antimony producer.",
+    "url": "https://x.com/IncomeSharks/status/2061535856712933385",
+    "text": "$USAS - Record silver production in Q1, hit profitability in Q1. Galena mine is the only active producing antimony mine in the US. New vein discovered, production ramping up, hoisting rate up 100%, mucking rate up 300%, and institutional buying ramping up. Average of $9 target. https://t.co/Aui0LXhEXv"
+  },
+  {
+    "account": "IncomeSharks",
+    "source_type": "influencer",
+    "portfolio": null,
+    "tweet_id": "2061515093242691781",
+    "timestamp": "2026-06-01T18:27:53+00:00",
+    "signal_type": "buy",
+    "confidence": "high",
+    "actionable": true,
+    "tickers": [
+      "META"
+    ],
+    "asset_type": "stock",
+    "position_size_pct": null,
+    "entry_price": null,
+    "stop_loss": null,
+    "target": 550,
+    "trade_date": "2026-06-01",
+    "reasoning": "@IncomeSharks bought more META today and targets $550, citing institutional accumulation and strong fundamentals similar to recent GOOGL and MSFT rallies.",
+    "url": "https://x.com/IncomeSharks/status/2061515093242691781",
+    "text": "so we saw what they did to $GOOGL last year at $150 \n\nwe just saw what they did to $MSFT over the past few weeks from $395 \u2014> $460\n\nwe all know they will do the same to $META right? \n\nit is a top 10 most owned name in the market\n\nit was a top 10 bought name in Q1 from super investors\n\nif $META isn\u2019t in the \u201cshut up and accumulate mode\u201d than I\u2019m not sure what else is\n\nyes there are plenty of legit concerns\u2026but when you are this big and global of a company\u2026those concerns seem to be less relevant with $100B+ of operating income\n\nbought more today, hope they take her to the $550s!"
+  },
+  {
     "account": "theaiportfolios",
     "portfolio": "claude",
     "tweet_id": "2061508005003137368",
@@ -16,6 +82,28 @@
     "reasoning": "Claude's portfolio opened a new $50K position in Zeta Global (ZG) on May 12th as a high-conviction, second-largest holding with detailed fundamental reasoning provided.",
     "url": "https://x.com/theaiportfolios/status/2061508005003137368",
     "text": "Update: On May 12th, Claude took our $50K and opened a brand new position in Zeta\n\nIt's +12% today\n\nAnd +56% since Claude originally bought back in May\n\nHere's Claude's updated commentary:\n\n\"Zeta Global just cleared the price target I had on it and did not slow down. It is my second-largest position.\n\nWhy I bought it: I made Zeta a high-conviction, second-largest position because the market was paying a discount for one of the fastest growers in software. It grows revenue around 50% a year, just posted its 19th straight quarter of beating and raising its own guidance, and is turning profitable on a reported basis for the first time, yet it trades at a fraction of the sales multiple the market hands slower names like Salesforce and Adobe.\n\n An AI marketing platform sitting on a huge first-party data set, growing several times faster than its peers, priced like an afterthought. That gap was the opportunity.\n\nLatest assessment: Here is why hitting the target does not close the story. In mid-May Zeta announced a publicly named engagement to run ad operations for OpenAI, and the dollars from that deal have not been disclosed or modeled yet. The first real window for that is the August 4 quarter.\n\nMeanwhile the largest institutions piled in last quarter, the stock just broke to a new high, and it is still cheap on sales against its peers. My base target was around 24 and the stock is through it, which tells me the base case was too conservative for what is lining up. The bull case runs into the 30s and the most optimistic analysts are in the 40s.\""
+  },
+  {
+    "account": "IncomeSharks",
+    "source_type": "influencer",
+    "portfolio": null,
+    "tweet_id": "2061505661339656447",
+    "timestamp": "2026-06-01T17:50:25+00:00",
+    "signal_type": "position",
+    "confidence": "low",
+    "actionable": true,
+    "tickers": [
+      "SEZL"
+    ],
+    "asset_type": "stock",
+    "position_size_pct": null,
+    "entry_price": null,
+    "stop_loss": null,
+    "target": null,
+    "trade_date": null,
+    "reasoning": "@IncomeSharks mentions a technical pattern (completing the box) on SEZL suggesting an existing position or monitoring, but no specific entry, exit, or size details are provided.",
+    "url": "https://x.com/IncomeSharks/status/2061505661339656447",
+    "text": "$SEZL - Working on completing the box. https://t.co/ReqU9o0AIE"
   },
   {
     "account": "aifinancelabs",
@@ -72,6 +160,28 @@
     "text": "Micron $MU is one of the names powering Grok's 68.57% year. MU is up about 175% since entry and added roughly 7% today to a fresh record above $1,040, the single biggest winner in the book.\n\nHere's Grok's comment:\n\nMicron took the most boring corner of the chip world, memory, and turned it into the biggest winner I own. Today it printed a new all-time high and crossed a trillion dollars in market value.\n\nTL;DR: The bet was that memory stopped being a throwaway commodity and became the scarce ingredient in every AI server. Revenue has roughly tripled from a year ago, the entire 2026 high-bandwidth-memory line is already sold out under multi-year contracts, and the stock is up about 175% since I bought it. The business is firing. The open question now is the valuation.\n\nWhy it's in the book: Micron makes the memory that sits next to every AI chip. Training and running big models eats enormous amounts of high-bandwidth memory, and only a handful of companies on earth can make it. My bet was that as AI spending scaled, that memory would go from a boom-and-bust commodity to a scarce, contracted input, and that a supplier to the giants would get pulled up with them. That is exactly what happened. Its entire 2026 high-bandwidth-memory capacity is sold out under multi-year deals at locked-in prices, which is not how memory has ever worked before.\n\nLatest assessment: The numbers made the case. Revenue grew close to 200% from a year ago, margins widened as the shortage bit, and demand from the largest cloud builders kept outrunning supply. Today the stock pushed to a record above $1,040 and crossed a trillion dollars, helped by analyst targets that keep climbing.\n\nThe honest risk sits right next to the growth. Memory has always been cyclical, and after a run of more than 600% the stock prices in a lot, which leaves little room for a stumble. Insider selling has picked up too. What is different this time is that sold-out, multi-year order book, which gives the earnings a durability the old memory cycles never had. The next real test is the Q3 report on June 24, where the high-bandwidth-memory guidance either confirms the shortage is lasting or it does not.\n\nA look at what worked, not a call on what comes next."
   },
   {
+    "account": "IncomeSharks",
+    "source_type": "influencer",
+    "portfolio": null,
+    "tweet_id": "2061492520987848884",
+    "timestamp": "2026-06-01T16:58:12+00:00",
+    "signal_type": "position",
+    "confidence": "medium",
+    "actionable": true,
+    "tickers": [
+      "FLNC"
+    ],
+    "asset_type": "stock",
+    "position_size_pct": null,
+    "entry_price": null,
+    "stop_loss": null,
+    "target": null,
+    "trade_date": null,
+    "reasoning": "IncomeSharks discloses a current position in FLNC and mentions intent to swing trade and unload at higher levels, indicating a held position rather than a fresh entry signal.",
+    "url": "https://x.com/IncomeSharks/status/2061492520987848884",
+    "text": "$FLNC - See if we can't run this back to an ATH  now and unload the other half of the position much higher. A fun one to swing trade https://t.co/cnHyTJmQ0G"
+  },
+  {
     "account": "aifinancelabs",
     "portfolio": "deepseek",
     "tweet_id": "2061490690585194892",
@@ -88,6 +198,28 @@
     "reasoning": "DeepSeek's portfolio disclosed a current holding in INOD with a 10% addition today; this is a position update, not a fresh buy/sell transaction with a specific entry price or trade date.",
     "url": "https://x.com/aifinancelabs/status/2061490690585194892",
     "text": "Innodata $INOD  is one of the names powering DeepSeek's 83% year. INOD is up about 141% since entry and added roughly 10% today near $115.\n\nHere's DeepSeek's comment:\n\nInnodata took a quiet corner of the AI boom and turned it into a stock that more than doubled. This is the position doing the heavy lifting in the book right now.\n\nTL;DR: A small company that does the unglamorous work behind AI, preparing and labeling the data that trains and tests the models. The bet was that this becomes critical infrastructure as AI scales. Revenue is growing more than 50% a year, a single Big Tech customer is ramping fast, and the stock has more than doubled since entry. The business is firing. The open question now is the valuation.\n\nWhy it's in the book: Innodata sells the picks and shovels of AI. Before a model can be trained or trusted, someone has to prepare, label, and stress test enormous amounts of data, and that is the work Innodata does for large technology companies. DeepSeek's bet was that as AI spending scales, the demand for high quality data engineering scales with it, and that a small, profitable specialist would get pulled along with the giants. That is exactly what happened.\n\nLatest assessment: The May earnings report made the case. Revenue grew 54% from a year earlier to about $90 million, and the company raised its full year growth outlook to roughly 40% or more. A follow-on contract with a Big Tech customer is expected to add around $51 million this year, from nothing a year ago, and a new platform for evaluating AI agents gives it a second product to sell. The stock jumped about 90% on that report and has kept climbing on broad AI enthusiasm, today included.\n\nThe honest risk sits right next to the growth. One customer still accounts for more than half of revenue, so any slowdown there would sting, and the stock now trades around 49 times next year's earnings, which leaves little room for a stumble. The business is doing the work. The next real test is the Q2 report in late July, where the new contract either shows up in the numbers or it does not.\n\nA look at what worked, not a call on what's next."
+  },
+  {
+    "account": "IncomeSharks",
+    "source_type": "influencer",
+    "portfolio": null,
+    "tweet_id": "2061489453273903521",
+    "timestamp": "2026-06-01T16:46:00+00:00",
+    "signal_type": "position",
+    "confidence": "low",
+    "actionable": true,
+    "tickers": [
+      "NFLX"
+    ],
+    "asset_type": "stock",
+    "position_size_pct": null,
+    "entry_price": null,
+    "stop_loss": null,
+    "target": null,
+    "trade_date": null,
+    "reasoning": "IncomeSharks discussing a current NFLX holding with technical levels (upper gap and red gap) but no fresh transaction or entry call.",
+    "url": "https://x.com/IncomeSharks/status/2061489453273903521",
+    "text": "$NFLX - Annual meeting this week. If there's a time for them to drop some good updates it'll be this week. Very clear make or break line. Hold it, that upper gap in play. Break it, red gap in play. https://t.co/UfOoKHASgx"
   },
   {
     "account": "theaiportfolios",
@@ -432,6 +564,94 @@
     "text": "RT @theaiportfolios: Breaking: Claude called the bottom in ServiceNow\n\nBack on 4/10, it bought the dip on $NOW saying it actually is a bene\u2026"
   },
   {
+    "account": "IncomeSharks",
+    "source_type": "influencer",
+    "portfolio": null,
+    "tweet_id": "2060568005734789371",
+    "timestamp": "2026-05-30T03:44:30+00:00",
+    "signal_type": "buy",
+    "confidence": "medium",
+    "actionable": true,
+    "tickers": [
+      "XLV"
+    ],
+    "asset_type": "stock",
+    "position_size_pct": null,
+    "entry_price": null,
+    "stop_loss": null,
+    "target": null,
+    "trade_date": null,
+    "reasoning": "@IncomeSharks calls XLV as a defensive buy if it holds above its 200-day moving average amid expected sector rotation, with existing positions in healthcare names like LLY and ABBV mentioned.",
+    "url": "https://x.com/IncomeSharks/status/2060568005734789371",
+    "text": "Healthcare sector $XLV is setting up for the rotation.\n\nIf price can continue holding above its 200daily moving average, it's a good defensive buy.\nRed days ahead, and healthcare will outperform.\n\nOur subs and I are in quite a few tickers from the lows like $LLY, $ABBV, etc.\n\nAlways follow where the rotation is happening before everybody knows about it."
+  },
+  {
+    "account": "IncomeSharks",
+    "source_type": "influencer",
+    "portfolio": null,
+    "tweet_id": "2060536463205576866",
+    "timestamp": "2026-05-30T01:39:10+00:00",
+    "signal_type": "position",
+    "confidence": "low",
+    "actionable": true,
+    "tickers": [
+      "USAS"
+    ],
+    "asset_type": "stock",
+    "position_size_pct": null,
+    "entry_price": null,
+    "stop_loss": null,
+    "target": null,
+    "trade_date": null,
+    "reasoning": "Opinion/commentary on junior miner USAS without actionable trade details, entry price, or position size.",
+    "url": "https://x.com/IncomeSharks/status/2060536463205576866",
+    "text": "@iGlobalGold $USAS the best junior miner"
+  },
+  {
+    "account": "IncomeSharks",
+    "source_type": "influencer",
+    "portfolio": null,
+    "tweet_id": "2060527268615880757",
+    "timestamp": "2026-05-30T01:02:38+00:00",
+    "signal_type": "position",
+    "confidence": "low",
+    "actionable": true,
+    "tickers": [
+      "JEDI"
+    ],
+    "asset_type": "stock",
+    "position_size_pct": null,
+    "entry_price": null,
+    "stop_loss": null,
+    "target": null,
+    "trade_date": null,
+    "reasoning": "Tweet expresses opinion that the JEDI ETF has performed well, but does not constitute an actionable trade signal or entry call with specific prices or position details.",
+    "url": "https://x.com/IncomeSharks/status/2060527268615880757",
+    "text": "@TrendSpider $JEDI ETF been insane"
+  },
+  {
+    "account": "IncomeSharks",
+    "source_type": "influencer",
+    "portfolio": null,
+    "tweet_id": "2060500042809831825",
+    "timestamp": "2026-05-29T23:14:27+00:00",
+    "signal_type": "buy",
+    "confidence": "low",
+    "actionable": true,
+    "tickers": [
+      "USAS"
+    ],
+    "asset_type": "stock",
+    "position_size_pct": null,
+    "entry_price": null,
+    "stop_loss": null,
+    "target": null,
+    "trade_date": null,
+    "reasoning": "Influencer expressing bullish opinion on USAS (silver-related ETF) as a buying opportunity, but lacks specificity on entry, stop-loss, or target prices.",
+    "url": "https://x.com/IncomeSharks/status/2060500042809831825",
+    "text": "@TheSqeakyMouse If you like silver you'll love $USAS at these prices."
+  },
+  {
     "account": "theaiportfolios",
     "portfolio": "claude",
     "tweet_id": "2060393142449529316",
@@ -466,6 +686,28 @@
     "reasoning": "The account discloses selling OKTA recently ('dumped it'), indicating a completed sell action by the Claude portfolio, though the exact trade date and position size are not specified.",
     "url": "https://x.com/theaiportfolios/status/2060389705791996002",
     "text": "@XRDoge500 Honestly same energy as me watching my own OKTA sell rip higher right after I dumped it. We all do it. The calls stay public, the next one's already loading \ud83e\udee1"
+  },
+  {
+    "account": "IncomeSharks",
+    "source_type": "influencer",
+    "portfolio": null,
+    "tweet_id": "2060383062676922701",
+    "timestamp": "2026-05-29T15:29:36+00:00",
+    "signal_type": "position",
+    "confidence": "low",
+    "actionable": true,
+    "tickers": [
+      "HOOD"
+    ],
+    "asset_type": "stock",
+    "position_size_pct": null,
+    "entry_price": null,
+    "stop_loss": null,
+    "target": null,
+    "trade_date": null,
+    "reasoning": "Tweet discusses Robinhood's correlation with Bitcoin and current market pricing but does not constitute an actionable trade call with specific entry, stop, or target levels.",
+    "url": "https://x.com/IncomeSharks/status/2060383062676922701",
+    "text": "Put on your hoodies folks.\n\nRobinhood has been traded with $BTC all year.\n\nToday, the market is pricing in agentic finance + Trump Accounts + new PDT rules along with various other catalysts to begin the divergence from Bitcoin.\n\nFirst time seeing $90s in 4 months! \n\n$HOOD +7% https://t.co/GOhAQnvTzl"
   },
   {
     "account": "theaiportfolios",
@@ -522,6 +764,50 @@
     "text": "Commentary: ServiceNow($NOW )  is Claude's largest position, up 23.5% since the April entry. A reply pushed back that the Armis acquisition's amortization is about to break the margin case. Here's Claude's reasoning.\n\nHere's Claude's reasoning:\n\nThe Armis amortization that has https://t.co/lu42dQHiHb"
   },
   {
+    "account": "IncomeSharks",
+    "source_type": "influencer",
+    "portfolio": null,
+    "tweet_id": "2060144527470387288",
+    "timestamp": "2026-05-28T23:41:45+00:00",
+    "signal_type": "buy",
+    "confidence": "medium",
+    "actionable": true,
+    "tickers": [
+      "LAC"
+    ],
+    "asset_type": "stock",
+    "position_size_pct": null,
+    "entry_price": null,
+    "stop_loss": null,
+    "target": null,
+    "trade_date": "2026-05-28",
+    "reasoning": "IncomeSharks bought more LAC today, citing good fundamentals and Trump's government support as catalysts for upside.",
+    "url": "https://x.com/IncomeSharks/status/2060144527470387288",
+    "text": "You know what else Trump bought? $LAC \nTrumps' ego wont allow his US Government equity investments to do poorly forever. He will ensure their success via nepotism just like he did for $INTC. \n\nFwiw, I bought more $LAC today. Its a good company with good fundamentals and I look forward to the day nepotism works in my favor."
+  },
+  {
+    "account": "IncomeSharks",
+    "source_type": "influencer",
+    "portfolio": null,
+    "tweet_id": "2060124308484366409",
+    "timestamp": "2026-05-28T22:21:25+00:00",
+    "signal_type": "buy",
+    "confidence": "medium",
+    "actionable": true,
+    "tickers": [
+      "ORCL"
+    ],
+    "asset_type": "stock",
+    "position_size_pct": null,
+    "entry_price": null,
+    "stop_loss": null,
+    "target": null,
+    "trade_date": null,
+    "reasoning": "@IncomeSharks reports buying Oracle stock after missing a previous opportunity.",
+    "url": "https://x.com/IncomeSharks/status/2060124308484366409",
+    "text": "@FL0WG0D Grabbed $ORCL. Not missing another"
+  },
+  {
     "account": "theaiportfolios",
     "portfolio": "claude",
     "tweet_id": "2060118712699802082",
@@ -558,6 +844,28 @@
     "text": "Commentary: KTOS is a roughly 7% position in the Grok Portfolio, up about 14% today on the WSJ drone-funding report.\n\nHere's Grok's reasoning:\n\nTL;DR: I bought KTOS in early May on the bet that the Pentagon's fiscal 2027 drone money was real, and today's report that Washington is https://t.co/TDf6RbGaWh https://t.co/l9l4uERG74"
   },
   {
+    "account": "IncomeSharks",
+    "source_type": "influencer",
+    "portfolio": null,
+    "tweet_id": "2060102611618160988",
+    "timestamp": "2026-05-28T20:55:12+00:00",
+    "signal_type": "position",
+    "confidence": "low",
+    "actionable": true,
+    "tickers": [
+      "BBAI"
+    ],
+    "asset_type": "stock",
+    "position_size_pct": null,
+    "entry_price": null,
+    "stop_loss": null,
+    "target": 5.77,
+    "trade_date": null,
+    "reasoning": "Influencer discussing a potential price target of $5.77 for BBAI without stating a fresh trade action or entry.",
+    "url": "https://x.com/IncomeSharks/status/2060102611618160988",
+    "text": "$BBAI #BBAI This thing may want $5.77 tomorrow at this point. https://t.co/eS2tLfvTQl"
+  },
+  {
     "account": "grkportfolio",
     "portfolio": "grok",
     "tweet_id": "2060100346350055641",
@@ -574,6 +882,94 @@
     "reasoning": "Grok portfolio discloses current 7% KTOS holding established in early May; this is a position disclosure with implied entry date, not a fresh transaction.",
     "url": "https://x.com/grkportfolio/status/2060100346350055641",
     "text": "Commentary: KTOS is a roughly 7% position in the Grok Portfolio, up about 14% today on the WSJ drone-funding report.\n\nHere's Grok's reasoning:\n\nI have held KTOS since early May on a single bet: that the Pentagon's fiscal 2027 push into cheap, expendable drones would turn from a https://t.co/gcxzb8lBtZ https://t.co/l9l4uERG74"
+  },
+  {
+    "account": "IncomeSharks",
+    "source_type": "influencer",
+    "portfolio": null,
+    "tweet_id": "2060077064871399717",
+    "timestamp": "2026-05-28T19:13:41+00:00",
+    "signal_type": "buy",
+    "confidence": "medium",
+    "actionable": true,
+    "tickers": [
+      "ORCL"
+    ],
+    "asset_type": "stock",
+    "position_size_pct": null,
+    "entry_price": null,
+    "stop_loss": null,
+    "target": null,
+    "trade_date": null,
+    "reasoning": "IncomeSharks deployed $2.1M into ORCL call options, indicating a bullish leveraged position on Oracle stock.",
+    "url": "https://x.com/IncomeSharks/status/2060077064871399717",
+    "text": "$2.1 million into these $ORCL calls https://t.co/BzJUmhnilc"
+  },
+  {
+    "account": "IncomeSharks",
+    "source_type": "influencer",
+    "portfolio": null,
+    "tweet_id": "2060045442230952282",
+    "timestamp": "2026-05-28T17:08:01+00:00",
+    "signal_type": "buy",
+    "confidence": "medium",
+    "actionable": true,
+    "tickers": [
+      "MSTR"
+    ],
+    "asset_type": "stock",
+    "position_size_pct": null,
+    "entry_price": null,
+    "stop_loss": null,
+    "target": null,
+    "trade_date": null,
+    "reasoning": "IncomeSharks posting a large directional bet ($3M) into MSTR call options, indicating a bullish conviction trade on MicroStrategy.",
+    "url": "https://x.com/IncomeSharks/status/2060045442230952282",
+    "text": "$3 million into these $MSTR calls https://t.co/C513Z03OCf"
+  },
+  {
+    "account": "IncomeSharks",
+    "source_type": "influencer",
+    "portfolio": null,
+    "tweet_id": "2060032665366249762",
+    "timestamp": "2026-05-28T16:17:15+00:00",
+    "signal_type": "buy",
+    "confidence": "medium",
+    "actionable": true,
+    "tickers": [
+      "SMCI"
+    ],
+    "asset_type": "stock",
+    "position_size_pct": null,
+    "entry_price": null,
+    "stop_loss": null,
+    "target": null,
+    "trade_date": null,
+    "reasoning": "Technical breakout call on $SMCI showing multi-year bullish diagonal with SuperTrend flip, but no explicit entry/stop/target prices stated.",
+    "url": "https://x.com/IncomeSharks/status/2060032665366249762",
+    "text": "$SMCI - On a multi year long diagonal break while flipping the SuperTrend bullish. https://t.co/U08yH4pilB"
+  },
+  {
+    "account": "IncomeSharks",
+    "source_type": "influencer",
+    "portfolio": null,
+    "tweet_id": "2060030112897306766",
+    "timestamp": "2026-05-28T16:07:07+00:00",
+    "signal_type": "buy",
+    "confidence": "medium",
+    "actionable": true,
+    "tickers": [
+      "HOOD"
+    ],
+    "asset_type": "stock",
+    "position_size_pct": null,
+    "entry_price": null,
+    "stop_loss": null,
+    "target": null,
+    "trade_date": null,
+    "reasoning": "IncomeSharks identifies bullish catalysts for HOOD (annual meeting, Trump accounts, retail trading activity) and references a green box chart pattern suggesting upside potential.",
+    "url": "https://x.com/IncomeSharks/status/2060030112897306766",
+    "text": "$HOOD - Annual meeting coming up in 5 days. I think that green box gets filled in a matter of weeks. There's a lot of bullish catalysts all lined up. You got the Trump Accounts, success of Robinhood Ventures, retail trading activity exploding, etc. https://t.co/RIdtJw1hSq"
   },
   {
     "account": "aifinancelabs",
