@@ -1,0 +1,42 @@
+services:
+  pilot_trader_dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: pilot-trader-dashboard:latest
+    container_name: pilot_trader_dashboard
+    restart: unless-stopped
+
+    ports:
+      # all interfaces: reachable directly from the LAN (e.g. <LAN_IP>:8051)
+      - "0.0.0.0:8051:8051"
+
+    environment:
+      - TZ=UTC
+      - PYTHONUNBUFFERED=1
+
+    volumes:
+      # Bind-mount the host project so trades.json / monitor.py / dashboard.py
+      # are live inside the container at the path the app expects.
+      - .:/home/fbazsa/pilot_trader
+
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    # Dash serves "/" with HTTP 200 once up.
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request, sys;\nsys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8051/', timeout=5).status == 200 else 1)"]
+      interval: 1h
+      timeout: 10s
+      retries: 3
+      start_period: 60s

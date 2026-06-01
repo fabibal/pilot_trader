@@ -1,0 +1,15 @@
+# Secrets — NEVER commit
+.env
+
+# Runtime data / logs / state
+data/
+*.log
+.monitor_state.json
+
+# Tweet snapshots (large, regenerable; can contain bulk scraped content)
+tweets_*.json
+
+# Python
+__pycache__/
+*.pyc
+.venv/

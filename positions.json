@@ -1,0 +1,933 @@
+[
+  {
+    "account": "aifinancelabs",
+    "portfolio": "claude",
+    "ticker": "ARDX",
+    "status": "open",
+    "entry_price": null,
+    "size_pct": null,
+    "trade_date": "2026-05-01",
+    "opened_at": "2026-05-04T23:27:41.000Z",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2051443677768077463",
+        "signal_type": "buy",
+        "timestamp": "2026-05-04T23:27:41.000Z",
+        "confidence": "high",
+        "url": "https://x.com/aifinancelabs/status/2051443677768077463"
+      }
+    ]
+  },
+  {
+    "account": "aifinancelabs",
+    "portfolio": "grok",
+    "ticker": "AVGO",
+    "status": "open",
+    "entry_price": null,
+    "size_pct": null,
+    "trade_date": "2026-04-07",
+    "opened_at": "2026-05-31T14:12:07.000Z",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2061088337201647911",
+        "signal_type": "buy",
+        "timestamp": "2026-05-31T14:12:07.000Z",
+        "confidence": "high",
+        "url": "https://x.com/aifinancelabs/status/2061088337201647911"
+      }
+    ]
+  },
+  {
+    "account": "aifinancelabs",
+    "portfolio": "grok",
+    "ticker": "CLSK",
+    "status": "open",
+    "entry_price": null,
+    "size_pct": null,
+    "trade_date": "2026-05-04",
+    "opened_at": "2026-05-26T21:41:51.000Z",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2059389577031291120",
+        "signal_type": "position",
+        "timestamp": "2026-05-26T21:41:51.000Z",
+        "confidence": "medium",
+        "url": "https://x.com/aifinancelabs/status/2059389577031291120"
+      }
+    ]
+  },
+  {
+    "account": "aifinancelabs",
+    "portfolio": "deepseek",
+    "ticker": "DNLI",
+    "status": "open",
+    "entry_price": 18.6,
+    "size_pct": null,
+    "trade_date": null,
+    "opened_at": "2026-05-17T02:51:24.000Z",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2055843601435726016",
+        "signal_type": "position",
+        "timestamp": "2026-05-17T02:51:24.000Z",
+        "confidence": "high",
+        "url": "https://x.com/aifinancelabs/status/2055843601435726016"
+      }
+    ]
+  },
+  {
+    "account": "aifinancelabs",
+    "portfolio": "deepseek",
+    "ticker": "INOD",
+    "status": "open",
+    "entry_price": 45.72,
+    "size_pct": 10,
+    "trade_date": "2026-05-06",
+    "opened_at": "2026-05-08T18:24:32.000Z",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2052816937600835598",
+        "signal_type": "buy",
+        "timestamp": "2026-05-08T18:24:32.000Z",
+        "confidence": "high",
+        "url": "https://x.com/aifinancelabs/status/2052816937600835598"
+      },
+      {
+        "tweet_id": "2053886089220534587",
+        "signal_type": "buy",
+        "timestamp": "2026-05-11T17:12:57.000Z",
+        "confidence": "high",
+        "url": "https://x.com/aifinancelabs/status/2053886089220534587"
+      },
+      {
+        "tweet_id": "2054639856446279809",
+        "signal_type": "position",
+        "timestamp": "2026-05-13T19:08:09.000Z",
+        "confidence": "high",
+        "url": "https://x.com/aifinancelabs/status/2054639856446279809"
+      },
+      {
+        "tweet_id": "2055383160347845105",
+        "signal_type": "position",
+        "timestamp": "2026-05-15T20:21:47.000Z",
+        "confidence": "medium",
+        "url": "https://x.com/aifinancelabs/status/2055383160347845105"
+      },
+      {
+        "tweet_id": "2055387528115404867",
+        "signal_type": "position",
+        "timestamp": "2026-05-15T20:39:08+00:00",
+        "confidence": "high",
+        "url": "https://x.com/aifinancelabs/status/2055387528115404867"
+      },
+      {
+        "tweet_id": "2061490690585194892",
+        "signal_type": "position",
+        "timestamp": "2026-06-01T16:50:55+00:00",
+        "confidence": "high",
+        "url": "https://x.com/aifinancelabs/status/2061490690585194892"
+      }
+    ]
+  },
+  {
+    "account": "aifinancelabs",
+    "portfolio": "grok",
+    "ticker": "IREN",
+    "status": "open",
+    "entry_price": null,
+    "size_pct": null,
+    "trade_date": "2026-05-05",
+    "opened_at": "2026-05-06T18:12:30.000Z",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2052089136790589933",
+        "signal_type": "buy",
+        "timestamp": "2026-05-06T18:12:30.000Z",
+        "confidence": "high",
+        "url": "https://x.com/aifinancelabs/status/2052089136790589933"
+      },
+      {
+        "tweet_id": "2052822363054420456",
+        "signal_type": "buy",
+        "timestamp": "2026-05-08T18:46:05.000Z",
+        "confidence": "high",
+        "url": "https://x.com/aifinancelabs/status/2052822363054420456"
+      }
+    ]
+  },
+  {
+    "account": "aifinancelabs",
+    "portfolio": "grok",
+    "ticker": "MSFT",
+    "status": "open",
+    "entry_price": null,
+    "size_pct": 6.45,
+    "trade_date": null,
+    "opened_at": "2026-05-01T17:44:55.000Z",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2050270253272211800",
+        "signal_type": "position",
+        "timestamp": "2026-05-01T17:44:55.000Z",
+        "confidence": "low",
+        "url": "https://x.com/aifinancelabs/status/2050270253272211800"
+      },
+      {
+        "tweet_id": "2055353999688077739",
+        "signal_type": "position",
+        "timestamp": "2026-05-15T18:25:54.000Z",
+        "confidence": "high",
+        "url": "https://x.com/aifinancelabs/status/2055353999688077739"
+      }
+    ]
+  },
+  {
+    "account": "aifinancelabs",
+    "portfolio": "grok",
+    "ticker": "MU",
+    "status": "open",
+    "entry_price": 379,
+    "size_pct": null,
+    "trade_date": "2026-04-07",
+    "opened_at": "2026-05-07T15:16:30.000Z",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2052407229920260409",
+        "signal_type": "buy",
+        "timestamp": "2026-05-07T15:16:30.000Z",
+        "confidence": "high",
+        "url": "https://x.com/aifinancelabs/status/2052407229920260409"
+      },
+      {
+        "tweet_id": "2057195640342434017",
+        "signal_type": "buy",
+        "timestamp": "2026-05-20T20:23:56.000Z",
+        "confidence": "high",
+        "url": "https://x.com/aifinancelabs/status/2057195640342434017"
+      },
+      {
+        "tweet_id": "2061497171460149748",
+        "signal_type": "position",
+        "timestamp": "2026-06-01T17:16:41+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/aifinancelabs/status/2061497171460149748"
+      }
+    ]
+  },
+  {
+    "account": "aifinancelabs",
+    "portfolio": "deepseek",
+    "ticker": "MU",
+    "status": "open",
+    "entry_price": null,
+    "size_pct": null,
+    "trade_date": null,
+    "opened_at": "2026-05-12T20:26:35+00:00",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2054297205175923089",
+        "signal_type": "position",
+        "timestamp": "2026-05-12T20:26:35+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/aifinancelabs/status/2054297205175923089"
+      }
+    ]
+  },
+  {
+    "account": "aifinancelabs",
+    "portfolio": "grok",
+    "ticker": "ORLA",
+    "status": "open",
+    "entry_price": null,
+    "size_pct": null,
+    "trade_date": null,
+    "opened_at": "2026-05-13T21:39:21+00:00",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2054677907956543618",
+        "signal_type": "position",
+        "timestamp": "2026-05-13T21:39:21+00:00",
+        "confidence": "high",
+        "url": "https://x.com/aifinancelabs/status/2054677907956543618"
+      }
+    ]
+  },
+  {
+    "account": "aifinancelabs",
+    "portfolio": "deepseek",
+    "ticker": "SALT",
+    "status": "open",
+    "entry_price": null,
+    "size_pct": 11.0,
+    "trade_date": null,
+    "opened_at": "2026-05-31T14:39:47+00:00",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2061095300211876021",
+        "signal_type": "position",
+        "timestamp": "2026-05-31T14:39:47+00:00",
+        "confidence": "high",
+        "url": "https://x.com/aifinancelabs/status/2061095300211876021"
+      }
+    ]
+  },
+  {
+    "account": "aifinancelabs",
+    "portfolio": "deepseek",
+    "ticker": "SBLE",
+    "status": "open",
+    "entry_price": null,
+    "size_pct": 11,
+    "trade_date": null,
+    "opened_at": "2026-06-01T04:50:06+00:00",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2061309289344676339",
+        "signal_type": "position",
+        "timestamp": "2026-06-01T04:50:06+00:00",
+        "confidence": "high",
+        "url": "https://x.com/aifinancelabs/status/2061309289344676339"
+      }
+    ]
+  },
+  {
+    "account": "aifinancelabs",
+    "portfolio": "grok",
+    "ticker": "SOC",
+    "status": "open",
+    "entry_price": null,
+    "size_pct": 8,
+    "trade_date": null,
+    "opened_at": "2026-05-18T18:18:30.000Z",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2056439298295992726",
+        "signal_type": "position",
+        "timestamp": "2026-05-18T18:18:30.000Z",
+        "confidence": "high",
+        "url": "https://x.com/aifinancelabs/status/2056439298295992726"
+      }
+    ]
+  },
+  {
+    "account": "aifinancelabs",
+    "portfolio": "deepseek",
+    "ticker": "TE",
+    "status": "open",
+    "entry_price": null,
+    "size_pct": null,
+    "trade_date": "2026-05-05",
+    "opened_at": "2026-05-22T01:45:26+00:00",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2057638938336997873",
+        "signal_type": "position",
+        "timestamp": "2026-05-22T01:45:26+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/aifinancelabs/status/2057638938336997873"
+      },
+      {
+        "tweet_id": "2057650325264163198",
+        "signal_type": "buy",
+        "timestamp": "2026-05-22T02:30:41+00:00",
+        "confidence": "high",
+        "url": "https://x.com/aifinancelabs/status/2057650325264163198"
+      }
+    ]
+  },
+  {
+    "account": "aifinancelabs",
+    "portfolio": null,
+    "ticker": "UHS",
+    "status": "open",
+    "entry_price": null,
+    "size_pct": null,
+    "trade_date": null,
+    "opened_at": "2026-04-28T23:57:31+00:00",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2049276859024892038",
+        "signal_type": "position",
+        "timestamp": "2026-04-28T23:57:31+00:00",
+        "confidence": "high",
+        "url": "https://x.com/aifinancelabs/status/2049276859024892038"
+      }
+    ]
+  },
+  {
+    "account": "aifinancelabs",
+    "portfolio": "claude",
+    "ticker": "VST",
+    "status": "open",
+    "entry_price": null,
+    "size_pct": null,
+    "trade_date": null,
+    "opened_at": "2026-05-20T20:23:46.000Z",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2057195597963096442",
+        "signal_type": "position",
+        "timestamp": "2026-05-20T20:23:46.000Z",
+        "confidence": "high",
+        "url": "https://x.com/aifinancelabs/status/2057195597963096442"
+      }
+    ]
+  },
+  {
+    "account": "aifinancelabs",
+    "portfolio": "grok",
+    "ticker": "WLDN",
+    "status": "open",
+    "entry_price": 72.72,
+    "size_pct": null,
+    "trade_date": "2026-05-06",
+    "opened_at": "2026-05-09T19:00:41.000Z",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2053188422848618734",
+        "signal_type": "buy",
+        "timestamp": "2026-05-09T19:00:41.000Z",
+        "confidence": "high",
+        "url": "https://x.com/aifinancelabs/status/2053188422848618734"
+      }
+    ]
+  },
+  {
+    "account": "grkportfolio",
+    "portfolio": "grok",
+    "ticker": "AVGO",
+    "status": "open",
+    "entry_price": 322.05,
+    "size_pct": null,
+    "trade_date": "2026-04-07",
+    "opened_at": "2026-05-31T14:11:03.000Z",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2061088067247854028",
+        "signal_type": "position",
+        "timestamp": "2026-05-31T14:11:03.000Z",
+        "confidence": "high",
+        "url": "https://x.com/grkportfolio/status/2061088067247854028"
+      },
+      {
+        "tweet_id": "2061089271277363707",
+        "signal_type": "position",
+        "timestamp": "2026-05-31T14:15:50+00:00",
+        "confidence": "low",
+        "url": "https://x.com/grkportfolio/status/2061089271277363707"
+      },
+      {
+        "tweet_id": "2061089288197201939",
+        "signal_type": "position",
+        "timestamp": "2026-05-31T14:15:54+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/grkportfolio/status/2061089288197201939"
+      },
+      {
+        "tweet_id": "2061089930298941668",
+        "signal_type": "position",
+        "timestamp": "2026-05-31T14:18:27+00:00",
+        "confidence": "high",
+        "url": "https://x.com/grkportfolio/status/2061089930298941668"
+      },
+      {
+        "tweet_id": "2061109121857028524",
+        "signal_type": "buy",
+        "timestamp": "2026-05-31T15:34:42+00:00",
+        "confidence": "high",
+        "url": "https://x.com/grkportfolio/status/2061109121857028524"
+      },
+      {
+        "tweet_id": "2061112063678947525",
+        "signal_type": "position",
+        "timestamp": "2026-05-31T15:46:24.000Z",
+        "confidence": "medium",
+        "url": "https://x.com/grkportfolio/status/2061112063678947525"
+      }
+    ]
+  },
+  {
+    "account": "grkportfolio",
+    "portfolio": "grok",
+    "ticker": "CLSK",
+    "status": "open",
+    "entry_price": null,
+    "size_pct": null,
+    "trade_date": "2026-05-04",
+    "opened_at": "2026-05-26T21:38:28.000Z",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2059388726652862680",
+        "signal_type": "position",
+        "timestamp": "2026-05-26T21:38:28.000Z",
+        "confidence": "medium",
+        "url": "https://x.com/grkportfolio/status/2059388726652862680"
+      }
+    ]
+  },
+  {
+    "account": "grkportfolio",
+    "portfolio": "grok",
+    "ticker": "DVN",
+    "status": "open",
+    "entry_price": null,
+    "size_pct": 5.6,
+    "trade_date": null,
+    "opened_at": "2026-05-19T20:52:18.000Z",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2056840391840694402",
+        "signal_type": "position",
+        "timestamp": "2026-05-19T20:52:18.000Z",
+        "confidence": "high",
+        "url": "https://x.com/grkportfolio/status/2056840391840694402"
+      }
+    ]
+  },
+  {
+    "account": "grkportfolio",
+    "portfolio": "grok",
+    "ticker": "HBM",
+    "status": "open",
+    "entry_price": null,
+    "size_pct": null,
+    "trade_date": null,
+    "opened_at": "2026-05-25T21:40:26.000Z",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2059026832205459528",
+        "signal_type": "position",
+        "timestamp": "2026-05-25T21:40:26.000Z",
+        "confidence": "medium",
+        "url": "https://x.com/grkportfolio/status/2059026832205459528"
+      },
+      {
+        "tweet_id": "2059028124013318638",
+        "signal_type": "position",
+        "timestamp": "2026-05-25T21:45:34.000Z",
+        "confidence": "medium",
+        "url": "https://x.com/grkportfolio/status/2059028124013318638"
+      }
+    ]
+  },
+  {
+    "account": "grkportfolio",
+    "portfolio": "grok",
+    "ticker": "KTOS",
+    "status": "open",
+    "entry_price": null,
+    "size_pct": 7,
+    "trade_date": "2026-05-05",
+    "opened_at": "2026-05-28T20:46:12.000Z",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2060100346350055641",
+        "signal_type": "position",
+        "timestamp": "2026-05-28T20:46:12.000Z",
+        "confidence": "high",
+        "url": "https://x.com/grkportfolio/status/2060100346350055641"
+      },
+      {
+        "tweet_id": "2060102677372248448",
+        "signal_type": "position",
+        "timestamp": "2026-05-28T20:55:27.000Z",
+        "confidence": "high",
+        "url": "https://x.com/grkportfolio/status/2060102677372248448"
+      }
+    ]
+  },
+  {
+    "account": "grkportfolio",
+    "portfolio": "grok",
+    "ticker": "MU",
+    "status": "open",
+    "entry_price": 379,
+    "size_pct": 8.46,
+    "trade_date": "2026-04-05",
+    "opened_at": "2026-05-20T20:23:25.000Z",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2057195512517005517",
+        "signal_type": "buy",
+        "timestamp": "2026-05-20T20:23:25.000Z",
+        "confidence": "high",
+        "url": "https://x.com/grkportfolio/status/2057195512517005517"
+      },
+      {
+        "tweet_id": "2057664363796791652",
+        "signal_type": "position",
+        "timestamp": "2026-05-22T03:26:28.000Z",
+        "confidence": "high",
+        "url": "https://x.com/grkportfolio/status/2057664363796791652"
+      },
+      {
+        "tweet_id": "2059021695747539449",
+        "signal_type": "position",
+        "timestamp": "2026-05-25T21:20:01.000Z",
+        "confidence": "high",
+        "url": "https://x.com/grkportfolio/status/2059021695747539449"
+      },
+      {
+        "tweet_id": "2061496793570144296",
+        "signal_type": "position",
+        "timestamp": "2026-06-01T17:15:11+00:00",
+        "confidence": "high",
+        "url": "https://x.com/grkportfolio/status/2061496793570144296"
+      }
+    ]
+  },
+  {
+    "account": "grkportfolio",
+    "portfolio": "grok",
+    "ticker": "NVDA",
+    "status": "open",
+    "entry_price": null,
+    "size_pct": null,
+    "trade_date": null,
+    "opened_at": "2026-05-31T16:07:38+00:00",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2061117410011414704",
+        "signal_type": "position",
+        "timestamp": "2026-05-31T16:07:38+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/grkportfolio/status/2061117410011414704"
+      }
+    ]
+  },
+  {
+    "account": "grkportfolio",
+    "portfolio": "grok",
+    "ticker": "PGY",
+    "status": "open",
+    "entry_price": null,
+    "size_pct": null,
+    "trade_date": null,
+    "opened_at": "2026-05-19T03:46:28.000Z",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2056582234971287813",
+        "signal_type": "buy",
+        "timestamp": "2026-05-19T03:46:28.000Z",
+        "confidence": "high",
+        "url": "https://x.com/grkportfolio/status/2056582234971287813"
+      }
+    ]
+  },
+  {
+    "account": "grkportfolio",
+    "portfolio": "grok",
+    "ticker": "SOC",
+    "status": "open",
+    "entry_price": null,
+    "size_pct": 8.0,
+    "trade_date": null,
+    "opened_at": "2026-05-18T16:50:06.000Z",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2056417054933082313",
+        "signal_type": "position",
+        "timestamp": "2026-05-18T16:50:06.000Z",
+        "confidence": "high",
+        "url": "https://x.com/grkportfolio/status/2056417054933082313"
+      },
+      {
+        "tweet_id": "2056580879552487527",
+        "signal_type": "position",
+        "timestamp": "2026-05-19T03:41:05.000Z",
+        "confidence": "high",
+        "url": "https://x.com/grkportfolio/status/2056580879552487527"
+      },
+      {
+        "tweet_id": "2056581610464547300",
+        "signal_type": "position",
+        "timestamp": "2026-05-19T03:44:00.000Z",
+        "confidence": "low",
+        "url": "https://x.com/grkportfolio/status/2056581610464547300"
+      }
+    ]
+  },
+  {
+    "account": "grkportfolio",
+    "portfolio": "grok",
+    "ticker": "VST",
+    "status": "open",
+    "entry_price": null,
+    "size_pct": null,
+    "trade_date": null,
+    "opened_at": "2026-05-17T20:11:06.000Z",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2056105248423354755",
+        "signal_type": "position",
+        "timestamp": "2026-05-17T20:11:06.000Z",
+        "confidence": "medium",
+        "url": "https://x.com/grkportfolio/status/2056105248423354755"
+      }
+    ]
+  },
+  {
+    "account": "theaiportfolios",
+    "portfolio": "claude",
+    "ticker": "ARDX",
+    "status": "open",
+    "entry_price": null,
+    "size_pct": 6.31,
+    "trade_date": "2026-04-25",
+    "opened_at": "2026-05-01T17:15:11+00:00",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2050262772727136287",
+        "signal_type": "buy",
+        "timestamp": "2026-05-01T17:15:11+00:00",
+        "confidence": "high",
+        "url": "https://x.com/theaiportfolios/status/2050262772727136287"
+      }
+    ]
+  },
+  {
+    "account": "theaiportfolios",
+    "portfolio": null,
+    "ticker": "AVGO",
+    "status": "open",
+    "entry_price": null,
+    "size_pct": null,
+    "trade_date": null,
+    "opened_at": "2026-05-31T14:12:51.000Z",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2061088521608388833",
+        "signal_type": "position",
+        "timestamp": "2026-05-31T14:12:51.000Z",
+        "confidence": "none",
+        "url": "https://x.com/theaiportfolios/status/2061088521608388833"
+      }
+    ]
+  },
+  {
+    "account": "theaiportfolios",
+    "portfolio": "grok",
+    "ticker": "MU",
+    "status": "open",
+    "entry_price": null,
+    "size_pct": null,
+    "trade_date": null,
+    "opened_at": "2026-06-01T17:16:08+00:00",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2061497034226741347",
+        "signal_type": "position",
+        "timestamp": "2026-06-01T17:16:08+00:00",
+        "confidence": "high",
+        "url": "https://x.com/theaiportfolios/status/2061497034226741347"
+      }
+    ]
+  },
+  {
+    "account": "theaiportfolios",
+    "portfolio": "claude",
+    "ticker": "NOW",
+    "status": "open",
+    "entry_price": 89.53,
+    "size_pct": 8,
+    "trade_date": "2026-04-08",
+    "opened_at": "2026-04-10T14:59:10+00:00",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2042618396500517238",
+        "signal_type": "buy",
+        "timestamp": "2026-04-10T14:59:10+00:00",
+        "confidence": "high",
+        "url": "https://x.com/theaiportfolios/status/2042618396500517238"
+      },
+      {
+        "tweet_id": "2060118712699802082",
+        "signal_type": "position",
+        "timestamp": "2026-05-28T21:59:10.000Z",
+        "confidence": "high",
+        "url": "https://x.com/theaiportfolios/status/2060118712699802082"
+      },
+      {
+        "tweet_id": "2060257487618707740",
+        "signal_type": "position",
+        "timestamp": "2026-05-29T07:10:37.000Z",
+        "confidence": "medium",
+        "url": "https://x.com/theaiportfolios/status/2060257487618707740"
+      },
+      {
+        "tweet_id": "2060380619587100972",
+        "signal_type": "buy",
+        "timestamp": "2026-05-29T15:19:54.000Z",
+        "confidence": "high",
+        "url": "https://x.com/theaiportfolios/status/2060380619587100972"
+      },
+      {
+        "tweet_id": "2060393142449529316",
+        "signal_type": "buy",
+        "timestamp": "2026-05-29T16:09:40.000Z",
+        "confidence": "high",
+        "url": "https://x.com/theaiportfolios/status/2060393142449529316"
+      },
+      {
+        "tweet_id": "2060718173893079141",
+        "signal_type": "buy",
+        "timestamp": "2026-05-30T13:41:13.000Z",
+        "confidence": "high",
+        "url": "https://x.com/theaiportfolios/status/2060718173893079141"
+      },
+      {
+        "tweet_id": "2061437198461808989",
+        "signal_type": "position",
+        "timestamp": "2026-06-01T13:18:22+00:00",
+        "confidence": "high",
+        "url": "https://x.com/theaiportfolios/status/2061437198461808989"
+      },
+      {
+        "tweet_id": "2061472751731298318",
+        "signal_type": "buy",
+        "timestamp": "2026-06-01T15:39:38+00:00",
+        "confidence": "high",
+        "url": "https://x.com/theaiportfolios/status/2061472751731298318"
+      }
+    ]
+  },
+  {
+    "account": "theaiportfolios",
+    "portfolio": "claude",
+    "ticker": "NVDA",
+    "status": "closed",
+    "entry_price": null,
+    "size_pct": null,
+    "trade_date": null,
+    "opened_at": null,
+    "closed_at": "2026-05-29T07:42:40.000Z",
+    "signals": [
+      {
+        "tweet_id": "2060265554846642535",
+        "signal_type": "sell",
+        "timestamp": "2026-05-29T07:42:40.000Z",
+        "confidence": "high",
+        "url": "https://x.com/theaiportfolios/status/2060265554846642535"
+      }
+    ]
+  },
+  {
+    "account": "theaiportfolios",
+    "portfolio": "claude",
+    "ticker": "OKTA",
+    "status": "closed",
+    "entry_price": null,
+    "size_pct": null,
+    "trade_date": null,
+    "opened_at": null,
+    "closed_at": "2026-05-29T15:56:00.000Z",
+    "signals": [
+      {
+        "tweet_id": "2060389705791996002",
+        "signal_type": "sell",
+        "timestamp": "2026-05-29T15:56:00.000Z",
+        "confidence": "medium",
+        "url": "https://x.com/theaiportfolios/status/2060389705791996002"
+      }
+    ]
+  },
+  {
+    "account": "theaiportfolios",
+    "portfolio": "claude",
+    "ticker": "ZETA",
+    "status": "open",
+    "entry_price": null,
+    "size_pct": 9,
+    "trade_date": null,
+    "opened_at": "2026-05-31T04:13:09.000Z",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2060937600794591294",
+        "signal_type": "position",
+        "timestamp": "2026-05-31T04:13:09.000Z",
+        "confidence": "high",
+        "url": "https://x.com/theaiportfolios/status/2060937600794591294"
+      },
+      {
+        "tweet_id": "2061089802074693782",
+        "signal_type": "position",
+        "timestamp": "2026-05-31T14:17:56+00:00",
+        "confidence": "high",
+        "url": "https://x.com/theaiportfolios/status/2061089802074693782"
+      },
+      {
+        "tweet_id": "2061096019782414375",
+        "signal_type": "position",
+        "timestamp": "2026-05-31T14:42:39.000Z",
+        "confidence": "medium",
+        "url": "https://x.com/theaiportfolios/status/2061096019782414375"
+      },
+      {
+        "tweet_id": "2061101741995864541",
+        "signal_type": "position",
+        "timestamp": "2026-05-31T15:05:23.000Z",
+        "confidence": "medium",
+        "url": "https://x.com/theaiportfolios/status/2061101741995864541"
+      },
+      {
+        "tweet_id": "2061105510561263823",
+        "signal_type": "position",
+        "timestamp": "2026-05-31T15:20:21+00:00",
+        "confidence": "high",
+        "url": "https://x.com/theaiportfolios/status/2061105510561263823"
+      }
+    ]
+  },
+  {
+    "account": "theaiportfolios",
+    "portfolio": "claude",
+    "ticker": "ZG",
+    "status": "open",
+    "entry_price": null,
+    "size_pct": null,
+    "trade_date": "2026-05-12",
+    "opened_at": "2026-06-01T17:59:44+00:00",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2061508005003137368",
+        "signal_type": "buy",
+        "timestamp": "2026-06-01T17:59:44+00:00",
+        "confidence": "high",
+        "url": "https://x.com/theaiportfolios/status/2061508005003137368"
+      }
+    ]
+  }
+]
