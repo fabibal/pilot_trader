@@ -623,12 +623,15 @@ app.layout = html.Div(
         dcc.Graph(id="holdings-pie", config={"displayModeBar": False}),
         html.Div(id="position-detail", style={"marginTop": "6px"}),
 
+        html.Div("Recent Closed Trades", style=_SECTION_H),
+        html.Div(id="closed-trades", style={"marginTop": "4px"}),
+
         html.Div("All Signals", style=_SECTION_H),
         dash_table.DataTable(
             id="signals-table",
             columns=TABLE_COLUMNS,
             sort_action="native",
-            filter_action="native",
+            filter_action="none",
             page_size=25,
             markdown_options={"link_target": "_blank"},
             style_table={"overflowX": "auto", "marginTop": "10px"},
@@ -665,9 +668,6 @@ app.layout = html.Div(
                  "fontWeight": "bold"},
             ],
         ),
-
-        html.Div("Recent Closed Trades", style=_SECTION_H),
-        html.Div(id="closed-trades", style={"marginTop": "4px"}),
     ],
 )
 
