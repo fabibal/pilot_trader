@@ -48,18 +48,32 @@ ACCOUNT_DEFAULT_PF = {"grkportfolio": "grok", "theaiportfolios": "claude",
 # Human trader / influencer accounts. Kept entirely separate from the AI
 # portfolio views (own tab); excluded from the portfolio cards/charts.
 INFLUENCER_ACCOUNTS = {"IncomeSharks"}
+# Long-term conviction accounts (@moninvestor): live in the Influencers tab in
+# their own "Long-term Holdings" section, but are NOT mixed into the IncomeSharks
+# trade-call tables.
+LONGTERM_ACCOUNTS = {"moninvestor"}
+# Everything that is not an AI portfolio bot (excluded from AI cards/charts).
+NON_AI_ACCOUNTS = INFLUENCER_ACCOUNTS | LONGTERM_ACCOUNTS
 
 
 def is_influencer(account):
     return account in INFLUENCER_ACCOUNTS
 
 
+def is_longterm(account):
+    return account in LONGTERM_ACCOUNTS
+
+
 def ai_positions(positions):
-    return [p for p in positions if not is_influencer(p.get("account"))]
+    return [p for p in positions if p.get("account") not in NON_AI_ACCOUNTS]
 
 
 def influencer_positions(positions):
     return [p for p in positions if is_influencer(p.get("account"))]
+
+
+def longterm_positions(positions):
+    return [p for p in positions if is_longterm(p.get("account"))]
 
 
 def _yf_symbol(ticker, asset_type):
@@ -679,6 +693,39 @@ def influencer_positions_table(resolutions):
                   empty="No open IncomeSharks positions")
 
 
+def longterm_holdings_table(positions):
+    """@moninvestor long-term conviction holdings. No TP/stop columns; shows the
+    one-line thesis and sorts by return % descending."""
+    rows = []
+    for p in longterm_positions(positions):
+        if p.get("status") != "open":
+            continue
+        atype = p.get("asset_type", "stock") or "stock"
+        sym = _yf_symbol(p["ticker"], atype)
+        tdate = p.get("trade_date") or (p.get("opened_at") or "")[:10] or None
+        entry, est = estimate_entry(p["ticker"], p.get("entry_price"),
+                                    p.get("trade_date"),
+                                    (p.get("opened_at") or "")[:10], atype)
+        cur = get_price(sym)
+        ret = round((cur - entry) / entry * 100, 1) if (entry and cur) else None
+        days = _days_held(tdate)
+        rows.append((
+            (
+                (p["ticker"], C["blue"]),
+                _money(entry) + ("*" if est and entry else ""),
+                _money(cur),
+                (_fmt_pct(ret), _color(ret)),
+                str(days) if days is not None else "—",
+                p.get("holding_thesis") or "—",
+            ),
+            ret if ret is not None else float("-inf"),   # sort key
+        ))
+    rows.sort(key=lambda r: r[1], reverse=True)
+    return _table(["Ticker", "Entry $", "Current $", "Return %", "Days Held",
+                   "Thesis"], [r[0] for r in rows],
+                  empty="No open @moninvestor holdings")
+
+
 def holdings_figure(positions, portfolio):
     """Pie of ALL open positions for the portfolio. Sized positions use their
     real weight + a color; unsized ones get a neutral-grey placeholder slice
@@ -985,6 +1032,10 @@ app.layout = html.Div(
                      "fontWeight": "bold"},
                 ],
             ),
+
+            # --- @moninvestor long-term conviction holdings ------------------
+            html.Div("moninvestor — Long-term Holdings", style=_SECTION_H),
+            html.Div(id="longterm-holdings", style={"marginTop": "4px"}),
         ]),
     ],
 )
@@ -1021,7 +1072,7 @@ def refresh(_n):
     closed = closed_trades_table(positions)
 
     if not df.empty:
-        df = df[~df["account"].isin(INFLUENCER_ACCOUNTS)]
+        df = df[~df["account"].isin(NON_AI_ACCOUNTS)]
     if df.empty:
         return ([], "No signals yet.", cards, _asof_text(), closed,
                 freshness_banner())
@@ -1120,17 +1171,19 @@ def refresh_charts(_n):
     Output("influencer-signals", "data"),
     Output("influencer-positions", "children"),
     Output("influencer-winrate", "children"),
+    Output("longterm-holdings", "children"),
     Input("interval", "n_intervals"),
 )
 def refresh_influencers(_n):
     positions = load_positions()
     warm_prices({_yf_symbol(p["ticker"], p.get("asset_type", "stock"))
-                 for p in influencer_positions(positions)
+                 for p in influencer_positions(positions) + longterm_positions(positions)
                  if p.get("status") == "open"})
     resolutions = influencer_resolutions(positions)
     return (influencer_signals_data(load_trades()),
             influencer_positions_table(resolutions),
-            influencer_winrate_card(resolutions))
+            influencer_winrate_card(resolutions),
+            longterm_holdings_table(positions))
 
 
 if __name__ == "__main__":

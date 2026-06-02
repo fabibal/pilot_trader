@@ -49,12 +49,20 @@ from reconcile import reconcile, write_json_atomic
 # X bearer token is loaded from .env (X_BEARER_TOKEN) — never hardcoded.
 # Portfolio-bot accounts. @aifinancelabs is where the DeepSeek portfolio
 # experiment is published (no standalone DeepSeek handle exists).
-ACCOUNTS = ["grkportfolio", "theaiportfolios", "aifinancelabs", "IncomeSharks"]
+ACCOUNTS = ["grkportfolio", "theaiportfolios", "aifinancelabs", "IncomeSharks",
+            "moninvestor"]
 # Account kind. "portfolio" = AI-run portfolio bot (its own trades / holdings).
 # "influencer" = a human trader/influencer posting frequent trade calls on
 # stocks AND crypto (e.g. @IncomeSharks). Influencer accounts bypass the
 # reply-skip gate (every tweet+reply is sent to the LLM).
-SOURCE_TYPE = {"IncomeSharks": "influencer"}
+SOURCE_TYPE = {"IncomeSharks": "influencer", "moninvestor": "influencer"}
+# Posting style hint passed to the LLM. "conviction_long" = @moninvestor, a
+# slow long-term conviction investor: buys to hold (no TP/stop), and phrases
+# like "buying more"/"adding"/"keeping" are holding updates, not new buys.
+ACCOUNT_STYLE = {"moninvestor": "conviction_long"}
+# Accounts polled only at specific UTC hours (slow long-term accounts don't
+# need every 4h cron tick). Empty/absent => polled on every run.
+POLL_HOURS = {"moninvestor": {0, 12}}
 HOME = "/home/fbazsa/pilot_trader"
 TRADES_FILE = os.path.join(HOME, "trades.json")
 POSITIONS_FILE = os.path.join(HOME, "positions.json")
@@ -66,6 +74,7 @@ RAW_FILES = {  # used by --backfill; accounts without a snapshot are skipped
     "theaiportfolios": os.path.join(HOME, "tweets_theaiportfolios.json"),
     "aifinancelabs": os.path.join(HOME, "tweets_aifinancelabs.json"),
     "IncomeSharks": os.path.join(HOME, "tweets_incomesharks.json"),
+    "moninvestor": os.path.join(HOME, "tweets_moninvestor.json"),
 }
 MAX_FETCH = 100
 API_BASE = "https://api.twitter.com/2"
@@ -108,6 +117,14 @@ EXTRACTION_SYSTEM = (
     "ideas/calls on BOTH stocks AND crypto, and mixes pure analysis/opinion "
     "with actionable calls. It often states entry prices, stop losses, and price "
     "targets. For @IncomeSharks always set portfolio = null.\n"
+    "(C) LONG-TERM CONVICTION INVESTOR — @moninvestor. Posts high-conviction "
+    "long-term BUYS meant to be held for the long run; it rarely states stop "
+    "losses or price targets (leave those null unless explicitly given). A "
+    "first-time initiation of a new name is action = \"buy\". Phrases like "
+    "\"buying more\", \"adding\", \"added to\", \"keeping\", \"still holding\", "
+    "\"holding\" on a name it already owns are a POSITION UPDATE, so use action "
+    "= \"position\" (NOT a fresh buy). Always set portfolio = null for "
+    "@moninvestor.\n"
     "Rules:\n"
     "- action: \"buy\" if the account bought/initiated/added OR (for an "
     "influencer) is calling a long entry / saying it is buying or holding long; "
@@ -146,6 +163,10 @@ EXTRACTION_SYSTEM = (
     "- portfolio: for a portfolio bot, which model's portfolio the trade belongs "
     "to — \"grok\", \"claude\", \"deepseek\", or \"chatgpt\". null if unclear or "
     "for an influencer.\n"
+    "- holding_thesis: for a buy or position, ONE short sentence stating WHY "
+    "the account likes/holds the asset (the bull case / conviction reason), if "
+    "stated or clearly implied. Mainly populated for long-term conviction "
+    "accounts (@moninvestor). null if none is given.\n"
     "- reasoning: one short sentence explaining the call.\n"
     "Return ONLY valid JSON matching the schema. No markdown, no preamble."
 )
@@ -165,6 +186,7 @@ SIGNAL_SCHEMA = {
         "stop_loss": {"type": ["number", "null"]},
         "target": {"type": ["number", "null"]},
         "trade_date": {"type": ["string", "null"]},
+        "holding_thesis": {"type": ["string", "null"]},
         "confidence": {"type": "string",
                        "enum": ["high", "medium", "low", "none"]},
         "portfolio": {"anyOf": [
@@ -175,7 +197,7 @@ SIGNAL_SCHEMA = {
     },
     "required": ["ticker", "asset_type", "action", "sell_kind", "size_pct",
                  "entry_price", "stop_loss", "target", "trade_date",
-                 "confidence", "portfolio", "reasoning"],
+                 "holding_thesis", "confidence", "portfolio", "reasoning"],
     "additionalProperties": False,
 }
 
@@ -441,6 +463,7 @@ def record_from_parsed(account, tw, parsed):
         "stop_loss": parsed.get("stop_loss"),
         "target": parsed.get("target"),
         "trade_date": parsed.get("trade_date"),
+        "holding_thesis": parsed.get("holding_thesis"),
         "reasoning": parsed["reasoning"],
         # Chart-image (vision) enrichments — populated only for influencer
         # tweets that carried an analyzable chart photo (else null).
@@ -728,7 +751,16 @@ def main():
 
     all_new, total_reads, total_skipped, total_sell_cand, total_calls = \
         [], 0, 0, 0, 0
+    cur_hour = datetime.now(timezone.utc).hour
     for account in ACCOUNTS:
+        # Slow long-term accounts (POLL_HOURS) only fetch on certain UTC hours;
+        # live runs skip them otherwise. Backfill/dry-run always process them.
+        hrs = POLL_HOURS.get(account)
+        if hrs is not None and not (args.backfill or args.dry_run) \
+                and cur_hour not in hrs:
+            print(f"[{account}] skipped (polls only at "
+                  f"{sorted(hrs)} UTC, now {cur_hour:02d})")
+            continue
         try:
             tweets, reads, calls = tweets_for_account(
                 account, run_state, args.backfill, args.source)

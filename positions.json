@@ -11,6 +11,7 @@
     "target": null,
     "size_pct": null,
     "trade_date": null,
+    "holding_thesis": null,
     "opened_at": "2026-06-01T21:30:00+00:00",
     "closed_at": null,
     "signals": [
@@ -35,6 +36,7 @@
     "target": null,
     "size_pct": null,
     "trade_date": null,
+    "holding_thesis": null,
     "opened_at": "2026-05-28T21:44:28+00:00",
     "closed_at": null,
     "signals": [
@@ -59,6 +61,7 @@
     "target": 28.0,
     "size_pct": null,
     "trade_date": null,
+    "holding_thesis": null,
     "opened_at": "2026-06-01T16:58:12+00:00",
     "closed_at": null,
     "signals": [
@@ -83,6 +86,7 @@
     "target": 0.03546,
     "size_pct": null,
     "trade_date": null,
+    "holding_thesis": null,
     "opened_at": "2026-05-27T16:13:00+00:00",
     "closed_at": null,
     "signals": [
@@ -107,6 +111,7 @@
     "target": 100.0,
     "size_pct": null,
     "trade_date": null,
+    "holding_thesis": null,
     "opened_at": "2026-05-28T16:07:07+00:00",
     "closed_at": null,
     "signals": [
@@ -145,6 +150,7 @@
     "target": null,
     "size_pct": null,
     "trade_date": "2026-05-28",
+    "holding_thesis": null,
     "opened_at": "2026-05-28T23:41:45+00:00",
     "closed_at": null,
     "signals": [
@@ -176,6 +182,7 @@
     "target": 550,
     "size_pct": null,
     "trade_date": "2026-06-01",
+    "holding_thesis": null,
     "opened_at": "2026-06-01T18:27:53+00:00",
     "closed_at": "2026-06-01T18:52:21+00:00",
     "signals": [
@@ -207,6 +214,7 @@
     "target": null,
     "size_pct": null,
     "trade_date": null,
+    "holding_thesis": null,
     "opened_at": "2026-05-28T17:08:01+00:00",
     "closed_at": null,
     "signals": [
@@ -231,6 +239,7 @@
     "target": null,
     "size_pct": null,
     "trade_date": null,
+    "holding_thesis": null,
     "opened_at": "2026-06-01T23:21:35+00:00",
     "closed_at": null,
     "signals": [
@@ -255,6 +264,7 @@
     "target": 13.65,
     "size_pct": null,
     "trade_date": null,
+    "holding_thesis": null,
     "opened_at": "2026-05-28T19:13:41+00:00",
     "closed_at": null,
     "signals": [
@@ -286,6 +296,7 @@
     "target": null,
     "size_pct": null,
     "trade_date": null,
+    "holding_thesis": null,
     "opened_at": "2026-05-30T18:03:01+00:00",
     "closed_at": null,
     "signals": [
@@ -310,6 +321,7 @@
     "target": 153.0,
     "size_pct": null,
     "trade_date": null,
+    "holding_thesis": null,
     "opened_at": "2026-05-29T02:01:58+00:00",
     "closed_at": null,
     "signals": [
@@ -334,6 +346,7 @@
     "target": null,
     "size_pct": null,
     "trade_date": null,
+    "holding_thesis": null,
     "opened_at": "2026-05-28T16:17:15+00:00",
     "closed_at": null,
     "signals": [
@@ -358,6 +371,7 @@
     "target": null,
     "size_pct": null,
     "trade_date": null,
+    "holding_thesis": null,
     "opened_at": "2026-05-29T21:00:01+00:00",
     "closed_at": null,
     "signals": [
@@ -382,6 +396,7 @@
     "target": 9.0,
     "size_pct": null,
     "trade_date": null,
+    "holding_thesis": null,
     "opened_at": "2026-06-01T19:50:24+00:00",
     "closed_at": null,
     "signals": [
@@ -406,6 +421,7 @@
     "target": 157.63,
     "size_pct": null,
     "trade_date": null,
+    "holding_thesis": null,
     "opened_at": "2026-05-30T03:44:30+00:00",
     "closed_at": null,
     "signals": [
@@ -430,6 +446,7 @@
     "target": null,
     "size_pct": null,
     "trade_date": "2026-05-01",
+    "holding_thesis": null,
     "opened_at": "2026-05-04T23:27:41.000Z",
     "closed_at": null,
     "signals": [
@@ -454,6 +471,7 @@
     "target": null,
     "size_pct": null,
     "trade_date": null,
+    "holding_thesis": null,
     "opened_at": "2026-05-31T14:12:07.000Z",
     "closed_at": null,
     "signals": [
@@ -478,6 +496,7 @@
     "target": null,
     "size_pct": null,
     "trade_date": null,
+    "holding_thesis": null,
     "opened_at": "2026-05-17T02:51:24.000Z",
     "closed_at": null,
     "signals": [
@@ -500,8 +519,9 @@
     "entry_price": 45.72,
     "stop_loss": null,
     "target": 120,
-    "size_pct": 11.7,
+    "size_pct": 10,
     "trade_date": "2026-05-06",
+    "holding_thesis": null,
     "opened_at": "2026-05-08T18:24:32.000Z",
     "closed_at": null,
     "signals": [
@@ -532,6 +552,13 @@
         "timestamp": "2026-05-15T20:21:47.000Z",
         "confidence": "medium",
         "url": "https://x.com/aifinancelabs/status/2055383160347845105"
+      },
+      {
+        "tweet_id": "2061490690585194892",
+        "signal_type": "position",
+        "timestamp": "2026-06-01T16:50:55+00:00",
+        "confidence": "high",
+        "url": "https://x.com/aifinancelabs/status/2061490690585194892"
       }
     ]
   },
@@ -547,6 +574,7 @@
     "target": null,
     "size_pct": null,
     "trade_date": "2026-05-05",
+    "holding_thesis": null,
     "opened_at": "2026-05-06T18:12:30.000Z",
     "closed_at": null,
     "signals": [
@@ -578,6 +606,7 @@
     "target": null,
     "size_pct": 6.45,
     "trade_date": null,
+    "holding_thesis": null,
     "opened_at": "2026-05-01T17:44:55.000Z",
     "closed_at": null,
     "signals": [
@@ -609,6 +638,7 @@
     "target": null,
     "size_pct": null,
     "trade_date": "2026-04-07",
+    "holding_thesis": null,
     "opened_at": "2026-05-07T15:16:30.000Z",
     "closed_at": null,
     "signals": [
@@ -625,6 +655,38 @@
         "timestamp": "2026-05-20T20:23:56.000Z",
         "confidence": "high",
         "url": "https://x.com/aifinancelabs/status/2057195640342434017"
+      },
+      {
+        "tweet_id": "2061497171460149748",
+        "signal_type": "position",
+        "timestamp": "2026-06-01T17:16:41+00:00",
+        "confidence": "high",
+        "url": "https://x.com/aifinancelabs/status/2061497171460149748"
+      }
+    ]
+  },
+  {
+    "account": "aifinancelabs",
+    "source_type": "portfolio",
+    "portfolio": "deepseek",
+    "ticker": "SALT",
+    "asset_type": "stock",
+    "status": "open",
+    "entry_price": null,
+    "stop_loss": null,
+    "target": 25,
+    "size_pct": 11,
+    "trade_date": null,
+    "holding_thesis": null,
+    "opened_at": "2026-05-31T14:39:47+00:00",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2061095300211876021",
+        "signal_type": "position",
+        "timestamp": "2026-05-31T14:39:47+00:00",
+        "confidence": "high",
+        "url": "https://x.com/aifinancelabs/status/2061095300211876021"
       }
     ]
   },
@@ -640,6 +702,7 @@
     "target": null,
     "size_pct": 8.0,
     "trade_date": null,
+    "holding_thesis": null,
     "opened_at": "2026-05-12T21:55:12.000Z",
     "closed_at": null,
     "signals": [
@@ -671,6 +734,7 @@
     "target": null,
     "size_pct": null,
     "trade_date": null,
+    "holding_thesis": null,
     "opened_at": "2026-05-22T01:45:26.000Z",
     "closed_at": null,
     "signals": [
@@ -695,6 +759,7 @@
     "target": null,
     "size_pct": null,
     "trade_date": null,
+    "holding_thesis": null,
     "opened_at": "2026-05-20T20:23:46.000Z",
     "closed_at": null,
     "signals": [
@@ -719,6 +784,7 @@
     "target": null,
     "size_pct": null,
     "trade_date": "2026-05-06",
+    "holding_thesis": null,
     "opened_at": "2026-05-09T19:00:41.000Z",
     "closed_at": null,
     "signals": [
@@ -739,10 +805,11 @@
     "asset_type": "stock",
     "status": "open",
     "entry_price": 321.58,
-    "stop_loss": null,
-    "target": null,
+    "stop_loss": 320,
+    "target": 630,
     "size_pct": null,
     "trade_date": "2026-04-07",
+    "holding_thesis": null,
     "opened_at": "2026-05-31T14:11:03.000Z",
     "closed_at": null,
     "signals": [
@@ -752,6 +819,27 @@
         "timestamp": "2026-05-31T14:11:03.000Z",
         "confidence": "high",
         "url": "https://x.com/grkportfolio/status/2061088067247854028"
+      },
+      {
+        "tweet_id": "2061089288197201939",
+        "signal_type": "position",
+        "timestamp": "2026-05-31T14:15:54+00:00",
+        "confidence": "high",
+        "url": "https://x.com/grkportfolio/status/2061089288197201939"
+      },
+      {
+        "tweet_id": "2061089930298941668",
+        "signal_type": "position",
+        "timestamp": "2026-05-31T14:18:27+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/grkportfolio/status/2061089930298941668"
+      },
+      {
+        "tweet_id": "2061109121857028524",
+        "signal_type": "position",
+        "timestamp": "2026-05-31T15:34:42+00:00",
+        "confidence": "high",
+        "url": "https://x.com/grkportfolio/status/2061109121857028524"
       },
       {
         "tweet_id": "2061112063678947525",
@@ -774,6 +862,7 @@
     "target": null,
     "size_pct": null,
     "trade_date": "2026-05-04",
+    "holding_thesis": null,
     "opened_at": "2026-05-26T21:38:28.000Z",
     "closed_at": null,
     "signals": [
@@ -798,6 +887,7 @@
     "target": null,
     "size_pct": 5.6,
     "trade_date": null,
+    "holding_thesis": null,
     "opened_at": "2026-05-19T20:52:18.000Z",
     "closed_at": null,
     "signals": [
@@ -822,6 +912,7 @@
     "target": null,
     "size_pct": null,
     "trade_date": null,
+    "holding_thesis": null,
     "opened_at": "2026-05-25T21:40:26.000Z",
     "closed_at": null,
     "signals": [
@@ -853,6 +944,7 @@
     "target": null,
     "size_pct": 7.0,
     "trade_date": "2026-05-05",
+    "holding_thesis": null,
     "opened_at": "2026-05-28T20:46:12.000Z",
     "closed_at": null,
     "signals": [
@@ -884,6 +976,7 @@
     "target": null,
     "size_pct": 8.46,
     "trade_date": "2026-04-05",
+    "holding_thesis": null,
     "opened_at": "2026-05-20T20:23:25.000Z",
     "closed_at": null,
     "signals": [
@@ -907,6 +1000,13 @@
         "timestamp": "2026-05-25T21:20:01.000Z",
         "confidence": "high",
         "url": "https://x.com/grkportfolio/status/2059021695747539449"
+      },
+      {
+        "tweet_id": "2061496793570144296",
+        "signal_type": "position",
+        "timestamp": "2026-06-01T17:15:11+00:00",
+        "confidence": "high",
+        "url": "https://x.com/grkportfolio/status/2061496793570144296"
       }
     ]
   },
@@ -922,6 +1022,7 @@
     "target": null,
     "size_pct": null,
     "trade_date": null,
+    "holding_thesis": null,
     "opened_at": "2026-05-19T03:46:28.000Z",
     "closed_at": null,
     "signals": [
@@ -946,6 +1047,7 @@
     "target": null,
     "size_pct": 8.0,
     "trade_date": null,
+    "holding_thesis": null,
     "opened_at": "2026-05-18T16:50:06.000Z",
     "closed_at": null,
     "signals": [
@@ -977,6 +1079,7 @@
     "target": 197,
     "size_pct": null,
     "trade_date": null,
+    "holding_thesis": null,
     "opened_at": "2026-05-17T20:11:06.000Z",
     "closed_at": null,
     "signals": [
@@ -986,6 +1089,564 @@
         "timestamp": "2026-05-17T20:11:06.000Z",
         "confidence": "high",
         "url": "https://x.com/grkportfolio/status/2056105248423354755"
+      }
+    ]
+  },
+  {
+    "account": "moninvestor",
+    "source_type": "influencer",
+    "portfolio": null,
+    "ticker": "AAOI",
+    "asset_type": "stock",
+    "status": "open",
+    "entry_price": null,
+    "stop_loss": null,
+    "target": null,
+    "size_pct": null,
+    "trade_date": "2026-06-01",
+    "holding_thesis": "Expected to follow a similar growth trajectory as SanDisk did.",
+    "opened_at": "2026-06-01T19:20:32+00:00",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2061528342776492399",
+        "signal_type": "buy",
+        "timestamp": "2026-06-01T19:20:32+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/moninvestor/status/2061528342776492399"
+      }
+    ]
+  },
+  {
+    "account": "moninvestor",
+    "source_type": "influencer",
+    "portfolio": null,
+    "ticker": "AIRJ",
+    "asset_type": "stock",
+    "status": "open",
+    "entry_price": null,
+    "stop_loss": null,
+    "target": null,
+    "size_pct": null,
+    "trade_date": "2026-05-14",
+    "holding_thesis": "AIRJ converts wasted industrial heat into water and cooler air via high-efficiency desiccant technology, positioning it to capture significant upside if adopted by data centers facing rising cooling demand.",
+    "opened_at": "2026-05-28T08:22:50+00:00",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2059913275521802294",
+        "signal_type": "position",
+        "timestamp": "2026-05-28T08:22:50+00:00",
+        "confidence": "high",
+        "url": "https://x.com/moninvestor/status/2059913275521802294"
+      }
+    ]
+  },
+  {
+    "account": "moninvestor",
+    "source_type": "influencer",
+    "portfolio": null,
+    "ticker": "BMNR",
+    "asset_type": "stock",
+    "status": "closed",
+    "entry_price": null,
+    "stop_loss": null,
+    "target": null,
+    "size_pct": null,
+    "trade_date": null,
+    "holding_thesis": null,
+    "opened_at": null,
+    "closed_at": "2026-06-02T10:17:52+00:00",
+    "signals": [
+      {
+        "tweet_id": "2061754163831111903",
+        "signal_type": "sell",
+        "timestamp": "2026-06-02T10:17:52+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/moninvestor/status/2061754163831111903"
+      }
+    ]
+  },
+  {
+    "account": "moninvestor",
+    "source_type": "influencer",
+    "portfolio": null,
+    "ticker": "DELL",
+    "asset_type": "unknown",
+    "status": "open",
+    "entry_price": null,
+    "stop_loss": null,
+    "target": null,
+    "size_pct": null,
+    "trade_date": null,
+    "holding_thesis": null,
+    "opened_at": "2026-05-28T21:50:22+00:00",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2060116495426859168",
+        "signal_type": "buy",
+        "timestamp": "2026-05-28T21:50:22+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/moninvestor/status/2060116495426859168"
+      }
+    ]
+  },
+  {
+    "account": "moninvestor",
+    "source_type": "influencer",
+    "portfolio": null,
+    "ticker": "INV",
+    "asset_type": "stock",
+    "status": "open",
+    "entry_price": null,
+    "stop_loss": null,
+    "target": null,
+    "size_pct": 0.05,
+    "trade_date": null,
+    "holding_thesis": "Accelsius is a high-potential subsidiary that could unlock significant value if spun off as a separate entity.",
+    "opened_at": "2026-05-28T16:35:49+00:00",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2060037335278911604",
+        "signal_type": "position",
+        "timestamp": "2026-05-28T16:35:49+00:00",
+        "confidence": "high",
+        "url": "https://x.com/moninvestor/status/2060037335278911604"
+      },
+      {
+        "tweet_id": "2061309205638967613",
+        "signal_type": "position",
+        "timestamp": "2026-06-01T04:49:46+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/moninvestor/status/2061309205638967613"
+      },
+      {
+        "tweet_id": "2061458857881186304",
+        "signal_type": "buy",
+        "timestamp": "2026-06-01T14:44:26+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/moninvestor/status/2061458857881186304"
+      }
+    ]
+  },
+  {
+    "account": "moninvestor",
+    "source_type": "influencer",
+    "portfolio": null,
+    "ticker": "IREN",
+    "asset_type": "stock",
+    "status": "open",
+    "entry_price": null,
+    "stop_loss": null,
+    "target": null,
+    "size_pct": 100,
+    "trade_date": null,
+    "holding_thesis": "Stock is still undervalued despite 66% gains.",
+    "opened_at": "2026-05-28T13:30:32+00:00",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2059990710363766809",
+        "signal_type": "position",
+        "timestamp": "2026-05-28T13:30:32+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/moninvestor/status/2059990710363766809"
+      },
+      {
+        "tweet_id": "2060979580622492121",
+        "signal_type": "position",
+        "timestamp": "2026-05-31T06:59:57+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/moninvestor/status/2060979580622492121"
+      },
+      {
+        "tweet_id": "2061378723610272002",
+        "signal_type": "position",
+        "timestamp": "2026-06-01T09:26:00+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/moninvestor/status/2061378723610272002"
+      },
+      {
+        "tweet_id": "2061462108953592034",
+        "signal_type": "position",
+        "timestamp": "2026-06-01T14:57:21+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/moninvestor/status/2061462108953592034"
+      },
+      {
+        "tweet_id": "2061505223126835673",
+        "signal_type": "position",
+        "timestamp": "2026-06-01T17:48:40+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/moninvestor/status/2061505223126835673"
+      },
+      {
+        "tweet_id": "2061535673241178414",
+        "signal_type": "position",
+        "timestamp": "2026-06-01T19:49:40+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/moninvestor/status/2061535673241178414"
+      },
+      {
+        "tweet_id": "2061568687044276540",
+        "signal_type": "position",
+        "timestamp": "2026-06-01T22:00:51+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/moninvestor/status/2061568687044276540"
+      },
+      {
+        "tweet_id": "2061615333526438114",
+        "signal_type": "position",
+        "timestamp": "2026-06-02T01:06:13+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/moninvestor/status/2061615333526438114"
+      },
+      {
+        "tweet_id": "2061737843890831720",
+        "signal_type": "position",
+        "timestamp": "2026-06-02T09:13:01+00:00",
+        "confidence": "high",
+        "url": "https://x.com/moninvestor/status/2061737843890831720"
+      }
+    ]
+  },
+  {
+    "account": "moninvestor",
+    "source_type": "influencer",
+    "portfolio": null,
+    "ticker": "KEEL",
+    "asset_type": "stock",
+    "status": "open",
+    "entry_price": null,
+    "stop_loss": null,
+    "target": null,
+    "size_pct": null,
+    "trade_date": null,
+    "holding_thesis": "CEO is confident about signing 3 leases this year, driving growth",
+    "opened_at": "2026-05-29T17:14:01+00:00",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2060409338296950908",
+        "signal_type": "position",
+        "timestamp": "2026-05-29T17:14:01+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/moninvestor/status/2060409338296950908"
+      },
+      {
+        "tweet_id": "2061450510805381252",
+        "signal_type": "position",
+        "timestamp": "2026-06-01T14:11:16+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/moninvestor/status/2061450510805381252"
+      },
+      {
+        "tweet_id": "2061477084363382796",
+        "signal_type": "position",
+        "timestamp": "2026-06-01T15:56:51+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/moninvestor/status/2061477084363382796"
+      }
+    ]
+  },
+  {
+    "account": "moninvestor",
+    "source_type": "influencer",
+    "portfolio": null,
+    "ticker": "KOPN",
+    "asset_type": "stock",
+    "status": "open",
+    "entry_price": null,
+    "stop_loss": null,
+    "target": null,
+    "size_pct": null,
+    "trade_date": null,
+    "holding_thesis": "Kopin has top notch management and breakthrough tech.",
+    "opened_at": "2026-05-28T23:44:44+00:00",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2060145275583508706",
+        "signal_type": "position",
+        "timestamp": "2026-05-28T23:44:44+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/moninvestor/status/2060145275583508706"
+      }
+    ]
+  },
+  {
+    "account": "moninvestor",
+    "source_type": "influencer",
+    "portfolio": null,
+    "ticker": "MRVL",
+    "asset_type": "unknown",
+    "status": "open",
+    "entry_price": null,
+    "stop_loss": null,
+    "target": 274.0,
+    "size_pct": null,
+    "trade_date": null,
+    "holding_thesis": null,
+    "opened_at": "2026-06-02T09:49:30+00:00",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2061747023750058364",
+        "signal_type": "buy",
+        "timestamp": "2026-06-02T09:49:30+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/moninvestor/status/2061747023750058364"
+      }
+    ]
+  },
+  {
+    "account": "moninvestor",
+    "source_type": "influencer",
+    "portfolio": null,
+    "ticker": "NBIS",
+    "asset_type": "stock",
+    "status": "open",
+    "entry_price": 25.67,
+    "stop_loss": null,
+    "target": null,
+    "size_pct": null,
+    "trade_date": null,
+    "holding_thesis": "10x gain demonstrates the value of early conviction and position sizing in long-term holding.",
+    "opened_at": "2026-06-01T14:33:21+00:00",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2061456070707486931",
+        "signal_type": "position",
+        "timestamp": "2026-06-01T14:33:21+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/moninvestor/status/2061456070707486931"
+      },
+      {
+        "tweet_id": "2061462276507320781",
+        "signal_type": "position",
+        "timestamp": "2026-06-01T14:58:01+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/moninvestor/status/2061462276507320781"
+      },
+      {
+        "tweet_id": "2061511135971405873",
+        "signal_type": "position",
+        "timestamp": "2026-06-01T18:12:10+00:00",
+        "confidence": "high",
+        "url": "https://x.com/moninvestor/status/2061511135971405873"
+      }
+    ]
+  },
+  {
+    "account": "moninvestor",
+    "source_type": "influencer",
+    "portfolio": null,
+    "ticker": "NOK",
+    "asset_type": "stock",
+    "status": "open",
+    "entry_price": null,
+    "stop_loss": null,
+    "target": null,
+    "size_pct": null,
+    "trade_date": "2026-06-01",
+    "holding_thesis": "Nokia's CDO invested $1.1M of his own money, signaling insider confidence.",
+    "opened_at": "2026-06-01T19:01:20+00:00",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2061523509805781255",
+        "signal_type": "buy",
+        "timestamp": "2026-06-01T19:01:20+00:00",
+        "confidence": "high",
+        "url": "https://x.com/moninvestor/status/2061523509805781255"
+      }
+    ]
+  },
+  {
+    "account": "moninvestor",
+    "source_type": "influencer",
+    "portfolio": null,
+    "ticker": "NUAI",
+    "asset_type": "stock",
+    "status": "open",
+    "entry_price": null,
+    "stop_loss": null,
+    "target": null,
+    "size_pct": null,
+    "trade_date": null,
+    "holding_thesis": "Still early in the growth cycle.",
+    "opened_at": "2026-05-28T21:14:19+00:00",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2060107422920818821",
+        "signal_type": "buy",
+        "timestamp": "2026-05-28T21:14:19+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/moninvestor/status/2060107422920818821"
+      },
+      {
+        "tweet_id": "2061492323234586754",
+        "signal_type": "position",
+        "timestamp": "2026-06-01T16:57:25+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/moninvestor/status/2061492323234586754"
+      },
+      {
+        "tweet_id": "2061511395569483891",
+        "signal_type": "position",
+        "timestamp": "2026-06-01T18:13:12+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/moninvestor/status/2061511395569483891"
+      }
+    ]
+  },
+  {
+    "account": "moninvestor",
+    "source_type": "influencer",
+    "portfolio": null,
+    "ticker": "ONDS",
+    "asset_type": "stock",
+    "status": "open",
+    "entry_price": null,
+    "stop_loss": null,
+    "target": null,
+    "size_pct": null,
+    "trade_date": null,
+    "holding_thesis": "ONDS has greater growth potential than Anduril and is underestimated by the market.",
+    "opened_at": "2026-05-28T07:43:23+00:00",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2059903346975121479",
+        "signal_type": "position",
+        "timestamp": "2026-05-28T07:43:23+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/moninvestor/status/2059903346975121479"
+      }
+    ]
+  },
+  {
+    "account": "moninvestor",
+    "source_type": "influencer",
+    "portfolio": null,
+    "ticker": "OUST",
+    "asset_type": "stock",
+    "status": "open",
+    "entry_price": null,
+    "stop_loss": null,
+    "target": 75,
+    "size_pct": null,
+    "trade_date": null,
+    "holding_thesis": "Best investment ever.",
+    "opened_at": "2026-05-29T09:44:17+00:00",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2060296158027673904",
+        "signal_type": "buy",
+        "timestamp": "2026-05-29T09:44:17+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/moninvestor/status/2060296158027673904"
+      },
+      {
+        "tweet_id": "2060694937587359881",
+        "signal_type": "position",
+        "timestamp": "2026-05-30T12:08:53+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/moninvestor/status/2060694937587359881"
+      }
+    ]
+  },
+  {
+    "account": "moninvestor",
+    "source_type": "influencer",
+    "portfolio": null,
+    "ticker": "PENG",
+    "asset_type": "stock",
+    "status": "open",
+    "entry_price": null,
+    "stop_loss": null,
+    "target": null,
+    "size_pct": null,
+    "trade_date": null,
+    "holding_thesis": "Agentic AI-driven demand supporting strong revenue and EPS at high end of guidance.",
+    "opened_at": "2026-05-29T12:46:27+00:00",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2060342004999925923",
+        "signal_type": "buy",
+        "timestamp": "2026-05-29T12:46:27+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/moninvestor/status/2060342004999925923"
+      },
+      {
+        "tweet_id": "2061546541148430711",
+        "signal_type": "position",
+        "timestamp": "2026-06-01T20:32:51+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/moninvestor/status/2061546541148430711"
+      },
+      {
+        "tweet_id": "2061813350577619316",
+        "signal_type": "position",
+        "timestamp": "2026-06-02T14:13:04+00:00",
+        "confidence": "high",
+        "url": "https://x.com/moninvestor/status/2061813350577619316"
+      }
+    ]
+  },
+  {
+    "account": "moninvestor",
+    "source_type": "influencer",
+    "portfolio": null,
+    "ticker": "SIVE",
+    "asset_type": "stock",
+    "status": "open",
+    "entry_price": null,
+    "stop_loss": null,
+    "target": null,
+    "size_pct": null,
+    "trade_date": null,
+    "holding_thesis": null,
+    "opened_at": "2026-06-02T09:58:37+00:00",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2061749315903594580",
+        "signal_type": "position",
+        "timestamp": "2026-06-02T09:58:37+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/moninvestor/status/2061749315903594580"
+      }
+    ]
+  },
+  {
+    "account": "theaiportfolios",
+    "source_type": "portfolio",
+    "portfolio": "claude",
+    "ticker": "ARDX",
+    "asset_type": "stock",
+    "status": "open",
+    "entry_price": null,
+    "stop_loss": null,
+    "target": null,
+    "size_pct": 6.31,
+    "trade_date": "2026-04-25",
+    "holding_thesis": null,
+    "opened_at": "2026-05-01T17:15:11+00:00",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2050262772727136287",
+        "signal_type": "buy",
+        "timestamp": "2026-05-01T17:15:11+00:00",
+        "confidence": "high",
+        "url": "https://x.com/theaiportfolios/status/2050262772727136287"
       }
     ]
   },
@@ -1001,6 +1662,7 @@
     "target": null,
     "size_pct": null,
     "trade_date": "2026-04-07",
+    "holding_thesis": null,
     "opened_at": "2026-05-31T14:12:51.000Z",
     "closed_at": null,
     "signals": [
@@ -1016,15 +1678,41 @@
   {
     "account": "theaiportfolios",
     "source_type": "portfolio",
+    "portfolio": "grok",
+    "ticker": "MU",
+    "asset_type": "stock",
+    "status": "open",
+    "entry_price": null,
+    "stop_loss": null,
+    "target": null,
+    "size_pct": null,
+    "trade_date": null,
+    "holding_thesis": null,
+    "opened_at": "2026-06-01T17:16:08+00:00",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2061497034226741347",
+        "signal_type": "position",
+        "timestamp": "2026-06-01T17:16:08+00:00",
+        "confidence": "high",
+        "url": "https://x.com/theaiportfolios/status/2061497034226741347"
+      }
+    ]
+  },
+  {
+    "account": "theaiportfolios",
+    "source_type": "portfolio",
     "portfolio": "claude",
     "ticker": "NOW",
     "asset_type": "stock",
     "status": "open",
     "entry_price": 88,
-    "stop_loss": null,
-    "target": null,
+    "stop_loss": 115.0,
+    "target": 150.0,
     "size_pct": null,
     "trade_date": "2026-04-01",
+    "holding_thesis": null,
     "opened_at": "2026-05-28T21:59:10.000Z",
     "closed_at": null,
     "signals": [
@@ -1062,6 +1750,34 @@
         "timestamp": "2026-05-30T13:41:13.000Z",
         "confidence": "high",
         "url": "https://x.com/theaiportfolios/status/2060718173893079141"
+      },
+      {
+        "tweet_id": "2061437198461808989",
+        "signal_type": "position",
+        "timestamp": "2026-06-01T13:18:22+00:00",
+        "confidence": "high",
+        "url": "https://x.com/theaiportfolios/status/2061437198461808989"
+      },
+      {
+        "tweet_id": "2061440214460190843",
+        "signal_type": "buy",
+        "timestamp": "2026-06-01T13:30:21+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/theaiportfolios/status/2061440214460190843"
+      },
+      {
+        "tweet_id": "2061472751731298318",
+        "signal_type": "position",
+        "timestamp": "2026-06-01T15:39:38+00:00",
+        "confidence": "high",
+        "url": "https://x.com/theaiportfolios/status/2061472751731298318"
+      },
+      {
+        "tweet_id": "2061500801592488147",
+        "signal_type": "position",
+        "timestamp": "2026-06-01T17:31:06+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/theaiportfolios/status/2061500801592488147"
       }
     ]
   },
@@ -1076,7 +1792,8 @@
     "stop_loss": null,
     "target": null,
     "size_pct": 11,
-    "trade_date": null,
+    "trade_date": "2026-05-12",
+    "holding_thesis": null,
     "opened_at": "2026-05-31T04:13:09.000Z",
     "closed_at": null,
     "signals": [
@@ -1093,6 +1810,20 @@
         "timestamp": "2026-05-31T14:42:39.000Z",
         "confidence": "high",
         "url": "https://x.com/theaiportfolios/status/2061096019782414375"
+      },
+      {
+        "tweet_id": "2061508005003137368",
+        "signal_type": "position",
+        "timestamp": "2026-06-01T17:59:44+00:00",
+        "confidence": "high",
+        "url": "https://x.com/theaiportfolios/status/2061508005003137368"
+      },
+      {
+        "tweet_id": "2061514853031010517",
+        "signal_type": "position",
+        "timestamp": "2026-06-01T18:26:56+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/theaiportfolios/status/2061514853031010517"
       }
     ]
   }

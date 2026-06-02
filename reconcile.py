@@ -34,7 +34,8 @@ POSITIONS_FILE = os.path.join(HOME, "positions.json")
 ACCOUNT_DEFAULT_PF = {"grkportfolio": "grok", "theaiportfolios": "claude",
                       "aifinancelabs": "deepseek"}
 # Influencer accounts have no portfolio (portfolio stays null by design).
-INFLUENCER_ACCOUNTS = {"IncomeSharks"}
+# Includes the long-term conviction account @moninvestor.
+INFLUENCER_ACCOUNTS = {"IncomeSharks", "moninvestor"}
 # Signals at this confidence are logged to trades.json but must NOT move
 # position state (see confidence gate).
 GATED_CONFIDENCE = {"low", "none"}
@@ -95,6 +96,7 @@ def reconcile(trades_file=TRADES_FILE, positions_file=POSITIONS_FILE):
                 "target": None,
                 "size_pct": None,
                 "trade_date": None,
+                "holding_thesis": None,
                 "opened_at": None,
                 "closed_at": None,
                 "signals": [],
@@ -112,6 +114,10 @@ def reconcile(trades_file=TRADES_FILE, positions_file=POSITIONS_FILE):
         # asset_type: upgrade from "unknown" to a concrete value when seen.
         if e.get("asset_type") and e["asset_type"] != "unknown":
             pos["asset_type"] = e["asset_type"]
+
+        # holding_thesis: keep the most recent stated conviction reason.
+        if e.get("holding_thesis"):
+            pos["holding_thesis"] = e["holding_thesis"]
 
         st = e.get("signal_type")
         if st == "buy":
