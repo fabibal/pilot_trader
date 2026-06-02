@@ -60,15 +60,26 @@ SOURCE_TYPE = {"IncomeSharks": "influencer", "moninvestor": "influencer"}
 # slow long-term conviction investor: buys to hold (no TP/stop), and phrases
 # like "buying more"/"adding"/"keeping" are holding updates, not new buys.
 ACCOUNT_STYLE = {"moninvestor": "conviction_long"}
-# Accounts polled only at specific UTC hours (slow long-term accounts don't
-# need every 4h cron tick). Empty/absent => polled on every run.
-POLL_HOURS = {"moninvestor": {0, 12}}
+# Slow accounts: fetch only if the last fetch was more than N hours ago (instead
+# of an exact-hour cron match, which fails entirely if that one cron run fails).
+# Absent => polled on every run. moninvestor is long-term, so ~twice a day.
+POLL_MIN_INTERVAL_H = {"moninvestor": 10}
 HOME = "/home/fbazsa/pilot_trader"
+DATA_DIR = os.path.join(HOME, "data")
+COST_LOG_FILE = os.path.join(DATA_DIR, "cost_log.json")
 TRADES_FILE = os.path.join(HOME, "trades.json")
 POSITIONS_FILE = os.path.join(HOME, "positions.json")
 STATE_FILE = os.path.join(HOME, ".monitor_state.json")
 ENV_FILE = os.path.join(HOME, ".env")
+# Telegram alert credentials live in paper_trader's .env (shared bot). We also
+# look at the home .env. All loaded read-only via setdefault, so pilot_trader's
+# own .env still wins.
+PAPER_ENV = "/home/fbazsa/paper_trader/.env"
+SHARED_ENV = "/home/fbazsa/.env.shared"
+HOME_ENV = "/home/fbazsa/.env"
+TELEGRAM_ENVS = (ENV_FILE, PAPER_ENV, SHARED_ENV, HOME_ENV)
 MONITOR_LOG = os.path.join(HOME, "monitor.log")
+STALE_ALERT_HOURS = 8        # alert if the last successful run is older than this
 RAW_FILES = {  # used by --backfill; accounts without a snapshot are skipped
     "grkportfolio": os.path.join(HOME, "tweets_raw.json"),
     "theaiportfolios": os.path.join(HOME, "tweets_theaiportfolios.json"),
@@ -376,6 +387,26 @@ def reply_has_sell_verb(text):
     return any(v in low for v in SELL_VERBS)
 
 
+def slow_fetch_skip(account, state, now):
+    """Pacing gate for POLL_MIN_INTERVAL_H accounts. Returns (skip, age_h).
+
+    skip=True when the account's last fetch was less than its min interval ago.
+    A never-fetched account (no last_fetch) is NOT skipped — so a missed cron
+    run can't strand it, and the first run seeds last_fetch. Unknown timestamps
+    fail open (do not skip)."""
+    min_h = POLL_MIN_INTERVAL_H.get(account)
+    if min_h is None:
+        return False, None
+    last = (state.get(account) or {}).get("last_fetch")
+    if not last:
+        return False, None
+    try:
+        age_h = (now - datetime.fromisoformat(last)).total_seconds() / 3600
+    except (ValueError, TypeError):
+        return False, None
+    return (age_h < min_h), age_h
+
+
 def merge_chart(parsed, chart):
     """Fold a vision/chart extraction into the text-extracted signal dict.
     Image data only FILLS GAPS — text-stated values win. Chart-only fields
@@ -628,7 +659,8 @@ def tweets_for_account(account, state, backfill, source):
     if tweets:
         newest = str(max(int(t["id"]) for t in tweets if str(t["id"]).isdigit()))
         if not since_id or int(newest) > int(since_id):
-            state[account] = {"newest_id": newest}
+            # update in place so sibling keys (e.g. last_fetch) survive
+            state.setdefault(account, {})["newest_id"] = newest
     return tweets, len(tweets), calls
 
 
@@ -721,9 +753,25 @@ def main():
                     help="fetch fresh + analyze, but write NOTHING (no trades.json, "
                          "positions.json, or state). Dumps would-be signals to "
                          "/tmp/pilot_dryrun_<source>.json for comparison.")
+    ap.add_argument("--account", choices=ACCOUNTS,
+                    help="restrict to ONE account. With --backfill, rebuilds only "
+                         "that account's signals in trades.json, preserving all "
+                         "others. Without it, just limits the live fetch.")
+    ap.add_argument("--test-telegram", action="store_true",
+                    help="send a test alert to confirm Telegram is wired, then exit.")
     args = ap.parse_args()
 
+    # Telegram self-test: load creds from the env files and send one message.
+    if args.test_telegram:
+        for p in TELEGRAM_ENVS:
+            load_env(p)
+        ok, detail = _send_telegram(
+            "✅ pilot_trader: P2 health check - all systems operational")
+        print(f"Telegram test: {'DELIVERED' if ok else 'FAILED'}  ({detail})")
+        sys.exit(0 if ok else 1)
+
     load_env(ENV_FILE)
+    load_env(PAPER_ENV)   # Telegram creds (setdefault: pilot .env still wins)
     if not os.environ.get("ANTHROPIC_API_KEY"):
         print("ANTHROPIC_API_KEY is not set. Add it to ~/pilot_trader/.env "
               "(ANTHROPIC_API_KEY=sk-ant-...) and re-run.", file=sys.stderr)
@@ -741,26 +789,38 @@ def main():
         return
 
     state = load_json(STATE_FILE, {})
+    if not (args.backfill or args.dry_run):
+        _staleness_alert(state)   # page if prior runs were missed/failed
     # Backfill rebuilds trades.json from the local snapshots, so it starts from a
     # clean slate (otherwise dedup against prior signals would skip every tweet).
     # Dry-run also starts clean and ignores stored state so it fetches a fresh,
     # comparable batch from the live API (otherwise since_id would return ~nothing).
-    existing = [] if (args.backfill or args.dry_run) else load_json(TRADES_FILE, [])
+    # --account --backfill rebuilds ONE account: drop its old signals, keep every
+    # OTHER account's, then re-interpret it from its snapshot. A live --account
+    # run must NOT drop (the incremental since_id fetch won't re-add history), so
+    # it just restricts the loop and adds incrementally.
+    if args.account and args.backfill:
+        existing = [r for r in load_json(TRADES_FILE, [])
+                    if r.get("account") != args.account]
+    else:
+        existing = [] if (args.backfill or args.dry_run) \
+            else load_json(TRADES_FILE, [])
     seen_ids = {r["tweet_id"] for r in existing}
     run_state = {} if args.dry_run else state    # throwaway state in dry-run
+    accounts = [args.account] if args.account else ACCOUNTS
 
     all_new, total_reads, total_skipped, total_sell_cand, total_calls = \
         [], 0, 0, 0, 0
-    cur_hour = datetime.now(timezone.utc).hour
-    for account in ACCOUNTS:
-        # Slow long-term accounts (POLL_HOURS) only fetch on certain UTC hours;
-        # live runs skip them otherwise. Backfill/dry-run always process them.
-        hrs = POLL_HOURS.get(account)
-        if hrs is not None and not (args.backfill or args.dry_run) \
-                and cur_hour not in hrs:
-            print(f"[{account}] skipped (polls only at "
-                  f"{sorted(hrs)} UTC, now {cur_hour:02d})")
-            continue
+    now = datetime.now(timezone.utc)
+    for account in accounts:
+        # Slow accounts (POLL_MIN_INTERVAL_H): skip on a live run if fetched too
+        # recently. Backfill/dry-run/explicit --account always process.
+        if not (args.backfill or args.dry_run) and not args.account:
+            skip, age_h = slow_fetch_skip(account, run_state, now)
+            if skip:
+                print(f"[{account}] skipped (last fetch {age_h:.1f}h ago "
+                      f"< {POLL_MIN_INTERVAL_H[account]}h min)")
+                continue
         try:
             tweets, reads, calls = tweets_for_account(
                 account, run_state, args.backfill, args.source)
@@ -768,6 +828,10 @@ def main():
             print(f"[{account}] HTTP {e.code}: "
                   f"{e.read().decode('utf-8', 'replace')}", file=sys.stderr)
             continue
+        # Record the fetch time so POLL_MIN_INTERVAL_H accounts can pace
+        # themselves off "last fetch", not an exact cron hour.
+        if not (args.backfill or args.dry_run):
+            run_state.setdefault(account, {})["last_fetch"] = now.isoformat()
         total_reads += reads
         total_calls += calls
         new, skipped, sell_cand = 0, 0, 0
@@ -837,6 +901,78 @@ def main():
             print(f"Twitter reads [{args.source}]: {total_reads}  "
                   f"(${total_reads * TWITTER_COST_PER_TWEET:.4f})")
 
+    # Append per-run cost telemetry (skip dry-run writes and zero-LLM runs).
+    if not args.dry_run and (interp.calls or interp.vision_calls):
+        log_cost(interp)
+
+
+def log_cost(interp):
+    """Append this run's token usage + cost to data/cost_log.json. Telemetry
+    only: a write failure (e.g. data/ owned by the Docker user) prints a warning
+    but never breaks the run."""
+    rec = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "haiku_input_tok": interp.input_tokens,
+        "haiku_output_tok": interp.output_tokens,
+        "sonnet_input_tok": interp.vision_input_tokens,
+        "sonnet_output_tok": interp.vision_output_tokens,
+        "total_usd": round(interp.cost() + interp.vision_cost(), 6),
+    }
+    try:
+        log = load_json(COST_LOG_FILE, [])
+        if not isinstance(log, list):
+            log = []
+        log.append(rec)
+        os.makedirs(DATA_DIR, exist_ok=True)
+        write_json_atomic(COST_LOG_FILE, log)
+        print(f"Cost logged -> {COST_LOG_FILE} ({len(log)} runs)")
+    except OSError as e:
+        print(f"[cost-log] could not write {COST_LOG_FILE}: {e}", file=sys.stderr)
+
+
+def _send_telegram(text):
+    """Send a raw Telegram message. Returns (ok, detail). ok reflects Telegram's
+    own {"ok": true} response, so it confirms DELIVERY, not just a 200."""
+    token = os.environ.get("TELEGRAM_BOT_TOKEN")
+    chat = os.environ.get("TELEGRAM_CHAT_ID")
+    if not token or not chat:
+        return False, "creds not configured (TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID)"
+    try:
+        data = urllib.parse.urlencode({"chat_id": chat, "text": text}).encode()
+        req = urllib.request.Request(
+            f"https://api.telegram.org/bot{token}/sendMessage", data=data)
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            body = json.loads(resp.read().decode("utf-8", "replace"))
+        return bool(body.get("ok")), f"telegram ok={body.get('ok')}"
+    except (urllib.error.URLError, OSError, ValueError) as e:
+        return False, f"send failed: {e}"
+
+
+def notify_telegram(reason):
+    """Best-effort alert: '⚠️ pilot_trader: <reason> at <ts>'. No-ops silently
+    if creds are not configured."""
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    ok, detail = _send_telegram(f"⚠️ pilot_trader: {reason} at {ts}")
+    if not ok and "not configured" not in detail:
+        print(f"[telegram] {detail}", file=sys.stderr)
+    return ok
+
+
+def _staleness_alert(state):
+    """If the last successful run is older than STALE_ALERT_HOURS, page Telegram.
+    Runs at the start of each live run, so missed/failed prior runs are caught."""
+    last = state.get("_last_run")
+    if not last:
+        return
+    try:
+        age_h = (datetime.now(timezone.utc)
+                 - datetime.fromisoformat(last)).total_seconds() / 3600
+    except (ValueError, TypeError):
+        return
+    if age_h > STALE_ALERT_HOURS:
+        notify_telegram(f"data stale — last successful run {age_h:.0f}h ago "
+                        f"(>{STALE_ALERT_HOURS}h)")
+
 
 def _log_failure(exc):
     """Append a FAILED entry with full traceback to monitor.log."""
@@ -858,6 +994,13 @@ if __name__ == "__main__":
         raise
     except BaseException as exc:   # log anything, then surface a non-zero exit
         _log_failure(exc)
+        # Env may not have loaded if main() crashed early; load creds here too.
+        try:
+            load_env(ENV_FILE)
+            load_env(PAPER_ENV)
+            notify_telegram(f"monitor.py FAILED: {exc!r}")
+        except Exception:
+            pass
         print(f"monitor.py FAILED: {exc!r} "
               f"(traceback appended to {MONITOR_LOG})", file=sys.stderr)
         sys.exit(1)

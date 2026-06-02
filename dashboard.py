@@ -23,6 +23,8 @@ Run with the project venv:
 import json
 import os
 import time
+import urllib.request
+import urllib.error
 from datetime import datetime, timedelta, timezone
 
 import pandas as pd
@@ -33,12 +35,153 @@ from dash import Dash, dash_table, dcc, html, Input, Output
 
 import resolver
 
+HOME = "/home/fbazsa/pilot_trader"
 TRADES_FILE = "/home/fbazsa/pilot_trader/trades.json"
 POSITIONS_FILE = "/home/fbazsa/pilot_trader/positions.json"
 STATE_FILE = "/home/fbazsa/pilot_trader/.monitor_state.json"
+ENV_FILE = "/home/fbazsa/pilot_trader/.env"
 STALE_HOURS = 8           # cron runs every 4h; >8h means a run was missed
 REFRESH_MS = 60_000
 PORT = 8051
+
+# --- API credits (GetXAPI) --------------------------------------------------
+# GetXAPI exposes account credits at GET /account/me (-> credits_remaining).
+# Anthropic has no remaining-credit-balance endpoint, so only GetXAPI is shown.
+GETXAPI_BASE = "https://api.getxapi.com"
+CREDITS_REFRESH_MS = 3_600_000   # 60 min — don't hammer the credits API
+CREDITS_LOW_USD = 1.00           # below this, show the balance in red
+
+# Anthropic spend telemetry written per run by monitor.log_cost().
+COST_LOG_FILE = "/home/fbazsa/pilot_trader/data/cost_log.json"
+
+
+def _load_env(path):
+    """Minimal .env loader (dashboard runs without the monitor's anthropic dep,
+    so we don't import monitor.load_env). Only sets vars not already present."""
+    if not os.path.exists(path):
+        return
+    for line in open(path):
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        k, v = line.split("=", 1)
+        os.environ.setdefault(k.strip(), v.strip().strip('"').strip("'"))
+
+
+_load_env(ENV_FILE)
+
+# Cached GetXAPI credits: {balance: float|None, fetched_at: epoch|None, ok: bool}
+_credits_cache = {"balance": None, "fetched_at": None, "ok": False}
+
+
+def get_getxapi_credits():
+    """Return the cached GetXAPI credits dict, refreshing at most every
+    CREDITS_REFRESH_MS. Network failure leaves the last good value in place and
+    flags ok=False so the UI can show a fetch error without blanking the card."""
+    now = time.time()
+    fa = _credits_cache["fetched_at"]
+    if fa is not None and now - fa < CREDITS_REFRESH_MS / 1000:
+        return _credits_cache
+    key = os.environ.get("GETXAPI_KEY")
+    if not key:
+        _credits_cache.update(fetched_at=now, ok=False)
+        return _credits_cache
+    try:
+        req = urllib.request.Request(
+            GETXAPI_BASE + "/account/me",
+            headers={"Authorization": f"Bearer {key}"})
+        with urllib.request.urlopen(req, timeout=15) as r:
+            data = json.load(r)
+        _credits_cache.update(balance=float(data.get("credits_remaining")),
+                              fetched_at=now, ok=True)
+    except (urllib.error.URLError, OSError, ValueError, TypeError):
+        _credits_cache.update(fetched_at=now, ok=False)
+    return _credits_cache
+
+
+def credits_cards():
+    """Small header info card(s) for API credit balances. GetXAPI only —
+    Anthropic exposes no remaining-balance endpoint. Balance turns red below
+    CREDITS_LOW_USD; a failed fetch shows the last value with an error note."""
+    c = get_getxapi_credits()
+    bal = c["balance"]
+    if bal is None:
+        val_txt, val_color = "n/a", C["dim"]
+    else:
+        val_txt = f"${bal:,.2f}"
+        val_color = C["red"] if bal < CREDITS_LOW_USD else C["green"]
+    if c["fetched_at"]:
+        checked = datetime.fromtimestamp(
+            c["fetched_at"], timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    else:
+        checked = "never"
+    note = "" if c["ok"] else "  (fetch error — last known)"
+
+    card = html.Div(style={
+        "background": C["card"], "border": f"1px solid {C['border']}",
+        "borderRadius": "6px", "padding": "6px 12px", "display": "inline-block"},
+        children=[
+            html.Span("GetXAPI Credits: ", style={"color": C["dim"]}),
+            html.Span(val_txt, style={"color": val_color, "fontWeight": "bold"}),
+            html.Span(note, style={"color": C["red"], "fontSize": "0.7rem"}),
+        ])
+    return html.Div(style={
+        "display": "flex", "flexWrap": "wrap", "gap": "10px",
+        "alignItems": "center", "marginTop": "8px", "fontSize": "0.8rem"},
+        children=[
+            card,
+            html.Span(f"checked {checked}",
+                      style={"color": C["dim"], "fontSize": "0.7rem"}),
+        ])
+
+
+def api_costs_card():
+    """Header card for Anthropic (Haiku+Sonnet) spend: today / this month /
+    all-time, summed from data/cost_log.json (written per run by monitor.py).
+    Shows '$0.00' when the log is absent/empty."""
+    try:
+        with open(COST_LOG_FILE) as f:
+            log = json.load(f)
+        if not isinstance(log, list):
+            log = []
+    except (json.JSONDecodeError, OSError):
+        log = []
+
+    now = datetime.now(timezone.utc)
+    today, month = now.strftime("%Y-%m-%d"), now.strftime("%Y-%m")
+    d_sum = m_sum = t_sum = 0.0
+    for r in log:
+        usd = r.get("total_usd") or 0.0
+        ts = r.get("timestamp") or ""
+        t_sum += usd
+        if ts[:7] == month:
+            m_sum += usd
+        if ts[:10] == today:
+            d_sum += usd
+
+    def part(label, val):
+        return html.Span([
+            html.Span(f"{label} ", style={"color": C["dim"]}),
+            html.Span(f"${val:,.2f}",
+                      style={"color": C["text"], "fontWeight": "bold"}),
+        ], style={"marginRight": "12px"})
+
+    card = html.Div(style={
+        "background": C["card"], "border": f"1px solid {C['border']}",
+        "borderRadius": "6px", "padding": "6px 12px", "display": "inline-block"},
+        children=[
+            html.Span("API Costs  ", style={"color": C["dim"]}),
+            part("today", d_sum), part("mo", m_sum), part("total", t_sum),
+        ])
+    note = "" if log else "  (no runs logged yet)"
+    return html.Div(style={
+        "display": "flex", "flexWrap": "wrap", "gap": "10px",
+        "alignItems": "center", "marginTop": "6px", "fontSize": "0.8rem"},
+        children=[
+            card,
+            html.Span(f"{len(log)} runs{note}",
+                      style={"color": C["dim"], "fontSize": "0.7rem"}),
+        ])
 PORTFOLIO_LABELS = {"grok": "Grok", "claude": "Claude",
                     "deepseek": "DeepSeek", "chatgpt": "ChatGPT"}
 # Merge null/"unknown" portfolio into the most likely one based on the posting
@@ -912,8 +1055,13 @@ app.layout = html.Div(
             html.Div(id="prices-asof", style={"color": C["dim"],
                                               "fontSize": "0.72rem", "marginTop": "2px"}),
             html.Div(id="freshness"),
+            html.Div(id="api-credits", children=credits_cards()),
+            html.Div(id="api-costs", children=api_costs_card()),
         ]),
         dcc.Interval(id="interval", interval=REFRESH_MS, n_intervals=0),
+        # Separate, slow interval so the credits API is polled ~hourly, not 60s.
+        dcc.Interval(id="credits-interval", interval=CREDITS_REFRESH_MS,
+                     n_intervals=0),
 
         # Top-level split: AI Portfolios vs Influencers (two distinct worlds).
         dcc.Tabs(id="main-tabs", value="ai", style={"marginTop": "14px"},
@@ -1051,6 +1199,15 @@ def switch_main_tab(tab):
     if tab == "influencers":
         return hide, show
     return show, hide
+
+
+@app.callback(
+    Output("api-credits", "children"),
+    Output("api-costs", "children"),
+    Input("credits-interval", "n_intervals"),
+)
+def refresh_credits(_n):
+    return credits_cards(), api_costs_card()
 
 
 @app.callback(

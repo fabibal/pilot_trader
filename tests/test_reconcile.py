@@ -137,3 +137,84 @@ def test_duplicate_disclosures_dedup_to_one_position():
     assert p["entry_price"] == 100
     assert p["size_pct"] == 7          # latest disclosure wins
     assert len(p["signals"]) == 3
+
+
+def test_position_disclosure_on_open_updates_size_only():
+    """A position-disclosure on an already-open position updates size but does
+    not re-open or change opened_at."""
+    pos = _run([
+        _event("grkportfolio", "GOOG", "buy", "2026-01-01T00:00:00Z",
+               portfolio="grok", entry=140, size=10),
+        _event("grkportfolio", "GOOG", "position", "2026-01-10T00:00:00Z",
+               portfolio="grok", size=6),
+    ])
+    p = pos[("grkportfolio", "grok", "GOOG")]
+    assert p["status"] == "open"
+    assert p["size_pct"] == 6
+    assert p["entry_price"] == 140                 # unchanged
+    assert p["opened_at"] == "2026-01-01T00:00:00Z"  # buy date, not disclosure
+
+
+def test_position_disclosure_on_unknown_ticker_opens_new():
+    """A position-disclosure for a ticker never bought still opens a held
+    position (a current-holding disclosure implies it is held)."""
+    pos = _run([
+        _event("grkportfolio", "ORCL", "position", "2026-03-01T00:00:00Z",
+               portfolio="grok", size=4),
+    ])
+    p = pos[("grkportfolio", "grok", "ORCL")]
+    assert p["status"] == "open"
+    assert p["size_pct"] == 4
+    assert p["opened_at"] == "2026-03-01T00:00:00Z"
+
+
+def test_reopen_after_close():
+    """A new buy on a previously fully-closed position re-opens it and clears
+    closed_at."""
+    pos = _run([
+        _event("grkportfolio", "AMZN", "buy", "2026-01-01T00:00:00Z",
+               portfolio="grok", entry=180),
+        _event("grkportfolio", "AMZN", "sell", "2026-02-01T00:00:00Z",
+               portfolio="grok", sell_kind="full"),
+        _event("grkportfolio", "AMZN", "buy", "2026-03-01T00:00:00Z",
+               portfolio="grok", entry=190),
+    ])
+    p = pos[("grkportfolio", "grok", "AMZN")]
+    assert p["status"] == "open"
+    assert p["closed_at"] is None
+    assert p["opened_at"] == "2026-03-01T00:00:00Z"   # re-open date
+
+
+def test_duplicate_tweet_id_ignored():
+    """A repeated event with the same tweet_id is folded once. Critically a
+    duplicate PARTIAL sell must NOT halve size twice."""
+    pos = _run([
+        _event("grkportfolio", "NVDA", "buy", "2026-01-01T00:00:00Z",
+               portfolio="grok", size=8, tweet_id="t1"),
+        _event("grkportfolio", "NVDA", "sell", "2026-02-01T00:00:00Z",
+               portfolio="grok", sell_kind="partial", tweet_id="t2"),
+        _event("grkportfolio", "NVDA", "sell", "2026-02-01T00:00:00Z",
+               portfolio="grok", sell_kind="partial", tweet_id="t2"),  # dup
+    ])
+    p = pos[("grkportfolio", "grok", "NVDA")]
+    assert p["status"] == "open"
+    assert p["size_pct"] == 4.0          # halved once, not twice (would be 2.0)
+    assert len(p["signals"]) == 2        # dup not appended
+
+
+def test_moninvestor_adding_is_position_update():
+    """@moninvestor 'adding'/'keeping' maps (by the LLM) to a position signal;
+    reconcile must treat it as a size update on the SAME held position, not a
+    second position. Influencer portfolio stays null."""
+    pos = _run([
+        _event("moninvestor", "SOFI", "buy", "2026-04-01T00:00:00Z",
+               source_type="influencer", portfolio=None, entry=10, size=3),
+        _event("moninvestor", "SOFI", "position", "2026-04-20T00:00:00Z",
+               source_type="influencer", portfolio=None, size=5),
+    ])
+    assert len(pos) == 1
+    p = pos[("moninvestor", None, "SOFI")]
+    assert p["status"] == "open"
+    assert p["size_pct"] == 5
+    assert p["entry_price"] == 10
+    assert len(p["signals"]) == 2

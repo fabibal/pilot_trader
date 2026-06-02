@@ -70,10 +70,19 @@ def reconcile(trades_file=TRADES_FILE, positions_file=POSITIONS_FILE):
     events.sort(key=lambda e: e.get("timestamp", ""))
 
     positions = {}
+    seen_tweet_ids = set()
     for e in events:
         tickers = e.get("tickers") or []
         if not tickers:
             continue
+        # Idempotency guard: each tweet is one signal. monitor.py already dedups
+        # by tweet_id before writing trades.json, but fold defensively here too —
+        # a duplicate partial-sell would otherwise halve size_pct twice.
+        tid = e.get("tweet_id")
+        if tid is not None:
+            if tid in seen_tweet_ids:
+                continue
+            seen_tweet_ids.add(tid)
         # Confidence gate: low/none-confidence signals stay in trades.json but
         # must not move position state.
         if (e.get("confidence") or "").lower() in GATED_CONFIDENCE:
