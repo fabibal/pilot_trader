@@ -1,5 +1,425 @@
 [
   {
+    "account": "CelalKucuker",
+    "source_type": "influencer",
+    "portfolio": null,
+    "ticker": "BTC",
+    "asset_type": "crypto",
+    "status": "open",
+    "entry_price": 55000,
+    "stop_loss": 65399.98,
+    "target": 144000,
+    "size_pct": null,
+    "trade_date": null,
+    "holding_thesis": "Bitcoin's liquidity map indicates a path to 144K with current support above 65K.",
+    "opened_at": "2026-05-29T15:25:30+00:00",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2060382028130820142",
+        "signal_type": "buy",
+        "timestamp": "2026-05-29T15:25:30+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/CelalKucuker/status/2060382028130820142"
+      },
+      {
+        "tweet_id": "2060716774845288866",
+        "signal_type": "buy",
+        "timestamp": "2026-05-30T13:35:40+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/CelalKucuker/status/2060716774845288866"
+      },
+      {
+        "tweet_id": "2061797370413609427",
+        "signal_type": "position",
+        "timestamp": "2026-06-02T13:09:34+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/CelalKucuker/status/2061797370413609427"
+      },
+      {
+        "tweet_id": "2061814820270215358",
+        "signal_type": "buy",
+        "timestamp": "2026-06-02T14:18:54+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/CelalKucuker/status/2061814820270215358"
+      },
+      {
+        "tweet_id": "2061842771451715709",
+        "signal_type": "position",
+        "timestamp": "2026-06-02T16:09:58+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/CelalKucuker/status/2061842771451715709"
+      },
+      {
+        "tweet_id": "2061873863193952441",
+        "signal_type": "position",
+        "timestamp": "2026-06-02T18:13:31+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/CelalKucuker/status/2061873863193952441"
+      }
+    ]
+  },
+  {
+    "account": "CelalKucuker",
+    "source_type": "influencer",
+    "portfolio": null,
+    "ticker": "BTCDOMINANCE",
+    "asset_type": "crypto",
+    "status": "closed",
+    "entry_price": null,
+    "stop_loss": null,
+    "target": null,
+    "size_pct": null,
+    "trade_date": null,
+    "holding_thesis": null,
+    "opened_at": null,
+    "closed_at": "2026-06-02T16:19:11+00:00",
+    "signals": [
+      {
+        "tweet_id": "2061845091434533059",
+        "signal_type": "sell",
+        "timestamp": "2026-06-02T16:19:11+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/CelalKucuker/status/2061845091434533059"
+      }
+    ]
+  },
+  {
+    "account": "CelalKucuker",
+    "source_type": "influencer",
+    "portfolio": null,
+    "ticker": "BTCUSDC",
+    "asset_type": "unknown",
+    "status": "open",
+    "entry_price": null,
+    "stop_loss": 65399.98,
+    "target": 158575.28,
+    "size_pct": null,
+    "trade_date": null,
+    "holding_thesis": null,
+    "opened_at": "2026-06-01T13:53:29+00:00",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2061446034195177757",
+        "signal_type": "buy",
+        "timestamp": "2026-06-01T13:53:29+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/CelalKucuker/status/2061446034195177757"
+      }
+    ]
+  },
+  {
+    "account": "CelalKucuker",
+    "source_type": "influencer",
+    "portfolio": null,
+    "ticker": "EIGEN",
+    "asset_type": "crypto",
+    "status": "open",
+    "entry_price": null,
+    "stop_loss": 0.15,
+    "target": 4.2,
+    "size_pct": null,
+    "trade_date": null,
+    "holding_thesis": "Altcoin with 20x potential as soon as it breaks 0.8.",
+    "opened_at": "2026-05-31T19:26:49+00:00",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2061167534896803985",
+        "signal_type": "buy",
+        "timestamp": "2026-05-31T19:26:49+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/CelalKucuker/status/2061167534896803985"
+      }
+    ]
+  },
+  {
+    "account": "CelalKucuker",
+    "source_type": "influencer",
+    "portfolio": null,
+    "ticker": "ETH",
+    "asset_type": "crypto",
+    "status": "closed",
+    "entry_price": null,
+    "stop_loss": 1400,
+    "target": 2600,
+    "size_pct": null,
+    "trade_date": null,
+    "holding_thesis": null,
+    "opened_at": "2026-05-28T15:39:47+00:00",
+    "closed_at": "2026-05-28T15:40:54+00:00",
+    "signals": [
+      {
+        "tweet_id": "2060023237786886292",
+        "signal_type": "position",
+        "timestamp": "2026-05-28T15:39:47+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/CelalKucuker/status/2060023237786886292"
+      },
+      {
+        "tweet_id": "2060023517870264641",
+        "signal_type": "sell",
+        "timestamp": "2026-05-28T15:40:54+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/CelalKucuker/status/2060023517870264641"
+      }
+    ]
+  },
+  {
+    "account": "CelalKucuker",
+    "source_type": "influencer",
+    "portfolio": null,
+    "ticker": "LTC",
+    "asset_type": "crypto",
+    "status": "open",
+    "entry_price": 45,
+    "stop_loss": 44.98,
+    "target": 750,
+    "size_pct": null,
+    "trade_date": null,
+    "holding_thesis": "Litecoin appears undervalued at $40\u201350 with strong technical setup and historical parallel to Ripple's pre-breakout price action.",
+    "opened_at": "2026-05-28T14:06:52+00:00",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2059999852147114131",
+        "signal_type": "buy",
+        "timestamp": "2026-05-28T14:06:52+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/CelalKucuker/status/2059999852147114131"
+      }
+    ]
+  },
+  {
+    "account": "CelalKucuker",
+    "source_type": "influencer",
+    "portfolio": null,
+    "ticker": "SIVE",
+    "asset_type": "stock",
+    "status": "open",
+    "entry_price": null,
+    "stop_loss": null,
+    "target": null,
+    "size_pct": null,
+    "trade_date": "2026-05-13",
+    "holding_thesis": null,
+    "opened_at": "2026-06-02T12:19:02+00:00",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2061784655913738422",
+        "signal_type": "position",
+        "timestamp": "2026-06-02T12:19:02+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/CelalKucuker/status/2061784655913738422"
+      },
+      {
+        "tweet_id": "2061797271709364633",
+        "signal_type": "buy",
+        "timestamp": "2026-06-02T13:09:10+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/CelalKucuker/status/2061797271709364633"
+      }
+    ]
+  },
+  {
+    "account": "CelalKucuker",
+    "source_type": "influencer",
+    "portfolio": null,
+    "ticker": "SOL",
+    "asset_type": "crypto",
+    "status": "open",
+    "entry_price": null,
+    "stop_loss": null,
+    "target": 600,
+    "size_pct": null,
+    "trade_date": null,
+    "holding_thesis": null,
+    "opened_at": "2026-05-29T20:00:59+00:00",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2060451356092035455",
+        "signal_type": "buy",
+        "timestamp": "2026-05-29T20:00:59+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/CelalKucuker/status/2060451356092035455"
+      }
+    ]
+  },
+  {
+    "account": "CelalKucuker",
+    "source_type": "influencer",
+    "portfolio": null,
+    "ticker": "SUI",
+    "asset_type": "crypto",
+    "status": "open",
+    "entry_price": 0.8,
+    "stop_loss": 0.8113,
+    "target": 18,
+    "size_pct": null,
+    "trade_date": null,
+    "holding_thesis": "Sitting at macro support with intact channel structure offers favorable risk-reward setup.",
+    "opened_at": "2026-05-28T14:48:19+00:00",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2060010284920500576",
+        "signal_type": "buy",
+        "timestamp": "2026-05-28T14:48:19+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/CelalKucuker/status/2060010284920500576"
+      },
+      {
+        "tweet_id": "2060701717717483936",
+        "signal_type": "buy",
+        "timestamp": "2026-05-30T12:35:50+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/CelalKucuker/status/2060701717717483936"
+      },
+      {
+        "tweet_id": "2060725949575135398",
+        "signal_type": "position",
+        "timestamp": "2026-05-30T14:12:07+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/CelalKucuker/status/2060725949575135398"
+      }
+    ]
+  },
+  {
+    "account": "CelalKucuker",
+    "source_type": "influencer",
+    "portfolio": null,
+    "ticker": "XAUUSD",
+    "asset_type": "unknown",
+    "status": "closed",
+    "entry_price": null,
+    "stop_loss": null,
+    "target": null,
+    "size_pct": null,
+    "trade_date": null,
+    "holding_thesis": null,
+    "opened_at": null,
+    "closed_at": "2026-05-31T20:46:07+00:00",
+    "signals": [
+      {
+        "tweet_id": "2061187490329891159",
+        "signal_type": "sell",
+        "timestamp": "2026-05-31T20:46:07+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/CelalKucuker/status/2061187490329891159"
+      }
+    ]
+  },
+  {
+    "account": "CelalKucuker",
+    "source_type": "influencer",
+    "portfolio": null,
+    "ticker": "XLM",
+    "asset_type": "crypto",
+    "status": "open",
+    "entry_price": 0.17,
+    "stop_loss": 0.1702,
+    "target": 0.2,
+    "size_pct": null,
+    "trade_date": null,
+    "holding_thesis": "XLM will reach a new ATH before the end of the year",
+    "opened_at": "2026-06-02T12:44:02+00:00",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2061790947084521538",
+        "signal_type": "buy",
+        "timestamp": "2026-06-02T12:44:02+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/CelalKucuker/status/2061790947084521538"
+      }
+    ]
+  },
+  {
+    "account": "CelalKucuker",
+    "source_type": "influencer",
+    "portfolio": null,
+    "ticker": "XMR",
+    "asset_type": "crypto",
+    "status": "open",
+    "entry_price": null,
+    "stop_loss": 300.0,
+    "target": 400.0,
+    "size_pct": null,
+    "trade_date": null,
+    "holding_thesis": null,
+    "opened_at": "2026-06-02T15:41:34+00:00",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2061835623510450628",
+        "signal_type": "buy",
+        "timestamp": "2026-06-02T15:41:34+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/CelalKucuker/status/2061835623510450628"
+      }
+    ]
+  },
+  {
+    "account": "CelalKucuker",
+    "source_type": "influencer",
+    "portfolio": null,
+    "ticker": "XRP",
+    "asset_type": "crypto",
+    "status": "open",
+    "entry_price": null,
+    "stop_loss": null,
+    "target": 12,
+    "size_pct": null,
+    "trade_date": null,
+    "holding_thesis": "Chart breakout above $1.74 resistance with Fibonacci extension target to $12 suggests strong upside momentum.",
+    "opened_at": "2026-05-29T19:38:32+00:00",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2060445705810891259",
+        "signal_type": "position",
+        "timestamp": "2026-05-29T19:38:32+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/CelalKucuker/status/2060445705810891259"
+      },
+      {
+        "tweet_id": "2061788357928083904",
+        "signal_type": "buy",
+        "timestamp": "2026-06-02T12:33:45+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/CelalKucuker/status/2061788357928083904"
+      }
+    ]
+  },
+  {
+    "account": "CelalKucuker",
+    "source_type": "influencer",
+    "portfolio": null,
+    "ticker": "ZEC",
+    "asset_type": "crypto",
+    "status": "open",
+    "entry_price": null,
+    "stop_loss": 521.85,
+    "target": 686.52,
+    "size_pct": null,
+    "trade_date": null,
+    "holding_thesis": null,
+    "opened_at": "2026-05-28T17:02:43+00:00",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2060044104981942742",
+        "signal_type": "buy",
+        "timestamp": "2026-05-28T17:02:43+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/CelalKucuker/status/2060044104981942742"
+      }
+    ]
+  },
+  {
     "account": "IncomeSharks",
     "source_type": "influencer",
     "portfolio": null,

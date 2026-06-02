@@ -190,7 +190,7 @@ ACCOUNT_DEFAULT_PF = {"grkportfolio": "grok", "theaiportfolios": "claude",
                       "aifinancelabs": "deepseek"}
 # Human trader / influencer accounts. Kept entirely separate from the AI
 # portfolio views (own tab); excluded from the portfolio cards/charts.
-INFLUENCER_ACCOUNTS = {"IncomeSharks"}
+INFLUENCER_ACCOUNTS = {"IncomeSharks", "CelalKucuker"}
 # Long-term conviction accounts (@moninvestor): live in the Influencers tab in
 # their own "Long-term Holdings" section, but are NOT mixed into the IncomeSharks
 # trade-call tables.
@@ -521,6 +521,7 @@ TABLE_COLUMNS = [
 # influencer-specific fields (asset type, stop loss, target).
 INFLUENCER_TABLE_COLUMNS = [
     {"name": "DATE", "id": "date"},
+    {"name": "ACCOUNT", "id": "account"},
     {"name": "TICKER", "id": "ticker"},
     {"name": "ASSET", "id": "asset_type"},
     {"name": "ACTION", "id": "signal_type"},
@@ -744,6 +745,7 @@ def influencer_signals_data(df):
     for _, r in sub.iterrows():
         rows.append({
             "date": r.get("date"),
+            "account": r.get("account") or "—",
             "ticker": r.get("ticker"),
             "asset_type": r.get("asset_type") or "unknown",
             "signal_type": r.get("signal_type"),
@@ -821,6 +823,7 @@ def influencer_positions_table(resolutions):
             status_cell = ("live", C["blue"])
         rows.append((
             (p["ticker"], C["blue"]),
+            p.get("account") or "—",
             atype,
             tdate or "—",
             _money(entry) + ("*" if est and entry else ""),
@@ -830,10 +833,10 @@ def influencer_positions_table(resolutions):
             _money(p.get("target")),
             status_cell,
         ))
-    rows.sort(key=lambda r: r[2], reverse=True)
-    return _table(["Ticker", "Asset", "Trade Date", "Entry", "Current",
+    rows.sort(key=lambda r: r[3], reverse=True)
+    return _table(["Ticker", "Account", "Asset", "Trade Date", "Entry", "Current",
                    "Return %", "Stop", "Target", "Status"], rows,
-                  empty="No open IncomeSharks positions")
+                  empty="No open influencer positions")
 
 
 def longterm_holdings_table(positions):
@@ -1143,13 +1146,13 @@ app.layout = html.Div(
 
         ]),   # end ai-section
 
-        # --- Influencers tab (IncomeSharks) -- hidden until selected ---------
+        # --- Influencers tab (IncomeSharks + CelalKucuker) -- hidden until selected ---
         html.Div(id="influencer-section", style={"display": "none"}, children=[
-            html.Div("IncomeSharks — Open Positions", style=_SECTION_H),
+            html.Div("Influencers — Open Positions", style=_SECTION_H),
             html.Div(id="influencer-winrate"),
             html.Div(id="influencer-positions", style={"marginTop": "4px"}),
 
-            html.Div("IncomeSharks — Signals", style=_SECTION_H),
+            html.Div("Influencers — Signals", style=_SECTION_H),
             dash_table.DataTable(
                 id="influencer-signals",
                 columns=INFLUENCER_TABLE_COLUMNS,

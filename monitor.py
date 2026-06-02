@@ -50,12 +50,13 @@ from reconcile import reconcile, write_json_atomic
 # Portfolio-bot accounts. @aifinancelabs is where the DeepSeek portfolio
 # experiment is published (no standalone DeepSeek handle exists).
 ACCOUNTS = ["grkportfolio", "theaiportfolios", "aifinancelabs", "IncomeSharks",
-            "moninvestor"]
+            "moninvestor", "CelalKucuker"]
 # Account kind. "portfolio" = AI-run portfolio bot (its own trades / holdings).
 # "influencer" = a human trader/influencer posting frequent trade calls on
 # stocks AND crypto (e.g. @IncomeSharks). Influencer accounts bypass the
 # reply-skip gate (every tweet+reply is sent to the LLM).
-SOURCE_TYPE = {"IncomeSharks": "influencer", "moninvestor": "influencer"}
+SOURCE_TYPE = {"IncomeSharks": "influencer", "moninvestor": "influencer",
+               "CelalKucuker": "influencer"}
 # Posting style hint passed to the LLM. "conviction_long" = @moninvestor, a
 # slow long-term conviction investor: buys to hold (no TP/stop), and phrases
 # like "buying more"/"adding"/"keeping" are holding updates, not new buys.
@@ -86,6 +87,7 @@ RAW_FILES = {  # used by --backfill; accounts without a snapshot are skipped
     "aifinancelabs": os.path.join(HOME, "tweets_aifinancelabs.json"),
     "IncomeSharks": os.path.join(HOME, "tweets_incomesharks.json"),
     "moninvestor": os.path.join(HOME, "tweets_moninvestor.json"),
+    "CelalKucuker": os.path.join(HOME, "tweets_CelalKucuker.json"),
 }
 MAX_FETCH = 100
 API_BASE = "https://api.twitter.com/2"
@@ -124,10 +126,13 @@ EXTRACTION_SYSTEM = (
     "account that posts updates for several model portfolios (Grok, Claude, "
     "DeepSeek, ChatGPT) — for its tweets, infer the portfolio from the text "
     "(e.g. 'DeepSeek's portfolio...' => deepseek).\n"
-    "(B) HUMAN TRADER / INFLUENCER — @IncomeSharks. It posts FREQUENT trade "
-    "ideas/calls on BOTH stocks AND crypto, and mixes pure analysis/opinion "
-    "with actionable calls. It often states entry prices, stop losses, and price "
-    "targets. For @IncomeSharks always set portfolio = null.\n"
+    "(B) HUMAN TRADER / INFLUENCER — @IncomeSharks and @CelalKucuker. They post "
+    "FREQUENT trade ideas/calls on BOTH stocks AND crypto, and mix pure "
+    "analysis/opinion with actionable calls. They often state entry prices, stop "
+    "losses, and price targets. @CelalKucuker is CRYPTO-HEAVY: most of its calls "
+    "are on cryptocurrencies (e.g. BTC, XRP, XLM, SUI, SOL, EIGEN) — set "
+    "asset_type = \"crypto\" for these and use the common symbol. For these "
+    "influencers always set portfolio = null.\n"
     "(C) LONG-TERM CONVICTION INVESTOR — @moninvestor. Posts high-conviction "
     "long-term BUYS meant to be held for the long run; it rarely states stop "
     "losses or price targets (leave those null unless explicitly given). A "
