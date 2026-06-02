@@ -28,6 +28,7 @@ loaded from ~/pilot_trader/.env. Run with the project venv:
 """
 
 import argparse
+import base64
 import json
 import os
 import sys
@@ -79,6 +80,16 @@ MODEL = "claude-haiku-4-5-20251001"
 TWITTER_COST_PER_TWEET = 0.005       # X API read
 HAIKU_INPUT_PER_1M = 1.00            # $ / 1M input tokens
 HAIKU_OUTPUT_PER_1M = 5.00           # $ / 1M output tokens
+
+# Vision model for chart-image analysis (Haiku 4.5 does NOT accept images).
+# Only used for influencer tweets that carry a chart photo. Pricier per token,
+# so it runs as an ADD-ON to the cheap Haiku text pass, never as a replacement.
+# (claude-sonnet-4-20250514 is retired on this account; sonnet-4-6 is the
+# current vision-capable Sonnet at the same $3/$15 per-MTok pricing.)
+VISION_MODEL = "claude-sonnet-4-6"
+SONNET_INPUT_PER_1M = 3.00           # $ / 1M input tokens
+SONNET_OUTPUT_PER_1M = 15.00         # $ / 1M output tokens
+MAX_VISION_IMAGES = 2                # cap images/tweet to bound vision cost
 
 # --- LLM extraction --------------------------------------------------------
 # No pre-filter: every tweet is sent to Claude, which decides what is a signal.
@@ -158,6 +169,44 @@ SIGNAL_SCHEMA = {
     "additionalProperties": False,
 }
 
+# --- Chart-image (vision) extraction --------------------------------------
+# Influencer tweets frequently attach an annotated chart whose levels are NOT
+# in the tweet text (TP/stop lines drawn on the chart). This schema captures
+# what is readable FROM THE IMAGE so it can backfill the text extraction.
+VISION_SYSTEM = (
+    "You read an annotated stock/crypto price chart image attached to a "
+    "trader's tweet. Using the chart AND the tweet text, extract only what is "
+    "actually visible/marked on the chart. Do not invent levels.\n"
+    "- ticker: the symbol shown on the chart (e.g. on the axis/title), null if "
+    "not visible.\n"
+    "- tp1: the first/nearest take-profit or upside target price marked on the "
+    "chart, as a number. null if none is drawn.\n"
+    "- tp2: a second, higher take-profit/target price if a second one is "
+    "marked, as a number. null if absent.\n"
+    "- stop_loss: the stop-loss / invalidation price marked on the chart, as a "
+    "number. null if none is drawn.\n"
+    "- trend: the overall setup direction the chart implies: \"bullish\", "
+    "\"bearish\", or \"neutral\".\n"
+    "- chart_notes: ONE short sentence describing the technical setup shown "
+    "(pattern, key level, breakout/breakdown).\n"
+    "Return ONLY valid JSON matching the schema. No markdown, no preamble."
+)
+
+CHART_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "ticker": {"type": ["string", "null"]},
+        "tp1": {"type": ["number", "null"]},
+        "tp2": {"type": ["number", "null"]},
+        "stop_loss": {"type": ["number", "null"]},
+        "trend": {"type": "string",
+                  "enum": ["bullish", "bearish", "neutral"]},
+        "chart_notes": {"type": ["string", "null"]},
+    },
+    "required": ["ticker", "tp1", "tp2", "stop_loss", "trend", "chart_notes"],
+    "additionalProperties": False,
+}
+
 
 # Shared request shape for both the real-time and Batch API paths.
 # NOTE: Haiku 4.5's minimum cacheable prefix is 4096 tokens; this system prompt
@@ -175,6 +224,24 @@ def _user_message(account, text, tweet_date):
     return {"role": "user",
             "content": f"Posted by @{account}\nTweet date: {tweet_date}\n"
                        f"Tweet:\n{text}"}
+
+
+def _image_block(url):
+    """Download a Twitter media photo and return an Anthropic image content
+    block (base64), or None on any failure. `name=small` keeps the download
+    (and the vision token cost) modest while staying legible for chart levels."""
+    try:
+        req = urllib.request.Request(url + "?name=small",
+                                     headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            raw = resp.read()
+    except (urllib.error.URLError, OSError) as e:
+        print(f"  [media error] {url}: {e}", file=sys.stderr)
+        return None
+    media_type = "image/png" if url.lower().endswith(".png") else "image/jpeg"
+    return {"type": "image",
+            "source": {"type": "base64", "media_type": media_type,
+                       "data": base64.standard_b64encode(raw).decode("ascii")}}
 
 
 def _parse_json_text(content_blocks):
@@ -195,6 +262,10 @@ class Interpreter:
         self.calls = 0
         self.input_tokens = 0
         self.output_tokens = 0
+        # Vision (Sonnet) usage tracked separately for cost reporting.
+        self.vision_calls = 0
+        self.vision_input_tokens = 0
+        self.vision_output_tokens = 0
 
     def extract(self, text, account, tweet_date):
         """Return the parsed signal dict, or None on API/parse error."""
@@ -217,9 +288,46 @@ class Interpreter:
         self.output_tokens += resp.usage.output_tokens
         return _parse_json_text(resp.content)
 
+    def extract_chart(self, media_urls, text, account, tweet_date):
+        """Run a Sonnet vision pass over the tweet's chart image(s). Returns the
+        parsed chart dict, or None if no image could be fetched / on error."""
+        blocks = []
+        for url in media_urls[:MAX_VISION_IMAGES]:
+            b = _image_block(url)
+            if b:
+                blocks.append(b)
+        if not blocks:
+            return None
+        content = blocks + [{
+            "type": "text",
+            "text": f"Posted by @{account}\nTweet date: {tweet_date}\n"
+                    f"Tweet:\n{text}"}]
+        try:
+            resp = self.client.messages.create(
+                model=VISION_MODEL,
+                max_tokens=300,
+                system=[{"type": "text", "text": VISION_SYSTEM}],
+                output_config={"format": {"type": "json_schema",
+                                          "schema": CHART_SCHEMA}},
+                messages=[{"role": "user", "content": content}],
+            )
+        except anthropic.APIError as e:
+            print(f"  [vision error] {type(e).__name__}: {e}", file=sys.stderr)
+            return None
+        self.vision_calls += 1
+        self.vision_input_tokens += resp.usage.input_tokens + \
+            (resp.usage.cache_read_input_tokens or 0) + \
+            (resp.usage.cache_creation_input_tokens or 0)
+        self.vision_output_tokens += resp.usage.output_tokens
+        return _parse_json_text(resp.content)
+
     def cost(self):
         return (self.input_tokens / 1_000_000 * HAIKU_INPUT_PER_1M
                 + self.output_tokens / 1_000_000 * HAIKU_OUTPUT_PER_1M)
+
+    def vision_cost(self):
+        return (self.vision_input_tokens / 1_000_000 * SONNET_INPUT_PER_1M
+                + self.vision_output_tokens / 1_000_000 * SONNET_OUTPUT_PER_1M)
 
 
 SELL_VERBS = ("sold", "dumped", "exited", "trimmed", "closed", "out of",
@@ -234,6 +342,33 @@ def reply_has_sell_verb(text):
     """A reply worth keeping: it mentions a sell so we don't miss exits."""
     low = text.lower()
     return any(v in low for v in SELL_VERBS)
+
+
+def merge_chart(parsed, chart):
+    """Fold a vision/chart extraction into the text-extracted signal dict.
+    Image data only FILLS GAPS — text-stated values win. Chart-only fields
+    (tp1/tp2/trend/chart_notes) are added. Returns True if anything improved."""
+    if not parsed or not chart:
+        return False
+    improved = False
+    # ticker / stop_loss: backfill only when text gave nothing.
+    if not parsed.get("ticker") and chart.get("ticker"):
+        parsed["ticker"] = chart["ticker"]
+        improved = True
+    if parsed.get("stop_loss") is None and chart.get("stop_loss") is not None:
+        parsed["stop_loss"] = chart["stop_loss"]
+        improved = True
+    # target: text `target`, else the chart's first take-profit.
+    if parsed.get("target") is None and chart.get("tp1") is not None:
+        parsed["target"] = chart["tp1"]
+        improved = True
+    # Chart-only enrichments (always recorded when present).
+    for k in ("tp1", "tp2", "trend", "chart_notes"):
+        if chart.get(k) is not None:
+            parsed[k] = chart[k]
+            if k in ("tp1", "tp2", "chart_notes"):
+                improved = True
+    return improved
 
 
 def record_from_parsed(account, tw, parsed):
@@ -260,14 +395,27 @@ def record_from_parsed(account, tw, parsed):
         "target": parsed.get("target"),
         "trade_date": parsed.get("trade_date"),
         "reasoning": parsed["reasoning"],
+        # Chart-image (vision) enrichments — populated only for influencer
+        # tweets that carried an analyzable chart photo (else null).
+        "tp1": parsed.get("tp1"),
+        "tp2": parsed.get("tp2"),
+        "chart_trend": parsed.get("trend"),
+        "chart_notes": parsed.get("chart_notes"),
+        "has_chart": bool(tw.get("media")),
         "url": f"https://x.com/{account}/status/{tw['id']}",
         "text": tw.get("text", ""),
     }
 
 
 def build_signal(account, tw, interp):
-    parsed = interp.extract(tw.get("text", ""), account,
-                            (tw.get("created_at") or "")[:10])
+    tweet_date = (tw.get("created_at") or "")[:10]
+    parsed = interp.extract(tw.get("text", ""), account, tweet_date)
+    # Influencer chart-image pass: if this is an influencer tweet with photo(s),
+    # run the Sonnet vision model and merge any chart-only levels into `parsed`.
+    if parsed and SOURCE_TYPE.get(account) == "influencer" and tw.get("media"):
+        chart = interp.extract_chart(tw["media"], tw.get("text", ""),
+                                     account, tweet_date)
+        merge_chart(parsed, chart)
     return record_from_parsed(account, tw, parsed)
 
 
@@ -349,11 +497,15 @@ def _normalize_getxapi(tw):
             timezone.utc).isoformat() if created else None
     except (TypeError, ValueError):
         created_iso = None
+    # Photo URLs only (skip videos/gifs): used for chart-image vision analysis.
+    media = [m.get("url") for m in (tw.get("media") or [])
+             if m.get("type") == "photo" and m.get("url")]
     return {
         "id": str(tw.get("id")),
         "text": tw.get("text", ""),
         "created_at": created_iso,
         "is_reply": tw.get("isReply"),
+        "media": media,
     }
 
 
@@ -581,9 +733,13 @@ def main():
         print(f"  {acct:16} {st:9} {c}")
     print(f"\nreply-skipped (no API call): {total_skipped}  |  "
           f"reply-sell-candidate (sent to LLM): {total_sell_cand}")
-    print(f"LLM calls: {interp.calls}  "
-          f"(input {interp.input_tokens} tok, output {interp.output_tokens} tok)")
-    print(f"LLM cost this run: ${interp.cost():.4f}")
+    print(f"LLM text calls (Haiku): {interp.calls}  "
+          f"(input {interp.input_tokens} tok, output {interp.output_tokens} tok)"
+          f"  ${interp.cost():.4f}")
+    print(f"LLM vision calls (Sonnet): {interp.vision_calls}  "
+          f"(input {interp.vision_input_tokens} tok, "
+          f"output {interp.vision_output_tokens} tok)  ${interp.vision_cost():.4f}")
+    print(f"LLM cost this run: ${interp.cost() + interp.vision_cost():.4f}")
     if not args.backfill:
         if args.source == "getxapi":
             print(f"GetXAPI [{args.source}]: {total_reads} tweets in "
