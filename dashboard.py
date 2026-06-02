@@ -31,8 +31,12 @@ import plotly.graph_objects as go
 import yfinance as yf
 from dash import Dash, dash_table, dcc, html, Input, Output
 
+import resolver
+
 TRADES_FILE = "/home/fbazsa/pilot_trader/trades.json"
 POSITIONS_FILE = "/home/fbazsa/pilot_trader/positions.json"
+STATE_FILE = "/home/fbazsa/pilot_trader/.monitor_state.json"
+STALE_HOURS = 8           # cron runs every 4h; >8h means a run was missed
 REFRESH_MS = 60_000
 PORT = 8051
 PORTFOLIO_LABELS = {"grok": "Grok", "claude": "Claude",
@@ -104,6 +108,33 @@ _price_cache = {}       # ticker -> (price_or_None, fetched_at)
 _hist_cache = {}        # (ticker, date_str) -> (price_or_None, fetched_at)
 _fetch_state = {"last": None}   # epoch of the most recent live Yahoo fetch
 
+# Historical closes are IMMUTABLE (the close on a past date never changes), so
+# they are persisted to disk and never re-fetched. Keyed "TICKER|YYYY-MM-DD".
+DATA_DIR = "/home/fbazsa/pilot_trader/data"
+PRICE_CACHE_FILE = os.path.join(DATA_DIR, "price_cache.json")
+
+
+def _load_hist_persist():
+    try:
+        with open(PRICE_CACHE_FILE) as f:
+            return json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+_hist_persist = _load_hist_persist()   # "TICKER|DATE" -> close (float)
+
+
+def _save_hist_persist():
+    try:
+        os.makedirs(DATA_DIR, exist_ok=True)
+        tmp = PRICE_CACHE_FILE + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(_hist_persist, f)
+        os.replace(tmp, PRICE_CACHE_FILE)
+    except OSError:
+        pass
+
 
 def _fetch_price(ticker):
     _fetch_state["last"] = time.time()
@@ -153,6 +184,10 @@ def _fetch_hist_close(ticker, date_str):
 def get_hist_close(ticker, date_str):
     if not date_str:
         return None
+    # Immutable on-disk cache first (past closes never change).
+    pkey = f"{ticker}|{date_str}"
+    if pkey in _hist_persist:
+        return _hist_persist[pkey]
     now = time.time()
     key = (ticker, date_str)
     hit = _hist_cache.get(key)
@@ -160,22 +195,62 @@ def get_hist_close(ticker, date_str):
         return hit[0]
     price = _fetch_hist_close(ticker, date_str)
     _hist_cache[key] = (price, now)
+    # Persist only resolved closes for dates strictly in the past (immutable).
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    if price is not None and date_str < today:
+        _hist_persist[pkey] = price
+        _save_hist_persist()
     return price
 
 
+def warm_prices(symbols):
+    """Batch-fetch current prices for many symbols in ONE yf.download call,
+    populating the per-symbol cache. Falls back to single fetches on gaps."""
+    now = time.time()
+    need = sorted({s for s in symbols if s and not (
+        _price_cache.get(s) and now - _price_cache[s][1] < PRICE_TTL)})
+    if not need:
+        return
+    _fetch_state["last"] = now
+    close = None
+    try:
+        data = yf.download(need, period="2d", progress=False, threads=True)
+        if "Close" in data:
+            close = data["Close"]
+    except Exception:
+        close = None
+    for s in need:
+        price = None
+        try:
+            if close is not None:
+                col = close[s] if hasattr(close, "columns") and \
+                    s in getattr(close, "columns", []) else close
+                col = col.dropna()
+                if len(col):
+                    price = float(col.iloc[-1])
+        except Exception:
+            price = None
+        if price is None:        # batch missed this symbol — try it alone
+            price = _fetch_price(s)
+        _price_cache[s] = (price, now)
+
+
 # --- return computation ------------------------------------------------------
-def estimate_entry(ticker, entry_price, trade_date, fallback_date):
+def estimate_entry(ticker, entry_price, trade_date, fallback_date,
+                   asset_type="stock"):
     if entry_price:
         return entry_price, False
     date = trade_date or (fallback_date or "")[:10]
-    return get_hist_close(ticker, date), True
+    return get_hist_close(_yf_symbol(ticker, asset_type), date), True
 
 
-def compute_return(ticker, entry_price, trade_date, fallback_date):
-    entry, estimated = estimate_entry(ticker, entry_price, trade_date, fallback_date)
+def compute_return(ticker, entry_price, trade_date, fallback_date,
+                   asset_type="stock"):
+    entry, estimated = estimate_entry(ticker, entry_price, trade_date,
+                                      fallback_date, asset_type)
     if not entry:
         return None
-    cur = get_price(ticker)
+    cur = get_price(_yf_symbol(ticker, asset_type))
     if not cur:
         return None
     return {"val": round((cur - entry) / entry * 100, 1),
@@ -205,6 +280,30 @@ def get_price_series(ticker, start_date):
         series = None
     _series_cache[key] = (series, now)
     return series
+
+
+_ohlc_cache = {}   # (symbol, start) -> (DataFrame[High,Low] | None, ts)
+
+
+def get_ohlc(symbol, start_date):
+    """Daily High/Low DataFrame (index = 'YYYY-MM-DD') from start_date to now,
+    cached 1h. Used to resolve influencer calls against the price path."""
+    now = time.time()
+    key = (symbol, start_date)
+    hit = _ohlc_cache.get(key)
+    if hit and now - hit[1] < PRICE_TTL:
+        return hit[0]
+    df = None
+    try:
+        hist = yf.Ticker(symbol).history(start=start_date)
+        if not hist.empty:
+            hist = hist[["High", "Low"]].copy()
+            hist.index = hist.index.strftime("%Y-%m-%d")
+            df = hist[~hist.index.duplicated(keep="last")].sort_index()
+    except Exception:
+        df = None
+    _ohlc_cache[key] = (df, now)
+    return df
 
 
 def _price_asof(series, date_str):
@@ -272,6 +371,10 @@ INFLUENCER_TABLE_COLUMNS = [
     {"name": "ENTRY $", "id": "entry_price"},
     {"name": "STOP $", "id": "stop_loss"},
     {"name": "TARGET $", "id": "target"},
+    {"name": "TP1 $", "id": "tp1"},
+    {"name": "TP2 $", "id": "tp2"},
+    {"name": "TREND", "id": "chart_trend"},
+    {"name": "CHART NOTES", "id": "chart_notes"},
     {"name": "TWEET", "id": "link", "presentation": "markdown"},
 ]
 
@@ -315,7 +418,8 @@ def portfolio_cards(positions):
         for p in ps:
             r = compute_return(p["ticker"], p.get("entry_price"),
                                p.get("trade_date"),
-                               (p.get("opened_at") or "")[:10])
+                               (p.get("opened_at") or "")[:10],
+                               p.get("asset_type", "stock"))
             d = p.get("trade_date") or (p.get("opened_at") or "")[:10]
             if d:
                 dates.append(d)
@@ -406,10 +510,12 @@ def position_detail_table(positions, portfolio):
         if p.get("status") != "open" or pf_of(p) != portfolio:
             continue
         tdate = p.get("trade_date") or (p.get("opened_at") or "")[:10] or None
+        atype = p.get("asset_type", "stock")
+        sym = _yf_symbol(p["ticker"], atype)
         entry, est = estimate_entry(p["ticker"], p.get("entry_price"),
                                     p.get("trade_date"),
-                                    (p.get("opened_at") or "")[:10])
-        cur = get_price(p["ticker"])
+                                    (p.get("opened_at") or "")[:10], atype)
+        cur = get_price(sym)
         ret = round((cur - entry) / entry * 100, 1) if (entry and cur) else None
         days = _days_held(tdate)
         size = p.get("size_pct")
@@ -437,11 +543,14 @@ def closed_trades_table(positions, limit=5):
     for p in closed[:limit]:
         opened = p.get("trade_date") or (p.get("opened_at") or "")[:10] or None
         close_date = (p.get("closed_at") or "")[:10] or None
+        atype = p.get("asset_type", "stock")
+        sym = _yf_symbol(p["ticker"], atype)
         entry = p.get("entry_price")
         if not entry and opened:
-            entry, _ = estimate_entry(p["ticker"], None, p.get("trade_date"), opened)
+            entry, _ = estimate_entry(p["ticker"], None, p.get("trade_date"),
+                                      opened, atype)
         # exit price = close on the close date
-        exit_px = get_hist_close(p["ticker"], close_date) if close_date else None
+        exit_px = get_hist_close(sym, close_date) if close_date else None
         ret = round((exit_px - entry) / entry * 100, 1) if (entry and exit_px) else None
         rows.append((
             (p["ticker"], C["blue"]),
@@ -467,7 +576,12 @@ def influencer_signals_data(df):
     sub = sub.sort_values("timestamp", ascending=False)
 
     def _m(v):
-        return f"${v:,.2f}" if isinstance(v, (int, float)) and v else "—"
+        if not isinstance(v, (int, float)) or v != v or not v:  # v!=v catches NaN
+            return "—"
+        return f"${v:,.2f}"
+
+    def _s(v):  # string cell: NaN (float, truthy) and empty -> em dash
+        return v if isinstance(v, str) and v else "—"
 
     rows = []
     for _, r in sub.iterrows():
@@ -480,17 +594,57 @@ def influencer_signals_data(df):
             "entry_price": _m(r.get("entry_price")),
             "stop_loss": _m(r.get("stop_loss")),
             "target": _m(r.get("target")),
+            "tp1": _m(r.get("tp1")),
+            "tp2": _m(r.get("tp2")),
+            "chart_trend": _s(r.get("chart_trend")),
+            "chart_notes": _s(r.get("chart_notes")),
             "link": r.get("link") or "",
         })
     return rows
 
 
-def influencer_positions_table(positions):
-    """Open positions for the influencer accounts (stocks AND crypto)."""
-    rows = []
+_STATUS_LABEL = {resolver.HIT_TARGET: ("target hit", "green"),
+                 resolver.STOPPED_OUT: ("stopped out", "red"),
+                 resolver.EXPIRED: ("expired", "dim")}
+
+
+def influencer_resolutions(positions):
+    """List of (position, resolution|None) for every open influencer call,
+    resolved against its realized price path."""
+    out = []
     for p in influencer_positions(positions):
         if p.get("status") != "open":
             continue
+        atype = p.get("asset_type") or "unknown"
+        sym = _yf_symbol(p["ticker"], atype)
+        tdate = p.get("trade_date") or (p.get("opened_at") or "")[:10] or None
+        ohlc = get_ohlc(sym, tdate) if tdate else None
+        out.append((p, resolver.resolve_position(p, ohlc)))
+    return out
+
+
+def influencer_winrate_card(resolutions):
+    s = resolver.win_stats([r for _, r in resolutions])
+    wr = "n/a" if s["win_rate"] is None else f"{s['win_rate']:.0f}%"
+    wr_color = C["dim"] if s["win_rate"] is None else (
+        C["green"] if s["win_rate"] >= 50 else C["red"])
+    return html.Div(style={
+        "background": C["card"], "border": f"1px solid {C['border']}",
+        "borderRadius": "8px", "padding": "12px 18px", "marginTop": "12px",
+        "display": "inline-block"}, children=[
+        html.Span(wr, style={"color": wr_color, "fontWeight": "bold",
+                             "fontSize": "1.1rem"}),
+        html.Span(f" win rate  ({s['decided']} calls resolved: "
+                  f"{s['hit']} target / {s['stopped']} stopped) · "
+                  f"{s['expired']} expired · {s['live']} live",
+                  style={"color": C["dim"], "fontSize": "0.8rem"}),
+    ])
+
+
+def influencer_positions_table(resolutions):
+    """Influencer calls (stocks AND crypto) with their resolution status."""
+    rows = []
+    for p, res in resolutions:
         atype = p.get("asset_type") or "unknown"
         sym = _yf_symbol(p["ticker"], atype)
         entry = p.get("entry_price")
@@ -503,6 +657,11 @@ def influencer_positions_table(positions):
         cur = get_price(sym)
         ret = round((cur - entry) / entry * 100, 1) if (entry and cur) else None
         tdate = p.get("trade_date") or (p.get("opened_at") or "")[:10] or None
+        if res:
+            label, ckey = _STATUS_LABEL[res["status"]]
+            status_cell = (label, C[ckey])
+        else:
+            status_cell = ("live", C["blue"])
         rows.append((
             (p["ticker"], C["blue"]),
             atype,
@@ -512,10 +671,11 @@ def influencer_positions_table(positions):
             (_fmt_pct(ret), _color(ret)),
             _money(p.get("stop_loss")),
             _money(p.get("target")),
+            status_cell,
         ))
     rows.sort(key=lambda r: r[2], reverse=True)
     return _table(["Ticker", "Asset", "Trade Date", "Entry", "Current",
-                   "Return %", "Stop", "Target"], rows,
+                   "Return %", "Stop", "Target", "Status"], rows,
                   empty="No open IncomeSharks positions")
 
 
@@ -591,16 +751,18 @@ def _dark_chart(fig, title, h=360):
 def performance_figure(positions):
     """Cumulative equal-weight return % per portfolio vs S&P 500, from the first
     open date to today, using daily price history."""
-    entries = []   # (portfolio_label, ticker, entry, open_date)
+    entries = []   # (portfolio_label, yf_symbol, entry, open_date)
     for p in positions:
         if p.get("status") != "open":
             continue
+        atype = p.get("asset_type", "stock")
         entry, _ = estimate_entry(p["ticker"], p.get("entry_price"),
-                                  p.get("trade_date"), (p.get("opened_at") or "")[:10])
+                                  p.get("trade_date"),
+                                  (p.get("opened_at") or "")[:10], atype)
         od = p.get("trade_date") or (p.get("opened_at") or "")[:10]
         if entry and od:
             entries.append((PORTFOLIO_LABELS.get(pf_of(p), pf_of(p).title()),
-                            p["ticker"], entry, od))
+                            _yf_symbol(p["ticker"], atype), entry, od))
     if not entries:
         return _dark_chart(px.line(), "Performance vs S&P 500 — no dated positions")
 
@@ -702,6 +864,7 @@ app.layout = html.Div(
                                           "marginTop": "5px"}),
             html.Div(id="prices-asof", style={"color": C["dim"],
                                               "fontSize": "0.72rem", "marginTop": "2px"}),
+            html.Div(id="freshness"),
         ]),
         dcc.Interval(id="interval", interval=REFRESH_MS, n_intervals=0),
 
@@ -776,6 +939,10 @@ app.layout = html.Div(
                  "color": C["red"], "fontWeight": "bold"},
                 {"if": {"column_id": "ticker"}, "color": C["blue"],
                  "fontWeight": "bold"},
+                # Low/none-confidence signals (gated out of positions.json) are
+                # dimmed; their confidence cell carries a "?" marker.
+                {"if": {"filter_query": '{confidence} contains "?"'},
+                 "color": C["dim"], "fontWeight": "normal"},
             ],
         ),
 
@@ -784,6 +951,7 @@ app.layout = html.Div(
         # --- Influencers tab (IncomeSharks) -- hidden until selected ---------
         html.Div(id="influencer-section", style={"display": "none"}, children=[
             html.Div("IncomeSharks — Open Positions", style=_SECTION_H),
+            html.Div(id="influencer-winrate"),
             html.Div(id="influencer-positions", style={"marginTop": "4px"}),
 
             html.Div("IncomeSharks — Signals", style=_SECTION_H),
@@ -840,20 +1008,28 @@ def switch_main_tab(tab):
     Output("portfolio-summary", "children"),
     Output("prices-asof", "children"),
     Output("closed-trades", "children"),
+    Output("freshness", "children"),
     Input("interval", "n_intervals"),
 )
 def refresh(_n):
     df = load_trades()
     positions = ai_positions(load_positions())   # AI views exclude influencers
-    cards = portfolio_cards(positions)   # also warms the price cache
+    # Batch live-price fetch for every symbol in play (one yf.download).
+    warm_prices({_yf_symbol(p["ticker"], p.get("asset_type", "stock"))
+                 for p in positions} | {"SPY"})
+    cards = portfolio_cards(positions)   # uses the now-warm price cache
     closed = closed_trades_table(positions)
 
     if not df.empty:
         df = df[~df["account"].isin(INFLUENCER_ACCOUNTS)]
     if df.empty:
-        return [], "No signals yet.", cards, _asof_text(), closed
+        return ([], "No signals yet.", cards, _asof_text(), closed,
+                freshness_banner())
 
     df = df.sort_values("timestamp", ascending=False)
+    # Mark low/none-confidence rows (they are excluded from positions.json).
+    df["confidence"] = df["confidence"].apply(
+        lambda c: f"{c} ?" if isinstance(c, str) and c in ("low", "none") else c)
 
     def row_return(r):
         tks = r.get("tickers")
@@ -861,8 +1037,10 @@ def refresh(_n):
             return ("", None)
         if not r.get("entry_price") and r.get("signal_type") != "buy":
             return ("", None)
+        at = r.get("asset_type")
         res = compute_return(tks[0], r.get("entry_price"),
-                             r.get("trade_date"), r["timestamp"][:10])
+                             r.get("trade_date"), r["timestamp"][:10],
+                             at if isinstance(at, str) else "stock")
         if not res:
             return ("", None)
         return (f"{res['val']:+.1f}%" + ("*" if res["estimated"] else ""),
@@ -876,7 +1054,38 @@ def refresh(_n):
                f"{len(positions)} reconciled positions · "
                f"last tweet {df['timestamp'].iloc[0][:16]}Z")
     cols = [c["id"] for c in TABLE_COLUMNS] + ["return_val"]
-    return (df[cols].to_dict("records"), summary, cards, _asof_text(), closed)
+    return (df[cols].to_dict("records"), summary, cards, _asof_text(), closed,
+            freshness_banner())
+
+
+def freshness_banner():
+    """Red 'DATA STALE' banner when monitor.py's last successful run is older
+    than STALE_HOURS; otherwise a dim last-update line."""
+    last = None
+    try:
+        with open(STATE_FILE) as f:
+            last = json.load(f).get("_last_run")
+    except (json.JSONDecodeError, OSError):
+        last = None
+    if not last:
+        return html.Span("")
+    try:
+        dt = datetime.fromisoformat(last)
+        hours = (datetime.now(timezone.utc) - dt).total_seconds() / 3600
+    except ValueError:
+        return html.Span("")
+    when = dt.strftime("%Y-%m-%d %H:%M UTC")
+    if hours > STALE_HOURS:
+        return html.Div(
+            f"⚠ DATA STALE — last update {hours:.0f}h ago ({when})",
+            style={"background": C["sell_bg"], "color": C["red"],
+                   "border": f"1px solid {C['red']}", "borderRadius": "6px",
+                   "padding": "6px 12px", "marginTop": "8px",
+                   "fontWeight": "bold", "fontSize": "0.82rem",
+                   "display": "inline-block"})
+    return html.Div(f"monitor last run {when} ({hours:.1f}h ago)",
+                    style={"color": C["dim"], "fontSize": "0.72rem",
+                           "marginTop": "4px"})
 
 
 def _asof_text():
@@ -910,12 +1119,18 @@ def refresh_charts(_n):
 @app.callback(
     Output("influencer-signals", "data"),
     Output("influencer-positions", "children"),
+    Output("influencer-winrate", "children"),
     Input("interval", "n_intervals"),
 )
 def refresh_influencers(_n):
     positions = load_positions()
+    warm_prices({_yf_symbol(p["ticker"], p.get("asset_type", "stock"))
+                 for p in influencer_positions(positions)
+                 if p.get("status") == "open"})
+    resolutions = influencer_resolutions(positions)
     return (influencer_signals_data(load_trades()),
-            influencer_positions_table(positions))
+            influencer_positions_table(resolutions),
+            influencer_winrate_card(resolutions))
 
 
 if __name__ == "__main__":

@@ -116,6 +116,12 @@ EXTRACTION_SYSTEM = (
     "transaction; \"none\" for pure market commentary, opinion, analysis, "
     "questions, or replies about other people's trades that are NOT an "
     "actionable own trade/call.\n"
+    "- sell_kind: only when action is \"sell\". \"full\" if the WHOLE position "
+    "was exited/closed/dumped/sold out. \"partial\" if it was only reduced "
+    "(\"trimmed\", \"reduced\", \"scaled out\", \"took partial/some profits\", "
+    "\"sold half\", \"lightened\"). null when action is not \"sell\" or the "
+    "extent is unclear (treat unclear as full only if the wording clearly means "
+    "a complete exit, else partial).\n"
     "- ticker: the ticker symbol. For stocks resolve company names to US tickers "
     "(Broadcom->AVGO, ServiceNow->NOW, Micron->MU, etc.). For crypto use the "
     "common symbol (Bitcoin->BTC, Ethereum->ETH, Solana->SOL). null if no "
@@ -150,6 +156,10 @@ SIGNAL_SCHEMA = {
         "ticker": {"type": ["string", "null"]},
         "asset_type": {"type": "string", "enum": ["stock", "crypto", "unknown"]},
         "action": {"type": "string", "enum": ["buy", "sell", "position", "none"]},
+        "sell_kind": {"anyOf": [
+            {"type": "string", "enum": ["full", "partial"]},
+            {"type": "null"},
+        ]},
         "size_pct": {"type": ["number", "null"]},
         "entry_price": {"type": ["number", "null"]},
         "stop_loss": {"type": ["number", "null"]},
@@ -163,8 +173,8 @@ SIGNAL_SCHEMA = {
         ]},
         "reasoning": {"type": "string"},
     },
-    "required": ["ticker", "asset_type", "action", "size_pct", "entry_price",
-                 "stop_loss", "target", "trade_date",
+    "required": ["ticker", "asset_type", "action", "sell_kind", "size_pct",
+                 "entry_price", "stop_loss", "target", "trade_date",
                  "confidence", "portfolio", "reasoning"],
     "additionalProperties": False,
 }
@@ -371,6 +381,42 @@ def merge_chart(parsed, chart):
     return improved
 
 
+def promote_with_chart(parsed, chart):
+    """When the text pass found no actionable signal but the tweet carries a
+    chart, let a clearly-directional chart promote it to a trade. Requires a
+    ticker (from text or backfilled from the chart by merge_chart) and a
+    non-neutral trend. Returns True if it promoted."""
+    if not parsed or not chart:
+        return False
+    if parsed.get("action") != "none" or not parsed.get("ticker"):
+        return False
+    trend = chart.get("trend")
+    if trend == "bullish":
+        parsed["action"] = "buy"
+    elif trend == "bearish":
+        parsed["action"] = "sell"
+        parsed["sell_kind"] = "full"
+    else:
+        return False
+    # Chart-only calls are inherently softer; medium keeps them out of the
+    # low/none confidence gate so they still register as positions.
+    if parsed.get("confidence") in (None, "none", "low"):
+        parsed["confidence"] = "medium"
+    note = chart.get("chart_notes")
+    parsed["reasoning"] = ("Chart-only signal: " + note) if note else \
+        "Chart-only signal (promoted from annotated chart)."
+    return True
+
+
+def _mentions_asset(parsed, text):
+    """Heuristic gate for the influencer chart pass on non-actionable text:
+    run vision only when an asset is plausibly in play (text named a ticker,
+    or the tweet carries a cashtag) to bound vision spend."""
+    if parsed and parsed.get("ticker"):
+        return True
+    return "$" in (text or "")
+
+
 def record_from_parsed(account, tw, parsed):
     """Build a trades.json signal record from a parsed LLM result, or None if
     it isn't an actionable signal. Shared by the real-time and batch paths."""
@@ -385,6 +431,7 @@ def record_from_parsed(account, tw, parsed):
         "tweet_id": tw["id"],
         "timestamp": tw.get("created_at"),
         "signal_type": parsed["action"],
+        "sell_kind": parsed.get("sell_kind"),
         "confidence": parsed["confidence"],
         "actionable": parsed["action"] in ("buy", "sell", "position"),
         "tickers": [parsed["ticker"]],
@@ -409,13 +456,20 @@ def record_from_parsed(account, tw, parsed):
 
 def build_signal(account, tw, interp):
     tweet_date = (tw.get("created_at") or "")[:10]
-    parsed = interp.extract(tw.get("text", ""), account, tweet_date)
-    # Influencer chart-image pass: if this is an influencer tweet with photo(s),
-    # run the Sonnet vision model and merge any chart-only levels into `parsed`.
-    if parsed and SOURCE_TYPE.get(account) == "influencer" and tw.get("media"):
-        chart = interp.extract_chart(tw["media"], tw.get("text", ""),
-                                     account, tweet_date)
+    text = tw.get("text", "")
+    parsed = interp.extract(text, account, tweet_date)
+    # Influencer chart-image pass (Sonnet vision). Runs when the tweet carries a
+    # photo AND either (a) the text pass already yielded an actionable signal —
+    # vision backfills its chart-only levels — or (b) the text was NOT actionable
+    # but an asset is plausibly in play (ticker/cashtag): the annotated chart may
+    # BE the signal, so a clearly-directional chart can promote it to a trade.
+    actionable = parsed and parsed["action"] != "none" and parsed.get("ticker")
+    if (SOURCE_TYPE.get(account) == "influencer" and tw.get("media")
+            and (actionable or _mentions_asset(parsed, text))):
+        chart = interp.extract_chart(tw["media"], text, account, tweet_date)
         merge_chart(parsed, chart)
+        if not actionable:
+            promote_with_chart(parsed, chart)
     return record_from_parsed(account, tw, parsed)
 
 
@@ -721,6 +775,9 @@ def main():
         write_json_atomic(TRADES_FILE, merged)    # atomic: temp + os.replace
         reconcile(TRADES_FILE, POSITIONS_FILE)    # fold events -> positions.json
         if not args.backfill:
+            # Heartbeat: the dashboard reads this to flag stale data if a cron
+            # run stops succeeding.
+            state["_last_run"] = datetime.now(timezone.utc).isoformat()
             write_json_atomic(STATE_FILE, state)
 
     # summary

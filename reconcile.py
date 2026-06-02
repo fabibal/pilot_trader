@@ -27,6 +27,25 @@ HOME = "/home/fbazsa/pilot_trader"
 TRADES_FILE = os.path.join(HOME, "trades.json")
 POSITIONS_FILE = os.path.join(HOME, "positions.json")
 
+# Account-to-portfolio fallback, applied at STORAGE time so the position key
+# matches what the dashboard shows (avoids a null-portfolio record and a
+# resolved-portfolio record for the same holding being counted twice).
+# Mirrors ACCOUNT_DEFAULT_PF / pf_of() in dashboard.py.
+ACCOUNT_DEFAULT_PF = {"grkportfolio": "grok", "theaiportfolios": "claude",
+                      "aifinancelabs": "deepseek"}
+# Influencer accounts have no portfolio (portfolio stays null by design).
+INFLUENCER_ACCOUNTS = {"IncomeSharks"}
+# Signals at this confidence are logged to trades.json but must NOT move
+# position state (see confidence gate).
+GATED_CONFIDENCE = {"low", "none"}
+
+
+def pf_of(account, portfolio):
+    """Resolve the effective portfolio for keying. Influencers keep null."""
+    if account in INFLUENCER_ACCOUNTS:
+        return None
+    return portfolio or ACCOUNT_DEFAULT_PF.get(account)
+
 
 def write_json_atomic(path, data):
     """Write JSON via temp file + os.replace so a crash can't corrupt the file."""
@@ -54,14 +73,20 @@ def reconcile(trades_file=TRADES_FILE, positions_file=POSITIONS_FILE):
         tickers = e.get("tickers") or []
         if not tickers:
             continue
+        # Confidence gate: low/none-confidence signals stay in trades.json but
+        # must not move position state.
+        if (e.get("confidence") or "").lower() in GATED_CONFIDENCE:
+            continue
         ticker = tickers[0]
-        key = (e.get("account"), e.get("portfolio"), ticker)
+        account = e.get("account")
+        portfolio = pf_of(account, e.get("portfolio"))
+        key = (account, portfolio, ticker)
         pos = positions.get(key)
         if pos is None:
             pos = {
-                "account": e.get("account"),
+                "account": account,
                 "source_type": e.get("source_type", "portfolio"),
-                "portfolio": e.get("portfolio"),
+                "portfolio": portfolio,
                 "ticker": ticker,
                 "asset_type": e.get("asset_type", "unknown"),
                 "status": None,
@@ -105,8 +130,19 @@ def reconcile(trades_file=TRADES_FILE, positions_file=POSITIONS_FILE):
             if e.get("target") is not None:
                 pos["target"] = e["target"]
         elif st == "sell":
-            pos["status"] = "closed"
-            pos["closed_at"] = e.get("timestamp")
+            # A partial sell (trim/scale-out/took-some-profits) reduces the
+            # position but leaves it open; only a full exit closes it.
+            if e.get("sell_kind") == "partial":
+                if pos["status"] != "closed":
+                    pos["status"] = "open"
+                # New remaining size if disclosed, else assume ~half trimmed.
+                if e.get("position_size_pct") is not None:
+                    pos["size_pct"] = e["position_size_pct"]
+                elif pos.get("size_pct") is not None:
+                    pos["size_pct"] = round(pos["size_pct"] / 2, 2)
+            else:
+                pos["status"] = "closed"
+                pos["closed_at"] = e.get("timestamp")
         elif st == "position":
             if pos["status"] is None:           # disclosure implies it's held
                 pos["status"] = "open"
