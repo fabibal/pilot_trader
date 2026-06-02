@@ -26,6 +26,7 @@ import time
 import urllib.request
 import urllib.error
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 import plotly.express as px
@@ -43,6 +44,33 @@ ENV_FILE = "/home/fbazsa/pilot_trader/.env"
 STALE_HOURS = 8           # cron runs every 4h; >8h means a run was missed
 REFRESH_MS = 60_000
 PORT = 8051
+
+# All stored timestamps are UTC (ISO with +00:00, or naive UTC epochs); the
+# dashboard DISPLAYS everything in Budapest local time (CET/CEST, UTC+1/+2).
+DISPLAY_TZ = ZoneInfo("Europe/Budapest")
+
+
+def _to_local(dt, fmt):
+    """Format a datetime (UTC-aware, or naive-assumed-UTC) in Budapest time."""
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(DISPLAY_TZ).strftime(fmt)
+
+
+def _iso_to_local(iso, fmt):
+    """Format a UTC ISO-8601 timestamp string in Budapest time."""
+    return _to_local(datetime.fromisoformat(iso), fmt)
+
+
+def _local_date(val):
+    """Date (YYYY-MM-DD) in Budapest. A full ISO timestamp is converted (the
+    day can shift vs UTC); a bare date with no time component is returned as-is
+    (a date alone has no instant to convert)."""
+    if not val:
+        return val
+    if "T" in val:
+        return _iso_to_local(val, "%Y-%m-%d")
+    return val[:10]
 
 # --- API credits (GetXAPI) --------------------------------------------------
 # GetXAPI exposes account credits at GET /account/me (-> credits_remaining).
@@ -111,8 +139,8 @@ def credits_cards():
         val_txt = f"${bal:,.2f}"
         val_color = C["red"] if bal < CREDITS_LOW_USD else C["green"]
     if c["fetched_at"]:
-        checked = datetime.fromtimestamp(
-            c["fetched_at"], timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+        checked = _to_local(datetime.fromtimestamp(
+            c["fetched_at"], timezone.utc), "%Y-%m-%d %H:%M %Z")
     else:
         checked = "never"
     note = "" if c["ok"] else "  (fetch error — last known)"
@@ -190,11 +218,11 @@ ACCOUNT_DEFAULT_PF = {"grkportfolio": "grok", "theaiportfolios": "claude",
                       "aifinancelabs": "deepseek"}
 # Human trader / influencer accounts. Kept entirely separate from the AI
 # portfolio views (own tab); excluded from the portfolio cards/charts.
-INFLUENCER_ACCOUNTS = {"IncomeSharks", "CelalKucuker"}
-# Long-term conviction accounts (@moninvestor): live in the Influencers tab in
-# their own "Long-term Holdings" section, but are NOT mixed into the IncomeSharks
-# trade-call tables.
-LONGTERM_ACCOUNTS = {"moninvestor"}
+INFLUENCER_ACCOUNTS = {"IncomeSharks", "CelalKucuker", "traderstewie"}
+# Long-term conviction accounts (@moninvestor, @PelosiTracker): live in the
+# Influencers tab in their own "Long-term Holdings" sub-tab, but are NOT mixed
+# into the trade-call tables.
+LONGTERM_ACCOUNTS = {"moninvestor", "PelosiTracker"}
 # Everything that is not an AI portfolio bot (excluded from AI cards/charts).
 NON_AI_ACCOUNTS = INFLUENCER_ACCOUNTS | LONGTERM_ACCOUNTS
 
@@ -486,7 +514,7 @@ def load_trades():
     if not rows:
         return pd.DataFrame()
     df = pd.DataFrame(rows)
-    df["date"] = df["timestamp"].str.slice(0, 10)
+    df["date"] = df["timestamp"].apply(_local_date)
     df["ticker"] = df["tickers"].apply(
         lambda t: ", ".join(t) if isinstance(t, list) else "")
     df["link"] = df["url"].apply(lambda u: f"[↗ tweet]({u})" if u else "")
@@ -521,7 +549,6 @@ TABLE_COLUMNS = [
 # influencer-specific fields (asset type, stop loss, target).
 INFLUENCER_TABLE_COLUMNS = [
     {"name": "DATE", "id": "date"},
-    {"name": "ACCOUNT", "id": "account"},
     {"name": "TICKER", "id": "ticker"},
     {"name": "ASSET", "id": "asset_type"},
     {"name": "ACTION", "id": "signal_type"},
@@ -668,6 +695,7 @@ def position_detail_table(positions, portfolio):
         if p.get("status") != "open" or pf_of(p) != portfolio:
             continue
         tdate = p.get("trade_date") or (p.get("opened_at") or "")[:10] or None
+        tdate_disp = p.get("trade_date") or _local_date(p.get("opened_at")) or None
         atype = p.get("asset_type", "stock")
         sym = _yf_symbol(p["ticker"], atype)
         entry, est = estimate_entry(p["ticker"], p.get("entry_price"),
@@ -680,7 +708,7 @@ def position_detail_table(positions, portfolio):
         rows.append((
             (p["ticker"], C["blue"]),
             f"{size:.2f}%" if size is not None else "—",
-            tdate or "—",
+            tdate_disp or "—",
             _money(entry) + ("*" if est and entry else ""),
             _money(cur),
             (_fmt_pct(ret), _color(ret)),
@@ -701,6 +729,9 @@ def closed_trades_table(positions, limit=5):
     for p in closed[:limit]:
         opened = p.get("trade_date") or (p.get("opened_at") or "")[:10] or None
         close_date = (p.get("closed_at") or "")[:10] or None
+        # Display in Budapest local time; pricing below keeps the UTC dates.
+        opened_disp = p.get("trade_date") or _local_date(p.get("opened_at")) or None
+        close_disp = _local_date(p.get("closed_at")) or None
         atype = p.get("asset_type", "stock")
         sym = _yf_symbol(p["ticker"], atype)
         entry = p.get("entry_price")
@@ -713,8 +744,8 @@ def closed_trades_table(positions, limit=5):
         rows.append((
             (p["ticker"], C["blue"]),
             PORTFOLIO_LABELS.get(pf_of(p), pf_of(p)),
-            opened or "—",
-            close_date or "—",
+            opened_disp or "—",
+            close_disp or "—",
             _money(entry),
             _money(exit_px),
             (_fmt_pct(ret), _color(ret)),
@@ -724,11 +755,13 @@ def closed_trades_table(positions, limit=5):
 
 
 # --- influencer (IncomeSharks) views ----------------------------------------
-def influencer_signals_data(df):
-    """Rows for the influencer signals DataTable (most recent first)."""
+def influencer_signals_data(df, account=None):
+    """Rows for the influencer signals DataTable (most recent first). If
+    `account` is given, restrict to that one handle; else all influencers."""
     if df.empty:
         return []
-    sub = df[df["account"].isin(INFLUENCER_ACCOUNTS)].copy()
+    accts = {account} if account else INFLUENCER_ACCOUNTS
+    sub = df[df["account"].isin(accts)].copy()
     if sub.empty:
         return []
     sub = sub.sort_values("timestamp", ascending=False)
@@ -745,7 +778,6 @@ def influencer_signals_data(df):
     for _, r in sub.iterrows():
         rows.append({
             "date": r.get("date"),
-            "account": r.get("account") or "—",
             "ticker": r.get("ticker"),
             "asset_type": r.get("asset_type") or "unknown",
             "signal_type": r.get("signal_type"),
@@ -767,12 +799,15 @@ _STATUS_LABEL = {resolver.HIT_TARGET: ("target hit", "green"),
                  resolver.EXPIRED: ("expired", "dim")}
 
 
-def influencer_resolutions(positions):
+def influencer_resolutions(positions, account=None):
     """List of (position, resolution|None) for every open influencer call,
-    resolved against its realized price path."""
+    resolved against its realized price path. If `account` is given, restrict
+    to that one handle."""
     out = []
     for p in influencer_positions(positions):
         if p.get("status") != "open":
+            continue
+        if account and p.get("account") != account:
             continue
         atype = p.get("asset_type") or "unknown"
         sym = _yf_symbol(p["ticker"], atype)
@@ -815,7 +850,7 @@ def influencer_positions_table(resolutions):
             est = False
         cur = get_price(sym)
         ret = round((cur - entry) / entry * 100, 1) if (entry and cur) else None
-        tdate = p.get("trade_date") or (p.get("opened_at") or "")[:10] or None
+        tdate = p.get("trade_date") or _local_date(p.get("opened_at")) or None
         if res:
             label, ckey = _STATUS_LABEL[res["status"]]
             status_cell = (label, C[ckey])
@@ -823,7 +858,6 @@ def influencer_positions_table(resolutions):
             status_cell = ("live", C["blue"])
         rows.append((
             (p["ticker"], C["blue"]),
-            p.get("account") or "—",
             atype,
             tdate or "—",
             _money(entry) + ("*" if est and entry else ""),
@@ -833,18 +867,21 @@ def influencer_positions_table(resolutions):
             _money(p.get("target")),
             status_cell,
         ))
-    rows.sort(key=lambda r: r[3], reverse=True)
-    return _table(["Ticker", "Account", "Asset", "Trade Date", "Entry", "Current",
+    rows.sort(key=lambda r: r[2], reverse=True)
+    return _table(["Ticker", "Asset", "Trade Date", "Entry", "Current",
                    "Return %", "Stop", "Target", "Status"], rows,
                   empty="No open influencer positions")
 
 
-def longterm_holdings_table(positions):
-    """@moninvestor long-term conviction holdings. No TP/stop columns; shows the
-    one-line thesis and sorts by return % descending."""
+def longterm_holdings_table(positions, account=None):
+    """Long-term conviction holdings (no TP/stop columns; shows the one-line
+    thesis, sorted by return % desc). If `account` is given, restrict to that
+    one handle; else all long-term accounts."""
     rows = []
     for p in longterm_positions(positions):
         if p.get("status") != "open":
+            continue
+        if account and p.get("account") != account:
             continue
         atype = p.get("asset_type", "stock") or "stock"
         sym = _yf_symbol(p["ticker"], atype)
@@ -867,9 +904,10 @@ def longterm_holdings_table(positions):
             ret if ret is not None else float("-inf"),   # sort key
         ))
     rows.sort(key=lambda r: r[1], reverse=True)
+    label = f"@{account}" if account else "long-term"
     return _table(["Ticker", "Entry $", "Current $", "Return %", "Days Held",
                    "Thesis"], [r[0] for r in rows],
-                  empty="No open @moninvestor holdings")
+                  empty=f"No open {label} holdings")
 
 
 def holdings_figure(positions, portfolio):
@@ -1146,13 +1184,33 @@ app.layout = html.Div(
 
         ]),   # end ai-section
 
-        # --- Influencers tab (IncomeSharks + CelalKucuker) -- hidden until selected ---
+        # --- Influencers tab -- hidden until selected ------------------------
         html.Div(id="influencer-section", style={"display": "none"}, children=[
-            html.Div("Influencers — Open Positions", style=_SECTION_H),
+            # One sub-tab per influencer handle. Trade-call accounts
+            # (IncomeSharks/CelalKucuker/traderstewie) use the trade-call view
+            # (winrate + positions + signals); conviction_long accounts
+            # (moninvestor/PelosiTracker) use the long-term holdings view.
+            dcc.Tabs(id="influencer-subtabs", value="IncomeSharks",
+                     children=[
+                         dcc.Tab(label="IncomeSharks", value="IncomeSharks",
+                                 style=_TAB_STYLE, selected_style=_TAB_SELECTED),
+                         dcc.Tab(label="CelalKucuker", value="CelalKucuker",
+                                 style=_TAB_STYLE, selected_style=_TAB_SELECTED),
+                         dcc.Tab(label="traderstewie", value="traderstewie",
+                                 style=_TAB_STYLE, selected_style=_TAB_SELECTED),
+                         dcc.Tab(label="moninvestor", value="moninvestor",
+                                 style=_TAB_STYLE, selected_style=_TAB_SELECTED),
+                         dcc.Tab(label="PelosiTracker", value="PelosiTracker",
+                                 style=_TAB_STYLE, selected_style=_TAB_SELECTED),
+                     ]),
+
+            # Trade-call view (IncomeSharks / CelalKucuker).
+            html.Div(id="influencer-trade-view", children=[
+            html.Div(id="influencer-pos-header", style=_SECTION_H),
             html.Div(id="influencer-winrate"),
             html.Div(id="influencer-positions", style={"marginTop": "4px"}),
 
-            html.Div("Influencers — Signals", style=_SECTION_H),
+            html.Div(id="influencer-sig-header", style=_SECTION_H),
             dash_table.DataTable(
                 id="influencer-signals",
                 columns=INFLUENCER_TABLE_COLUMNS,
@@ -1183,10 +1241,13 @@ app.layout = html.Div(
                      "fontWeight": "bold"},
                 ],
             ),
+            ]),   # end influencer-trade-view
 
-            # --- @moninvestor long-term conviction holdings ------------------
-            html.Div("moninvestor — Long-term Holdings", style=_SECTION_H),
-            html.Div(id="longterm-holdings", style={"marginTop": "4px"}),
+            # Long-term holdings view (moninvestor). No TP/stop columns.
+            html.Div(id="longterm-view", style={"display": "none"}, children=[
+                html.Div(id="longterm-header", style=_SECTION_H),
+                html.Div(id="longterm-holdings", style={"marginTop": "4px"}),
+            ]),
         ]),
     ],
 )
@@ -1202,6 +1263,22 @@ def switch_main_tab(tab):
     if tab == "influencers":
         return hide, show
     return show, hide
+
+
+@app.callback(
+    Output("influencer-trade-view", "style"),
+    Output("longterm-view", "style"),
+    Output("influencer-pos-header", "children"),
+    Output("influencer-sig-header", "children"),
+    Output("longterm-header", "children"),
+    Input("influencer-subtabs", "value"),
+)
+def switch_influencer_subtab(account):
+    show, hide = {"display": "block"}, {"display": "none"}
+    if account in LONGTERM_ACCOUNTS:
+        return hide, show, "", "", f"{account} — Long-term Holdings"
+    return (show, hide, f"{account} — Open Positions",
+            f"{account} — Signals", "")
 
 
 @app.callback(
@@ -1263,7 +1340,7 @@ def refresh(_n):
 
     summary = (f"{len(df)} signals across {df['account'].nunique()} accounts · "
                f"{len(positions)} reconciled positions · "
-               f"last tweet {df['timestamp'].iloc[0][:16]}Z")
+               f"last tweet {_iso_to_local(df['timestamp'].iloc[0], '%Y-%m-%d %H:%M %Z')}")
     cols = [c["id"] for c in TABLE_COLUMNS] + ["return_val"]
     return (df[cols].to_dict("records"), summary, cards, _asof_text(), closed,
             freshness_banner())
@@ -1285,7 +1362,7 @@ def freshness_banner():
         hours = (datetime.now(timezone.utc) - dt).total_seconds() / 3600
     except ValueError:
         return html.Span("")
-    when = dt.strftime("%Y-%m-%d %H:%M UTC")
+    when = _to_local(dt, "%Y-%m-%d %H:%M %Z")
     if hours > STALE_HOURS:
         return html.Div(
             f"⚠ DATA STALE — last update {hours:.0f}h ago ({when})",
@@ -1303,7 +1380,8 @@ def _asof_text():
     ts = _fetch_state["last"]
     if not ts:
         return "Prices as of: (not fetched yet)"
-    when = datetime.fromtimestamp(ts, timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    when = _to_local(datetime.fromtimestamp(ts, timezone.utc),
+                     "%Y-%m-%d %H:%M:%S %Z")
     return f"Prices as of: {when} · yfinance, cached up to 1h"
 
 
@@ -1333,17 +1411,22 @@ def refresh_charts(_n):
     Output("influencer-winrate", "children"),
     Output("longterm-holdings", "children"),
     Input("interval", "n_intervals"),
+    Input("influencer-subtabs", "value"),
 )
-def refresh_influencers(_n):
+def refresh_influencers(_n, account):
     positions = load_positions()
     warm_prices({_yf_symbol(p["ticker"], p.get("asset_type", "stock"))
                  for p in influencer_positions(positions) + longterm_positions(positions)
                  if p.get("status") == "open"})
-    resolutions = influencer_resolutions(positions)
-    return (influencer_signals_data(load_trades()),
+    # Long-term accounts (moninvestor/PelosiTracker) show only the holdings
+    # view; the trade-call outputs are hidden.
+    if account in LONGTERM_ACCOUNTS:
+        return [], None, None, longterm_holdings_table(positions, account=account)
+    resolutions = influencer_resolutions(positions, account=account)
+    return (influencer_signals_data(load_trades(), account=account),
             influencer_positions_table(resolutions),
             influencer_winrate_card(resolutions),
-            longterm_holdings_table(positions))
+            None)
 
 
 if __name__ == "__main__":

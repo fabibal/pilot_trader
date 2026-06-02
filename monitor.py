@@ -50,21 +50,27 @@ from reconcile import reconcile, write_json_atomic
 # Portfolio-bot accounts. @aifinancelabs is where the DeepSeek portfolio
 # experiment is published (no standalone DeepSeek handle exists).
 ACCOUNTS = ["grkportfolio", "theaiportfolios", "aifinancelabs", "IncomeSharks",
-            "moninvestor", "CelalKucuker"]
+            "moninvestor", "CelalKucuker", "traderstewie", "PelosiTracker"]
 # Account kind. "portfolio" = AI-run portfolio bot (its own trades / holdings).
 # "influencer" = a human trader/influencer posting frequent trade calls on
 # stocks AND crypto (e.g. @IncomeSharks). Influencer accounts bypass the
 # reply-skip gate (every tweet+reply is sent to the LLM).
 SOURCE_TYPE = {"IncomeSharks": "influencer", "moninvestor": "influencer",
-               "CelalKucuker": "influencer"}
-# Posting style hint passed to the LLM. "conviction_long" = @moninvestor, a
-# slow long-term conviction investor: buys to hold (no TP/stop), and phrases
+               "CelalKucuker": "influencer", "traderstewie": "influencer",
+               "PelosiTracker": "influencer"}
+# Posting style hint passed to the LLM. "conviction_long" = @moninvestor /
+# @PelosiTracker: slow long-term holders (buys to hold, no TP/stop), and phrases
 # like "buying more"/"adding"/"keeping" are holding updates, not new buys.
-ACCOUNT_STYLE = {"moninvestor": "conviction_long"}
+ACCOUNT_STYLE = {"moninvestor": "conviction_long",
+                 "PelosiTracker": "conviction_long"}
 # Slow accounts: fetch only if the last fetch was more than N hours ago (instead
 # of an exact-hour cron match, which fails entirely if that one cron run fails).
-# Absent => polled on every run. moninvestor is long-term, so ~twice a day.
-POLL_MIN_INTERVAL_H = {"moninvestor": 10}
+# Absent => polled on every run. moninvestor (10h) and PelosiTracker (11h) are
+# long-term, so ~twice a day. 8 < N < 12 lands the fetch on the 00:00 and 12:00
+# UTC cron slots (and skips 04/08/16/20); 11h biases toward firing at 12:00.
+POLL_MIN_INTERVAL_H = {"moninvestor": 10, "PelosiTracker": 11}
+# Accounts fetched from the POSTS-ONLY endpoint (no @-replies in the thread).
+POSTS_ONLY_ACCOUNTS = {"traderstewie", "PelosiTracker"}
 HOME = "/home/fbazsa/pilot_trader"
 DATA_DIR = os.path.join(HOME, "data")
 COST_LOG_FILE = os.path.join(DATA_DIR, "cost_log.json")
@@ -88,13 +94,17 @@ RAW_FILES = {  # used by --backfill; accounts without a snapshot are skipped
     "IncomeSharks": os.path.join(HOME, "tweets_incomesharks.json"),
     "moninvestor": os.path.join(HOME, "tweets_moninvestor.json"),
     "CelalKucuker": os.path.join(HOME, "tweets_CelalKucuker.json"),
+    "traderstewie": os.path.join(HOME, "tweets_traderstewie.json"),
+    "PelosiTracker": os.path.join(HOME, "tweets_PelosiTracker.json"),
 }
 MAX_FETCH = 100
 API_BASE = "https://api.twitter.com/2"
 GETXAPI_BASE = "https://api.getxapi.com"
 # tweets_and_replies (NOT the posts-only "tweets" endpoint) so sell signals
-# disclosed in @-replies are included.
+# disclosed in @-replies are included. POSTS_ONLY_ACCOUNTS use the "tweets"
+# (Posts tab) endpoint instead, which excludes @-replies entirely.
 GETXAPI_TWEETS_PATH = "/twitter/user/tweets_and_replies"
+GETXAPI_POSTS_PATH = "/twitter/user/tweets"
 GETXAPI_COST_PER_CALL = 0.001        # $/call (~20 tweets/page)
 
 # Anthropic
@@ -126,21 +136,37 @@ EXTRACTION_SYSTEM = (
     "account that posts updates for several model portfolios (Grok, Claude, "
     "DeepSeek, ChatGPT) — for its tweets, infer the portfolio from the text "
     "(e.g. 'DeepSeek's portfolio...' => deepseek).\n"
-    "(B) HUMAN TRADER / INFLUENCER — @IncomeSharks and @CelalKucuker. They post "
-    "FREQUENT trade ideas/calls on BOTH stocks AND crypto, and mix pure "
-    "analysis/opinion with actionable calls. They often state entry prices, stop "
-    "losses, and price targets. @CelalKucuker is CRYPTO-HEAVY: most of its calls "
-    "are on cryptocurrencies (e.g. BTC, XRP, XLM, SUI, SOL, EIGEN) — set "
-    "asset_type = \"crypto\" for these and use the common symbol. For these "
-    "influencers always set portfolio = null.\n"
-    "(C) LONG-TERM CONVICTION INVESTOR — @moninvestor. Posts high-conviction "
-    "long-term BUYS meant to be held for the long run; it rarely states stop "
-    "losses or price targets (leave those null unless explicitly given). A "
-    "first-time initiation of a new name is action = \"buy\". Phrases like "
-    "\"buying more\", \"adding\", \"added to\", \"keeping\", \"still holding\", "
-    "\"holding\" on a name it already owns are a POSITION UPDATE, so use action "
-    "= \"position\" (NOT a fresh buy). Always set portfolio = null for "
-    "@moninvestor.\n"
+    "(B) HUMAN TRADER / INFLUENCER — @IncomeSharks, @CelalKucuker and "
+    "@traderstewie. They post FREQUENT trade ideas/calls on stocks and/or "
+    "crypto, and mix pure analysis/opinion with actionable calls. They often "
+    "state entry prices, stop losses, and price targets. @CelalKucuker is "
+    "CRYPTO-HEAVY: most of its calls are on cryptocurrencies (e.g. BTC, XRP, "
+    "XLM, SUI, SOL, EIGEN) — set asset_type = \"crypto\" for these and use the "
+    "common symbol. @traderstewie is a US STOCK/ETF swing trader (e.g. SOXL, "
+    "AEHR, LWLG, INTC, RKLB) — set asset_type = \"stock\" for its calls. For "
+    "these influencers always set portfolio = null.\n"
+    "OWN VIEW ONLY: extract a signal only when the ACCOUNT HOLDER is stating "
+    "THEIR OWN trade or stance. If the tweet is reacting to, quoting, "
+    "questioning, or disagreeing with SOMEONE ELSE'S call or price prediction "
+    "(e.g. 'I hope we don't see $1400', 'they say it goes to X', replying to "
+    "another user's forecast), that is NOT the account's own signal: set "
+    "action = \"none\". A price someone else predicted is never a target or "
+    "stop for the account.\n"
+    "(C) LONG-TERM CONVICTION INVESTOR — @moninvestor and @PelosiTracker. They "
+    "represent high-conviction long-term BUYS meant to be held for the long run; "
+    "they rarely state stop losses or price targets (leave those null unless "
+    "explicitly given). A first-time initiation of a new name is action = "
+    "\"buy\". Phrases like \"buying more\", \"adding\", \"added to\", "
+    "\"keeping\", \"still holding\", \"holding\" on a name already owned are a "
+    "POSITION UPDATE, so use action = \"position\" (NOT a fresh buy). "
+    "@moninvestor posts its OWN convictions. @PelosiTracker is a TRACKER that "
+    "reports the publicly-disclosed stock trades of US politician Nancy Pelosi "
+    "(and her household): treat each reported transaction AS the signal — a "
+    "newly-reported purchase = action \"buy\", a reported sale = action "
+    "\"sell\". These reported trades ARE the signal even though the underlying "
+    "trader is a third party; do NOT set action = \"none\" for them (the "
+    "OWN-VIEW rule in (B) does not apply to this tracker). Always set "
+    "portfolio = null for both.\n"
     "Rules:\n"
     "- action: \"buy\" if the account bought/initiated/added OR (for an "
     "influencer) is calling a long entry / saying it is buying or holding long; "
@@ -386,6 +412,17 @@ def is_reply(text):
     return text.lstrip().startswith("@")
 
 
+def foreign_author(account, tw):
+    """True if the tweet was authored by someone OTHER than the monitored
+    account. tweets_and_replies returns the whole conversation thread, so a
+    follower's reply can ride along; without this it would be extracted as the
+    account's own signal. Author is compared case-insensitively. When the field
+    is absent (old snapshots / --source official) we keep the tweet (return
+    False) so existing behaviour is preserved."""
+    author = tw.get("author")
+    return bool(author) and author.lower() != account.lower()
+
+
 def reply_has_sell_verb(text):
     """A reply worth keeping: it mentions a sell so we don't miss exits."""
     low = text.lower()
@@ -618,6 +655,11 @@ def _normalize_getxapi(tw):
         "text": tw.get("text", ""),
         "created_at": created_iso,
         "is_reply": tw.get("isReply"),
+        # author handle of THIS tweet. tweets_and_replies returns the whole
+        # conversation thread, so a reply may be authored by another user; we
+        # filter on this so foreign replies aren't extracted as the account's
+        # own signals (see foreign_author()).
+        "author": (tw.get("author") or {}).get("userName"),
         "media": media,
     }
 
@@ -626,12 +668,14 @@ def fetch_getxapi(account, since_id=None):
     """Cursor-paginate GetXAPI. No since_id server-side, so stop once a page
     contains a tweet we've already seen. Returns (tweets, n_api_calls)."""
     collected, cursor, calls = [], None, 0
+    path = (GETXAPI_POSTS_PATH if account in POSTS_ONLY_ACCOUNTS
+            else GETXAPI_TWEETS_PATH)
     while len(collected) < MAX_FETCH:
         params = {"userName": account}
         if cursor:
             params["cursor"] = cursor
         data = getxapi_get(
-            f"{GETXAPI_BASE}{GETXAPI_TWEETS_PATH}?{urllib.parse.urlencode(params)}")
+            f"{GETXAPI_BASE}{path}?{urllib.parse.urlencode(params)}")
         calls += 1
         batch = data.get("tweets", [])
         if not batch:
@@ -677,6 +721,12 @@ def backfill_batch(interp):
     for account in ACCOUNTS:
         influencer = SOURCE_TYPE.get(account) == "influencer"
         for tw in load_json(RAW_FILES.get(account, ""), []):
+            if foreign_author(account, tw):       # drop other users' thread replies
+                skipped += 1
+                continue
+            if account in POSTS_ONLY_ACCOUNTS and tw.get("is_reply"):
+                skipped += 1
+                continue
             if not influencer and not should_send_to_llm(tw.get("text", "")):
                 skipped += 1
                 continue
@@ -839,9 +889,20 @@ def main():
             run_state.setdefault(account, {})["last_fetch"] = now.isoformat()
         total_reads += reads
         total_calls += calls
-        new, skipped, sell_cand = 0, 0, 0
+        new, skipped, sell_cand, foreign = 0, 0, 0, 0
         for tw in tweets:
             if tw["id"] in seen_ids:
+                continue
+            # Drop thread replies authored by OTHER users (tweets_and_replies
+            # returns the whole conversation). Without this a follower's reply
+            # is mis-extracted as the account's own signal.
+            if foreign_author(account, tw):
+                foreign += 1
+                continue
+            # Posts-only accounts: drop ANY reply (incl. the account's own
+            # self-thread replies) so only original posts are extracted.
+            if account in POSTS_ONLY_ACCOUNTS and tw.get("is_reply"):
+                skipped += 1
                 continue
             text = tw.get("text", "")
             # Influencer accounts (e.g. @IncomeSharks) bypass the reply gate —
@@ -861,7 +922,8 @@ def main():
                 new += 1
         total_skipped += skipped
         total_sell_cand += sell_cand
-        print(f"[{account}] scanned {len(tweets)}, reply-skipped {skipped}, "
+        print(f"[{account}] scanned {len(tweets)}, foreign-author-skipped "
+              f"{foreign}, reply-skipped {skipped}, "
               f"reply-sell-candidate {sell_cand}, new signals {new}")
 
     merged = existing + all_new
