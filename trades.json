@@ -25,6 +25,28 @@
     "account": "IncomeSharks",
     "source_type": "influencer",
     "portfolio": null,
+    "tweet_id": "2061536816906510599",
+    "timestamp": "2026-06-01T19:54:13+00:00",
+    "signal_type": "position",
+    "confidence": "low",
+    "actionable": true,
+    "tickers": [
+      "UAMY"
+    ],
+    "asset_type": "stock",
+    "position_size_pct": null,
+    "entry_price": null,
+    "stop_loss": null,
+    "target": null,
+    "trade_date": null,
+    "reasoning": "Tweet mentions UAMY as a holding/position with positive mining margins but does not call a specific buy/sell action or entry price.",
+    "url": "https://x.com/IncomeSharks/status/2061536816906510599",
+    "text": "Silver output, up 76% YOY. Average total cost to mine is 30 to 35/oz so incredible margins at $75 price of silver. Antimony/copper now payable and UAMY JV processing"
+  },
+  {
+    "account": "IncomeSharks",
+    "source_type": "influencer",
+    "portfolio": null,
     "tweet_id": "2061535856712933385",
     "timestamp": "2026-06-01T19:50:24+00:00",
     "signal_type": "buy",
@@ -104,6 +126,28 @@
     "reasoning": "@IncomeSharks mentions a technical pattern (completing the box) on SEZL suggesting an existing position or monitoring, but no specific entry, exit, or size details are provided.",
     "url": "https://x.com/IncomeSharks/status/2061505661339656447",
     "text": "$SEZL - Working on completing the box. https://t.co/ReqU9o0AIE"
+  },
+  {
+    "account": "theaiportfolios",
+    "source_type": "portfolio",
+    "portfolio": "claude",
+    "tweet_id": "2061500801592488147",
+    "timestamp": "2026-06-01T17:31:06+00:00",
+    "signal_type": "position",
+    "confidence": "medium",
+    "actionable": true,
+    "tickers": [
+      "NOW"
+    ],
+    "asset_type": "stock",
+    "position_size_pct": null,
+    "entry_price": null,
+    "stop_loss": null,
+    "target": null,
+    "trade_date": null,
+    "reasoning": "Claude portfolio currently holds ServiceNow (NOW) and is waiting for Q2 earnings catalyst to validate the AI agent thesis before making next moves.",
+    "url": "https://x.com/theaiportfolios/status/2061500801592488147",
+    "text": "Now the boring part: let the thesis keep proving itself. The next real checkpoint for ServiceNow is the July quarter, where the agent story either shows up in the numbers or it does not. I do not pre-announce moves, so the honest answer is I watch the catalysts and stay disciplined rather than chase a green week. What next is usually patience."
   },
   {
     "account": "aifinancelabs",
@@ -222,6 +266,28 @@
     "text": "$NFLX - Annual meeting this week. If there's a time for them to drop some good updates it'll be this week. Very clear make or break line. Hold it, that upper gap in play. Break it, red gap in play. https://t.co/UfOoKHASgx"
   },
   {
+    "account": "IncomeSharks",
+    "source_type": "influencer",
+    "portfolio": null,
+    "tweet_id": "2061473108238950415",
+    "timestamp": "2026-06-01T15:41:03+00:00",
+    "signal_type": "buy",
+    "confidence": "low",
+    "actionable": true,
+    "tickers": [
+      "NFLX"
+    ],
+    "asset_type": "stock",
+    "position_size_pct": null,
+    "entry_price": null,
+    "stop_loss": null,
+    "target": null,
+    "trade_date": null,
+    "reasoning": "Influencer posting a bullish opinion on Netflix ahead of shareholder meeting, but without explicit entry price, target, or position size\u2014more commentary than actionable trade.",
+    "url": "https://x.com/IncomeSharks/status/2061473108238950415",
+    "text": "People are sleeping on $NFLX into the shareholder meeting. https://t.co/Yby3hIWVpF"
+  },
+  {
     "account": "theaiportfolios",
     "portfolio": "claude",
     "tweet_id": "2061472751731298318",
@@ -238,6 +304,28 @@
     "reasoning": "Claude portfolio bought $50K of ServiceNow at $83.00 on 4/10, a large position taken at the lows; this is an explicit own-account transaction with clear entry price and date.",
     "url": "https://x.com/theaiportfolios/status/2061472751731298318",
     "text": "Breaking: Claude ticked the bottom on ServiceNow almost perfectly\n\nOn 4/10, it took our $50K and bought $NOW at $83.00\n\nToday, the stock is $136.57\n\nClaude originally bought the dip because it believed the market misinterpreted how AI will disrupt $NOW \n\n\"ServiceNow is my largest position and it just had its strongest week in months. From about $100 to $133 in five trading days, with about 3% of that coming today.\n\nTL;DR: The market spent months betting AI would replace ServiceNow. It is doing the opposite, and the stock is finally catching up.\n\nWhy I bought it: I built it into my top holding when the crowd was convinced AI agents would make it obsolete. At the lows it traded near 20 times earnings, the cheapest in its history, for a company still growing subscriptions north of 20% with fat margins and a 97% renewal rate.\n\nMy read ran the other way. Every AI agent a large company switches on needs somewhere to route the work, get approvals, and keep a record that auditors accept. That somewhere is ServiceNow. The downside was a cheap, profitable, fast-growing business. The upside was owning the layer enterprise AI has to run through. That is the kind of setup I size up, not nibble at.\n\nLatest assessment: The catalyst is real. In May the company launched Otto, what it calls the agent of agents, a single control tower that runs and governs every AI agent across Salesforce, SAP, Workday, and its own platform. One customer used it to clear staffing problems in minutes that used to take days.\n\nLast quarter subscriptions grew 22%, guidance went up, and management said AI demand is running ahead of plan. Snowflake and Dell beats the same week confirmed AI is feeding enterprise software, and fresh Buy ratings landed this week.\n\nThe price did the rest, from $100 to $133. Even after that run it trades near 26 times next year's earnings, still reasonable for a 20%-plus grower and well under the priciest software names. \n\nThe analyst high cluster sits around $150 and management has guided subscriptions to $30 billion by 2030. I give the better odds to this continuing through the July 22 quarter toward that $150 zone, with the main risk a soft print pulling it back toward $115.\n\nEither way the discount that got me in has mostly closed and the story I bought is playing out in the open.\""
+  },
+  {
+    "account": "theaiportfolios",
+    "source_type": "portfolio",
+    "portfolio": "claude",
+    "tweet_id": "2061440214460190843",
+    "timestamp": "2026-06-01T13:30:21+00:00",
+    "signal_type": "position",
+    "confidence": "medium",
+    "actionable": true,
+    "tickers": [
+      "NOW"
+    ],
+    "asset_type": "stock",
+    "position_size_pct": null,
+    "entry_price": null,
+    "stop_loss": null,
+    "target": null,
+    "trade_date": "2026-03-01",
+    "reasoning": "Tweet references Claude portfolio's disclosed position in ServiceNow ($NOW) from March disclosure, currently held with +2% gain; framed as a position update rather than a new trade execution.",
+    "url": "https://x.com/theaiportfolios/status/2061440214460190843",
+    "text": "@theaiportfolios Rep. Byron Donalds disclosed a $NOW  buy in March, currently up +2%\n\nCopying all of Donald's tech buys when disclosed and selling 90d later:\n+7 median return\n70% win rate\n\n$NOW  still has room to run https://t.co/vrxW0gevLK"
   },
   {
     "account": "theaiportfolios",
@@ -544,6 +632,50 @@
     "reasoning": "Claude discloses ZETA as its second-largest holding at 11% without reporting a fresh transaction, only current position status and gains.",
     "url": "https://x.com/theaiportfolios/status/2060937600794591294",
     "text": "Commentary: ZETA is Claude's second-largest position at about 11% of the book, up roughly 40% since entry, and it ran 13% on May 29. @theaietf  rates it a Buy on a short-squeeze setup.\n\nHere's Claude's reasoning:\n\nZETA is my second-largest position and up about 40% since I bought https://t.co/ftcX8sWCKa https://t.co/G4WmLOq1my"
+  },
+  {
+    "account": "IncomeSharks",
+    "source_type": "influencer",
+    "portfolio": null,
+    "tweet_id": "2060804806919467173",
+    "timestamp": "2026-05-30T19:25:28+00:00",
+    "signal_type": "position",
+    "confidence": "low",
+    "actionable": true,
+    "tickers": [
+      "ONON"
+    ],
+    "asset_type": "stock",
+    "position_size_pct": null,
+    "entry_price": null,
+    "stop_loss": null,
+    "target": null,
+    "trade_date": null,
+    "reasoning": "The tweet reports insider buying activity ($2M by three insiders) but does not constitute a clear actionable trade call or entry signal from the account itself.",
+    "url": "https://x.com/IncomeSharks/status/2060804806919467173",
+    "text": "@TrendSpider $ONON another one where 3 different insiders all dropped 2 million into the stock"
+  },
+  {
+    "account": "IncomeSharks",
+    "source_type": "influencer",
+    "portfolio": null,
+    "tweet_id": "2060784056690684190",
+    "timestamp": "2026-05-30T18:03:01+00:00",
+    "signal_type": "position",
+    "confidence": "low",
+    "actionable": true,
+    "tickers": [
+      "PANW"
+    ],
+    "asset_type": "stock",
+    "position_size_pct": null,
+    "entry_price": null,
+    "stop_loss": null,
+    "target": null,
+    "trade_date": null,
+    "reasoning": "Tweet references a CEO's historical buy and subsequent +85% gain, but does not present an actionable trade call or entry price from IncomeSharks itself.",
+    "url": "https://x.com/IncomeSharks/status/2060784056690684190",
+    "text": "CEO turned on the money printer \ud83d\udda8\ufe0f\ud83d\udcb5\n$PANW +85% since the CEO's buy https://t.co/PDbWmSEA6S"
   },
   {
     "account": "theaiportfolios",
@@ -970,6 +1102,50 @@
     "reasoning": "IncomeSharks identifies bullish catalysts for HOOD (annual meeting, Trump accounts, retail trading activity) and references a green box chart pattern suggesting upside potential.",
     "url": "https://x.com/IncomeSharks/status/2060030112897306766",
     "text": "$HOOD - Annual meeting coming up in 5 days. I think that green box gets filled in a matter of weeks. There's a lot of bullish catalysts all lined up. You got the Trump Accounts, success of Robinhood Ventures, retail trading activity exploding, etc. https://t.co/RIdtJw1hSq"
+  },
+  {
+    "account": "IncomeSharks",
+    "source_type": "influencer",
+    "portfolio": null,
+    "tweet_id": "2059830764821217424",
+    "timestamp": "2026-05-28T02:54:58+00:00",
+    "signal_type": "position",
+    "confidence": "low",
+    "actionable": true,
+    "tickers": [
+      "SMR"
+    ],
+    "asset_type": "stock",
+    "position_size_pct": null,
+    "entry_price": null,
+    "stop_loss": null,
+    "target": null,
+    "trade_date": null,
+    "reasoning": "Reply commenting on someone else's existing position in SMR, not an actionable own trade signal from IncomeSharks.",
+    "url": "https://x.com/IncomeSharks/status/2059830764821217424",
+    "text": "@IncomeSharks Unrelated, but your patience on the $SMR play I imagine is going to reward you big time. We chatted about this a week ago, but I think the price action is driving me crazy lol. Need to learn to have more patience like yourself \ud83e\udd1d"
+  },
+  {
+    "account": "IncomeSharks",
+    "source_type": "influencer",
+    "portfolio": null,
+    "tweet_id": "2059669208846512179",
+    "timestamp": "2026-05-27T16:13:00+00:00",
+    "signal_type": "buy",
+    "confidence": "medium",
+    "actionable": true,
+    "tickers": [
+      "GRT"
+    ],
+    "asset_type": "crypto",
+    "position_size_pct": null,
+    "entry_price": null,
+    "stop_loss": null,
+    "target": null,
+    "trade_date": null,
+    "reasoning": "IncomeSharks identifying a technical breakout pattern in GRT with an implicit bullish stance, though expressing hesitation due to it being crypto rather than a stock.",
+    "url": "https://x.com/IncomeSharks/status/2059669208846512179",
+    "text": "$GRT - If this was a stock I wouldn't hesitate to bid but because it's crypto it feels more hesitant. Pretty clean break out, purely TA play with easy invalidation if it doesn't work out. https://t.co/OYlG5kWbgk"
   },
   {
     "account": "aifinancelabs",
