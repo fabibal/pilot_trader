@@ -799,7 +799,7 @@ def main():
     ap.add_argument("--backfill", action="store_true",
                     help="interpret local tweets_*.json instead of fetching X")
     ap.add_argument("--backfill-batch", action="store_true",
-                    help="like --backfill but via the Anthropic Batch API (50% "
+                    help="like --backfill but via the Anthropic Batch API (50%% "
                          "cheaper); submits one job and polls to completion")
     ap.add_argument("--source", choices=["official", "getxapi"], default="getxapi",
                     help="tweet backend: getxapi (default, tweets_and_replies) "
@@ -814,6 +814,9 @@ def main():
                          "others. Without it, just limits the live fetch.")
     ap.add_argument("--test-telegram", action="store_true",
                     help="send a test alert to confirm Telegram is wired, then exit.")
+    ap.add_argument("--no-trade", action="store_true",
+                    help="do NOT execute trades on IBKR after the run (auto_trader "
+                         "still queues orders in no-trade mode for inspection).")
     args = ap.parse_args()
 
     # Telegram self-test: load creds from the env files and send one message.
@@ -971,6 +974,16 @@ def main():
     # Append per-run cost telemetry (skip dry-run writes and zero-LLM runs).
     if not args.dry_run and (interp.calls or interp.vision_calls):
         log_cost(interp)
+
+    # Automatic execution: on a live run that produced new signals, hand off to
+    # auto_trader (Grok mirror -> IBKR paper). Never on dry-run/backfill. A
+    # failure here must NOT fail the monitor run, so it is isolated.
+    if not args.dry_run and not args.backfill and all_new:
+        try:
+            import auto_trader
+            auto_trader.run(no_trade=args.no_trade)
+        except Exception as e:                       # noqa: BLE001 - isolate
+            print(f"[auto_trader] execution step failed: {e!r}", file=sys.stderr)
 
 
 def log_cost(interp):

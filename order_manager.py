@@ -101,6 +101,32 @@ def check_already_actioned(signal_id, path=ORDERS_FILE):
     return any(o.get("signal_id") == signal_id for o in _load(path))
 
 
+def get_order(order_id, path=ORDERS_FILE):
+    """Return the ledger record for order_id, or None."""
+    for o in _load(path):
+        if o.get("order_id") == order_id:
+            return o
+    return None
+
+
+def update_order_status(order_id, status, path=ORDERS_FILE, **fields):
+    """Flip a queued order's status (and merge any extra fields, e.g. fill price /
+    share count) atomically. Used by the IBKR connection layer after submission.
+    Returns the updated record, or None if order_id is unknown."""
+    orders = _load(path)
+    updated = None
+    for o in orders:
+        if o.get("order_id") == order_id:
+            o["status"] = status
+            o.update(fields)
+            o["updated_at"] = datetime.now(timezone.utc).isoformat()
+            updated = o
+            break
+    if updated is not None:
+        _save(orders, path)
+    return updated
+
+
 def risk_check(ticker, action, quantity, path=ORDERS_FILE):
     """Enforce IBKR_SPEC.md §5/§6 caps. Returns (approved, reason).
 
