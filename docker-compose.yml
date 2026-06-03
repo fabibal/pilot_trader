@@ -24,6 +24,11 @@ services:
       # Bind-mount the host project so trades.json / monitor.py / dashboard.py
       # are live inside the container at the path the app expects.
       - .:/home/fbazsa/pilot_trader
+      # Docker socket for the system-status bar: per-container CPU/RAM stats +
+      # the Restart button (POST /containers/.../restart). ⚠️ grants the
+      # container full Docker-daemon control — accepted for this LAN-only paper
+      # dashboard (same pattern as ~/paper_trader). Read-write (restart needs it).
+      - /var/run/docker.sock:/var/run/docker.sock
 
     deploy:
       resources:

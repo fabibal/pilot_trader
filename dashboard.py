@@ -20,8 +20,10 @@ Run with the project venv:
     /home/fbazsa/pilot_trader/.venv/bin/python dashboard.py
 """
 
+import http.client as _http_client
 import json
 import os
+import socket as _socket
 import threading
 import time
 import urllib.request
@@ -58,6 +60,10 @@ REFRESH_MS = 60_000
 PORT = 8051
 DASH_CLIENT_ID = 20       # distinct from auto_trader (7) and test scripts (8-11)
 DASH_IB_TIMEOUT = 8       # short connect deadline so the tab degrades fast
+DOCKER_SOCKET = "/var/run/docker.sock"   # mounted into the container for stats/restart
+DASH_CONTAINER = "pilot_trader_dashboard"
+CONTAINER_STATS_TTL = 25  # cache container stats this many seconds
+CRON_HOURS = [0, 4, 8, 12, 16, 20]       # monitor.py cron slots (UTC)
 
 # All stored timestamps are UTC (ISO with +00:00, or naive UTC epochs); the
 # dashboard DISPLAYS everything in Budapest local time (CET/CEST, UTC+1/+2).
@@ -849,6 +855,100 @@ def influencer_winrate_card(resolutions):
     ])
 
 
+# Per-influencer descriptor + accent color (left border) for the header card.
+INFLUENCER_META = {
+    "IncomeSharks": ("Stocks + crypto trade calls", C["blue"]),
+    "CelalKucuker": ("Crypto-heavy trade calls", C["yellow"]),
+    "traderstewie": ("US equity swing setups", C["green"]),
+    "moninvestor":  ("Long-term conviction holds", C["purple"]),
+    "PelosiTracker": ("Pelosi disclosed trades", C["orange"]),
+}
+
+
+def _hdr_metric(label, value, color, sub=None):
+    return html.Div(children=[
+        html.Div(label, style={"color": C["dim"], "fontSize": "0.62rem",
+                               "textTransform": "uppercase",
+                               "letterSpacing": "0.06em"}),
+        html.Div(value, style={"color": color, "fontSize": "1.05rem",
+                               "fontWeight": "bold"}),
+        html.Div(sub or "", style={"color": C["dim"], "fontSize": "0.64rem",
+                                   "minHeight": "0.8rem"}),
+    ])
+
+
+def _influencer_returns(account, resolutions, positions, is_lt):
+    """(ticker, return%) for each open call/holding of `account`."""
+    rr = []
+    if is_lt:
+        for p in longterm_positions(positions or []):
+            if p.get("status") != "open" or p.get("account") != account:
+                continue
+            atype = p.get("asset_type", "stock") or "stock"
+            entry, _ = estimate_entry(p["ticker"], p.get("entry_price"),
+                                      p.get("trade_date"),
+                                      (p.get("opened_at") or "")[:10], atype)
+            cur = get_price(_yf_symbol(p["ticker"], atype))
+            rr.append((p["ticker"], round((cur - entry) / entry * 100, 1)
+                       if (entry and cur) else None))
+    else:
+        for p, _res in (resolutions or []):
+            atype = p.get("asset_type") or "unknown"
+            sym = _yf_symbol(p["ticker"], atype)
+            entry = p.get("entry_price")
+            if not entry:
+                tdate = p.get("trade_date") or (p.get("opened_at") or "")[:10] or None
+                entry = get_hist_close(sym, tdate) if tdate else None
+            cur = get_price(sym)
+            rr.append((p["ticker"], round((cur - entry) / entry * 100, 1)
+                       if (entry and cur) else None))
+    return rr
+
+
+def influencer_header_card(account, resolutions=None, positions=None):
+    """Per-influencer header card: @handle + descriptor + win rate (trade-call)
+    or holdings count (long-term) + open count + best performer. A left accent
+    border in the handle's color makes each visually distinct."""
+    desc, accent = INFLUENCER_META.get(account, ("", C["blue"]))
+    is_lt = account in LONGTERM_ACCOUNTS
+    rr = _influencer_returns(account, resolutions, positions, is_lt)
+    valid = [(t, r) for t, r in rr if r is not None]
+    best = max(valid, key=lambda x: x[1]) if valid else None
+
+    metrics = []
+    if not is_lt:
+        st = resolver.win_stats([r for _, r in (resolutions or [])])
+        wr = st["win_rate"]
+        wr_txt = "n/a" if wr is None else f"{wr:.0f}%"
+        wr_color = C["dim"] if wr is None else (
+            C["green"] if wr >= 50 else C["red"])
+        metrics.append(_hdr_metric("win rate", wr_txt, wr_color,
+                                   f"{st['decided']} resolved"))
+        metrics.append(_hdr_metric("open calls", str(len(rr)), C["text"]))
+    else:
+        metrics.append(_hdr_metric("holdings", str(len(rr)), C["text"]))
+    metrics.append(_hdr_metric("best", best[0] if best else "—",
+                               _color(best[1] if best else None),
+                               _fmt_pct(best[1]) if best else None))
+
+    return html.Div(style={
+        "background": C["card"], "border": f"1px solid {C['border']}",
+        "borderLeft": f"4px solid {accent}", "borderRadius": "8px",
+        "padding": "14px 18px", "marginTop": "12px", "display": "flex",
+        "flexWrap": "wrap", "alignItems": "center", "gap": "28px"}, children=[
+        html.Div(style={"minWidth": "180px"}, children=[
+            html.A(f"@{account}", href=f"https://x.com/{account}", target="_blank",
+                   rel="noopener noreferrer",
+                   style={"color": accent, "fontWeight": "bold",
+                          "fontSize": "1.15rem", "textDecoration": "none"}),
+            html.Div(desc, style={"color": C["dim"], "fontSize": "0.72rem",
+                                  "marginTop": "2px"}),
+        ]),
+        html.Div(metrics, style={"display": "flex", "flexWrap": "wrap",
+                                 "gap": "28px"}),
+    ])
+
+
 def influencer_positions_table(resolutions):
     """Influencer calls (stocks AND crypto) with their resolution status."""
     rows = []
@@ -1089,18 +1189,6 @@ def _paper_perf_rows():
         return []
     return [{"date": d["date"], "portfolio": "My Paper",
              "return": round((d["netliq"] - base) / base * 100, 2)} for d in pts]
-
-
-def performance_figure(positions):
-    """Cumulative equal-weight return % per portfolio vs S&P 500 (AI tab)."""
-    rows, _ = _perf_rows(positions)
-    if not rows:
-        return _dark_chart(px.line(), "Performance vs S&P 500 — no dated positions")
-    df = pd.DataFrame(rows)
-    fig = px.line(df, x="date", y="return", color="portfolio",
-                  color_discrete_map=PF_COLORS)
-    fig.update_traces(selector=dict(name="S&P 500"), line=dict(dash="dash"))
-    return _dark_chart(fig, "Cumulative return % vs S&P 500 (equal-weight, est.)")
 
 
 def overview_figure(positions):
@@ -1532,7 +1620,7 @@ def hero_strip(store, kpis, overall_spy):
                (f"S&P {_fmt_pct(k['spy'])}" if k["spy"] is not None else None))
         tiles.append(_kpi_tile(k["label"], _fmt_pct(v), _color(v), sub))
     tiles.append(_kpi_tile("S&P 500", _fmt_pct(overall_spy), _color(overall_spy),
-                           "benchmark"))
+                           "vs year start (2026)"))
     return html.Div(tiles, style={
         "display": "flex", "flexWrap": "wrap", "gap": "10px",
         "marginTop": "10px"})
@@ -1628,6 +1716,192 @@ def ibkr_halt_banner():
                "fontSize": "0.82rem"})
 
 
+# --- system status bar: Docker container stats + restart (via Docker socket) -
+# Same approach as ~/paper_trader/dashboard.py: talk to the Docker daemon over
+# its Unix socket (mounted into the container) for true per-container CPU/RAM.
+class _UnixSocketHTTPConn(_http_client.HTTPConnection):
+    def __init__(self, unix_socket):
+        super().__init__("localhost")
+        self._unix_socket = unix_socket
+
+    def connect(self):
+        s = _socket.socket(_socket.AF_UNIX, _socket.SOCK_STREAM)
+        s.settimeout(5)
+        s.connect(self._unix_socket)
+        self.sock = s
+
+
+def _docker_req(method, path):
+    try:
+        conn = _UnixSocketHTTPConn(DOCKER_SOCKET)
+        conn.request(method, path)
+        resp = conn.getresponse()
+        body = resp.read()
+        code = resp.status
+        conn.close()
+        return code, body
+    except Exception:        # noqa: BLE001 - socket absent -> degrade gracefully
+        return None, None
+
+
+def _docker_get(path):
+    code, body = _docker_req("GET", path)
+    if body is None:
+        return None
+    try:
+        return json.loads(body)
+    except ValueError:
+        return None
+
+
+def _docker_restart(name=DASH_CONTAINER):
+    code, _ = _docker_req("POST", f"/containers/{name}/restart?t=2")
+    return code in (200, 204) if code is not None else False
+
+
+_cstat = {"data": None, "ts": 0.0}
+_cstat_lock = threading.Lock()
+
+
+def container_stat(name=DASH_CONTAINER):
+    """CPU% / RAM / uptime / restart-count for one container via the Docker API
+    (cached CONTAINER_STATS_TTL s). ok=False if the socket is unavailable."""
+    with _cstat_lock:
+        if _cstat["data"] is not None and time.time() - _cstat["ts"] < CONTAINER_STATS_TTL:
+            return _cstat["data"]
+    s = _docker_get(f"/containers/{name}/stats?stream=false")
+    info = _docker_get(f"/containers/{name}/json")
+    res = {"name": name, "cpu_pct": None, "ram_mb": None, "ram_limit_mb": None,
+           "ram_pct": None, "uptime_s": None, "restart_count": None, "ok": False}
+    if isinstance(info, dict):
+        rc = info.get("RestartCount")
+        if isinstance(rc, int):
+            res["restart_count"] = rc
+        started = (info.get("State") or {}).get("StartedAt")
+        if started:
+            try:
+                st = started.rstrip("Z")
+                if "." in st:
+                    head, frac = st.split(".", 1)
+                    st = f"{head}.{frac[:6]}"
+                dt = datetime.fromisoformat(st).replace(tzinfo=timezone.utc)
+                res["uptime_s"] = (datetime.now(timezone.utc) - dt).total_seconds()
+            except (ValueError, TypeError):
+                pass
+    if isinstance(s, dict):
+        try:
+            cpu, precpu = s.get("cpu_stats", {}), s.get("precpu_stats", {})
+            mem = s.get("memory_stats", {})
+            cd = ((cpu.get("cpu_usage", {}).get("total_usage", 0) or 0)
+                  - (precpu.get("cpu_usage", {}).get("total_usage", 0) or 0))
+            sd = ((cpu.get("system_cpu_usage", 0) or 0)
+                  - (precpu.get("system_cpu_usage", 0) or 0))
+            ncpu = cpu.get("online_cpus") or 1
+            res["cpu_pct"] = (cd / sd) * ncpu * 100 if sd > 0 else 0.0
+            raw = mem.get("usage", 0) or 0
+            cache = (mem.get("stats") or {}).get("cache", 0) or 0
+            used, lim = raw - cache, mem.get("limit", 0) or 0
+            res["ram_mb"] = used / 1_048_576
+            res["ram_limit_mb"] = lim / 1_048_576 if lim > 0 else None
+            res["ram_pct"] = (used / lim) * 100 if lim > 0 else None
+            res["ok"] = True
+        except (TypeError, ValueError, ZeroDivisionError):
+            pass
+    with _cstat_lock:
+        _cstat.update(data=res, ts=time.time())
+    return res
+
+
+def _fmt_uptime(seconds):
+    if seconds is None or seconds < 0:
+        return "up --"
+    s = int(seconds)
+    d, r = divmod(s, 86400)
+    h, r = divmod(r, 3600)
+    m, _ = divmod(r, 60)
+    if d >= 1:
+        return f"up {d}d {h}h"
+    if h >= 1:
+        return f"up {h}h {m}m"
+    return f"up {m}m"
+
+
+def _sys_card(children):
+    return html.Div(children, style={
+        "display": "flex", "alignItems": "center", "gap": "8px",
+        "padding": "5px 11px", "background": C["card"],
+        "border": f"1px solid {C['border']}", "borderRadius": "6px",
+        "fontSize": "0.72rem", "whiteSpace": "nowrap"})
+
+
+def container_stats_card():
+    """System-status card: dashboard container CPU + RAM bar + uptime + restarts."""
+    s = container_stat()
+    if not s.get("ok"):
+        return _sys_card([html.Span("container stats unavailable",
+                                    style={"color": C["dim"]})])
+    cpu = f"{s['cpu_pct']:.1f}%" if s["cpu_pct"] is not None else "--"
+    ram_mb, lim, ram_pct = s["ram_mb"], s["ram_limit_mb"], s["ram_pct"] or 0
+    bar_color = C["red"] if ram_pct > 80 else C["green"]
+    ram_str = (f"{ram_mb:.0f}/{lim:.0f} MB" if (ram_mb is not None and lim)
+               else (f"{ram_mb:.0f} MB" if ram_mb is not None else "--"))
+    rc = s.get("restart_count")
+    return _sys_card([
+        html.Span("dashboard", style={"color": C["text"], "fontWeight": "700"}),
+        html.Span(f"CPU {cpu}", style={"color": C["dim"], "fontFamily": MONO}),
+        html.Div(html.Div(style={
+            "height": "100%", "width": f"{min(100, ram_pct):.0f}%",
+            "background": bar_color, "borderRadius": "2px"}),
+            style={"width": "54px", "height": "5px", "background": C["border"],
+                   "borderRadius": "2px", "flexShrink": "0"}),
+        html.Span(f"RAM {ram_str}", style={"color": C["dim"], "fontFamily": MONO}),
+        html.Span(_fmt_uptime(s.get("uptime_s")),
+                  style={"color": C["dim"], "fontFamily": MONO}),
+        html.Span(f"R:{rc}" if rc is not None else "R:--", style={
+            "color": C["red"] if (rc or 0) > 0 else C["dim"],
+            "fontFamily": MONO, "fontWeight": "700" if (rc or 0) > 0 else "400"}),
+    ])
+
+
+def monitor_runs_card():
+    """System-status card: monitor last + next cron run."""
+    last_txt, last_color = "last run unknown", C["dim"]
+    try:
+        with open(STATE_FILE) as f:
+            last = json.load(f).get("_last_run")
+        if last:
+            h = (datetime.now(timezone.utc)
+                 - datetime.fromisoformat(last)).total_seconds() / 3600
+            last_txt = f"last {h:.1f}h ago"
+            last_color = C["red"] if h > STALE_HOURS else C["green"]
+    except (json.JSONDecodeError, OSError, ValueError, TypeError):
+        pass
+    now = datetime.now(timezone.utc)
+    nxt = None
+    for hh in CRON_HOURS:
+        cand = now.replace(hour=hh, minute=0, second=0, microsecond=0)
+        if cand > now:
+            nxt = cand
+            break
+    if nxt is None:
+        nxt = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0,
+                                                microsecond=0)
+    mins = (nxt - now).total_seconds() / 60
+    return _sys_card([
+        html.Span("monitor", style={"color": C["text"], "fontWeight": "700"}),
+        html.Span(last_txt, style={"color": last_color, "fontFamily": MONO}),
+        html.Span(f"next {nxt.strftime('%H:%M')}Z (~{mins:.0f}m)",
+                  style={"color": C["dim"], "fontFamily": MONO}),
+    ])
+
+
+_RESTART_BTN = {
+    "background": C["card"], "color": C["red"],
+    "border": f"1px solid {C['red']}", "borderRadius": "6px",
+    "padding": "5px 11px", "fontSize": "0.72rem", "fontFamily": MONO,
+    "cursor": "pointer", "fontWeight": "700"}
+
+
 app.layout = html.Div(
     style={"backgroundColor": C["bg"], "color": C["text"], "fontFamily": MONO,
            "minHeight": "100vh", "padding": "20px 26px"},
@@ -1640,23 +1914,44 @@ app.layout = html.Div(
 
         html.H2("Pilot Trader", style={"margin": 0, "color": C["text"],
                                        "fontFamily": MONO, "fontSize": "1.3rem"}),
-        # Always-visible status bar + hero KPI strip (across every tab).
-        html.Div(id="status-bar"),
+
+        # System status bar (item 1): monitor runs · container CPU/RAM · restart ·
+        # GetXAPI credits · API costs · prices-as-of. Top of page, paper_trader
+        # style. (credits/costs/prices keep their existing callbacks.)
+        html.Div(style={"display": "flex", "flexWrap": "wrap", "gap": "8px",
+                        "alignItems": "center", "marginTop": "8px"}, children=[
+            html.Div(id="monitor-runs"),
+            html.Div(id="container-stats"),
+            html.Div([
+                html.Button("⟳ Restart", id="restart-btn", n_clicks=0,
+                            style=_RESTART_BTN),
+                html.Span(id="restart-status",
+                          style={"marginLeft": "6px", "fontSize": "0.72rem"}),
+            ], style={"display": "flex", "alignItems": "center"}),
+            html.Div(id="api-credits", children=credits_cards()),
+            html.Div(id="api-costs", children=api_costs_card()),
+            html.Div(id="prices-asof", style={"color": C["dim"],
+                                              "fontSize": "0.7rem"}),
+            html.Div(id="freshness", style={"display": "none"}),  # legacy target
+        ]),
+
+        # Always-visible status pills + hero KPI strip (across every tab).
+        html.Div(id="status-bar", style={"marginTop": "8px"}),
         html.Div(id="hero-strip"),
         html.Div(id="summary", style={"color": C["dim"], "fontSize": "0.76rem",
                                       "marginTop": "8px"}),
 
-        # Top-level tabs: Overview (landing) + AI Portfolios / Influencers /
-        # My Paper Account.
+        # Top-level tabs: Overview (landing) · My Paper Account · AI Portfolios ·
+        # Influencers.
         dcc.Tabs(id="main-tabs", value="overview", style={"marginTop": "12px"},
                  children=[
                      dcc.Tab(label="Overview", value="overview",
                              style=_TAB_STYLE, selected_style=_TAB_SELECTED),
+                     dcc.Tab(label="My Paper Account", value="ibkr",
+                             style=_TAB_STYLE, selected_style=_TAB_SELECTED),
                      dcc.Tab(label="AI Portfolios", value="ai",
                              style=_TAB_STYLE, selected_style=_TAB_SELECTED),
                      dcc.Tab(label="Influencers", value="influencers",
-                             style=_TAB_STYLE, selected_style=_TAB_SELECTED),
-                     dcc.Tab(label="My Paper Account", value="ibkr",
                              style=_TAB_STYLE, selected_style=_TAB_SELECTED),
                  ]),
 
@@ -1676,9 +1971,7 @@ app.layout = html.Div(
                  style={"display": "flex", "flexWrap": "wrap", "gap": "14px",
                         "marginTop": "12px"}),
 
-        html.Div("Performance vs S&P 500", style=_SECTION_H),
-        dcc.Graph(id="perf-timeseries", config={"displayModeBar": False}),
-
+        # (Performance chart lives on the Overview tab — not duplicated here.)
         html.Div("Holdings", style=_SECTION_H),
         dcc.Tabs(id="portfolio-tabs", value=_portfolios[0],
                  children=[dcc.Tab(label=PORTFOLIO_LABELS.get(pf, pf.title()),
@@ -1769,6 +2062,10 @@ app.layout = html.Div(
                                  style=_TAB_STYLE, selected_style=_TAB_SELECTED),
                      ]),
 
+            # Per-influencer header card (handle · win-rate/holdings · open ·
+            # best performer), shown for whichever sub-tab is selected.
+            html.Div(id="influencer-header"),
+
             # Trade-call view (IncomeSharks / CelalKucuker).
             html.Div(id="influencer-trade-view", children=[
             html.Div(id="influencer-pos-header", style=_SECTION_H),
@@ -1832,22 +2129,6 @@ app.layout = html.Div(
             html.Div(id="ibkr-funnel", style={"marginTop": "4px"}),
             html.Div("Order History (last 20)", style=_SECTION_H),
             html.Div(id="ibkr-history", style={"marginTop": "4px"}),
-        ]),
-
-        # Collapsible footer: system status & API costs (item 6 — demoted from
-        # the header). prices-asof + freshness live here too (refresh() targets).
-        html.Details(style={"marginTop": "26px",
-                            "borderTop": f"1px solid {C['border']}",
-                            "paddingTop": "10px"}, children=[
-            html.Summary("System status & API costs", style={
-                "color": C["dim"], "cursor": "pointer", "fontSize": "0.8rem",
-                "letterSpacing": "0.04em"}),
-            html.Div(id="freshness"),
-            html.Div(id="prices-asof", style={"color": C["dim"],
-                                              "fontSize": "0.72rem",
-                                              "marginTop": "4px"}),
-            html.Div(id="api-credits", children=credits_cards()),
-            html.Div(id="api-costs", children=api_costs_card()),
         ]),
     ],
 )
@@ -1929,8 +2210,35 @@ def refresh_topbar(_n, store):
     positions = ai_positions(load_positions())
     warm_prices({_yf_symbol(p["ticker"], p.get("asset_type", "stock"))
                  for p in positions} | {"SPY"})
-    kpis, ospy = portfolio_kpis(positions)
-    return status_bar(store), hero_strip(store, kpis, ospy)
+    kpis, _ = portfolio_kpis(positions)
+    # S&P tile is YEAR-TO-DATE (since 2026-01-01), labelled accordingly; the
+    # per-portfolio 'vs S&P' deltas stay window-matched to each open date.
+    ytd_spy = spy_return_since("2026-01-01")
+    return status_bar(store), hero_strip(store, kpis, ytd_spy)
+
+
+@app.callback(
+    Output("monitor-runs", "children"),
+    Output("container-stats", "children"),
+    Input("interval", "n_intervals"),
+)
+def refresh_system(_n):
+    return monitor_runs_card(), container_stats_card()
+
+
+@app.callback(
+    Output("restart-status", "children"),
+    Input("restart-btn", "n_clicks"),
+    prevent_initial_call=True,
+)
+def do_restart(n):
+    if not n:
+        raise PreventUpdate
+    ok = _docker_restart()
+    # On success the container is killed mid-response, so the browser usually
+    # just reconnects after restart; this text shows only if the POST returned.
+    return html.Span("restarting…" if ok else "restart failed (no docker socket?)",
+                     style={"color": C["yellow"] if ok else C["red"]})
 
 
 @app.callback(
@@ -2097,14 +2405,7 @@ def refresh_pie(_n, portfolio):
 
 
 @app.callback(
-    Output("perf-timeseries", "figure"),
-    Input("interval", "n_intervals"),
-)
-def refresh_charts(_n):
-    return performance_figure(ai_positions(load_positions()))
-
-
-@app.callback(
+    Output("influencer-header", "children"),
     Output("influencer-signals", "data"),
     Output("influencer-positions", "children"),
     Output("influencer-winrate", "children"),
@@ -2120,9 +2421,12 @@ def refresh_influencers(_n, account):
     # Long-term accounts (moninvestor/PelosiTracker) show only the holdings
     # view; the trade-call outputs are hidden.
     if account in LONGTERM_ACCOUNTS:
-        return [], None, None, longterm_holdings_table(positions, account=account)
+        return (influencer_header_card(account, positions=positions),
+                [], None, None,
+                longterm_holdings_table(positions, account=account))
     resolutions = influencer_resolutions(positions, account=account)
-    return (influencer_signals_data(load_trades(), account=account),
+    return (influencer_header_card(account, resolutions=resolutions),
+            influencer_signals_data(load_trades(), account=account),
             influencer_positions_table(resolutions),
             influencer_winrate_card(resolutions),
             None)
