@@ -23,7 +23,7 @@ Public API:
 
 import json
 import os
-from datetime import datetime, time as dtime
+from datetime import datetime, time as dtime, timezone
 from zoneinfo import ZoneInfo
 
 import order_manager as om
@@ -35,6 +35,8 @@ FILL_TIMEOUT_S = 30          # how long to wait for a fill (spec: 30s)
 STARTING_CAPITAL = 1_000_000.0   # fallback baseline if the file is unavailable
 BASELINE_FILE = os.path.join(os.path.dirname(om.ORDERS_FILE) or ".",
                              "account_baseline.json")
+EQUITY_FILE = os.path.join(os.path.dirname(om.ORDERS_FILE) or ".",
+                           "equity_curve.json")
 
 MAX_TOTAL_EXPOSURE = om.MAX_TOTAL_EXPOSURE   # $10,000
 MAX_POSITION_USD = om.MAX_POSITION_USD       # $1,000
@@ -207,6 +209,35 @@ def get_account_value(ib=None):
     finally:
         if owns:
             ib.disconnect()
+
+
+def snapshot_equity(netliq, account="", path=None):
+    """Record at most ONE NetLiquidation point per UTC day to
+    data/equity_curve.json (a daily equity curve for the paper-mirror chart).
+    Updates the day's point if it already exists. Best-effort; never raises.
+    Called at the end of each dashboard refresh that reaches IB."""
+    path = path or EQUITY_FILE
+    if not (netliq and netliq == netliq):
+        return
+    try:
+        data = []
+        if os.path.exists(path):
+            with open(path) as f:
+                data = json.load(f) or []
+            if not isinstance(data, list):
+                data = []
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        pt = {"date": today, "netliq": round(float(netliq), 2),
+              "account": account, "ts": datetime.now(timezone.utc).isoformat()}
+        if data and data[-1].get("date") == today:
+            data[-1] = pt                      # update today's point
+        else:
+            data.append(pt)
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        with open(path, "w") as f:
+            json.dump(data, f, indent=2)
+    except (OSError, ValueError):
+        pass
 
 
 def _account_baseline(account, netliq):

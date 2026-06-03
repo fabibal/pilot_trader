@@ -49,6 +49,8 @@ HOME = "/home/fbazsa/pilot_trader"
 TRADES_FILE = "/home/fbazsa/pilot_trader/trades.json"
 POSITIONS_FILE = "/home/fbazsa/pilot_trader/positions.json"
 ORDERS_FILE = "/home/fbazsa/pilot_trader/data/orders.json"
+EQUITY_FILE = "/home/fbazsa/pilot_trader/data/equity_curve.json"
+BREAKER_FILE = "/home/fbazsa/pilot_trader/data/circuit_breaker.json"
 STATE_FILE = "/home/fbazsa/pilot_trader/.monitor_state.json"
 ENV_FILE = "/home/fbazsa/pilot_trader/.env"
 STALE_HOURS = 8           # cron runs every 4h; >8h means a run was missed
@@ -985,7 +987,8 @@ def holdings_figure(positions, portfolio):
 
 # Stable per-portfolio colors (+ S&P) shared by the timeseries and bar charts.
 PF_COLORS = {"Grok": "#58a6ff", "Claude": "#bc8cff", "DeepSeek": "#3fb950",
-             "ChatGPT": "#e3b341", "Unknown": "#8b949e", "S&P 500": "#f85149"}
+             "ChatGPT": "#e3b341", "Unknown": "#8b949e", "S&P 500": "#f85149",
+             "My Paper": "#f0f6fc"}   # bright near-white: the paper mirror line
 
 
 def _dark_chart(fig, title, h=360):
@@ -1018,9 +1021,10 @@ def _norm_date(val):
         return None
 
 
-def performance_figure(positions):
-    """Cumulative equal-weight return % per portfolio vs S&P 500, from the first
-    open date to today, using daily price history."""
+def _perf_rows(positions):
+    """Build cumulative equal-weight return % rows per portfolio + S&P 500 (list
+    of {date, portfolio, return}). Shared by the AI-tab chart and the Overview
+    chart. Returns (rows, start_date)."""
     entries = []   # (portfolio_label, yf_symbol, entry, open_date)
     for p in positions:
         if p.get("status") != "open":
@@ -1034,7 +1038,7 @@ def performance_figure(positions):
             entries.append((PORTFOLIO_LABELS.get(pf_of(p), pf_of(p).title()),
                             _yf_symbol(p["ticker"], atype), entry, od))
     if not entries:
-        return _dark_chart(px.line(), "Performance vs S&P 500 — no dated positions")
+        return [], None
 
     start = min(e[3] for e in entries)
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -1069,13 +1073,51 @@ def performance_figure(positions):
             if v:
                 rows.append({"date": d, "portfolio": "S&P 500",
                              "return": round((v - base) / base * 100, 2)})
+    return rows, start
+
+
+def _paper_perf_rows():
+    """Cumulative return % of the PAPER MIRROR from data/equity_curve.json,
+    indexed to the first recorded NetLiq point (list of {date, portfolio,
+    return} with portfolio='My Paper')."""
+    data = load_equity_curve()
+    pts = [d for d in data if d.get("netliq")]
+    if len(pts) < 1:
+        return []
+    base = pts[0]["netliq"]
+    if not base:
+        return []
+    return [{"date": d["date"], "portfolio": "My Paper",
+             "return": round((d["netliq"] - base) / base * 100, 2)} for d in pts]
+
+
+def performance_figure(positions):
+    """Cumulative equal-weight return % per portfolio vs S&P 500 (AI tab)."""
+    rows, _ = _perf_rows(positions)
     if not rows:
-        return _dark_chart(px.line(), "Performance vs S&P 500 — no price data")
+        return _dark_chart(px.line(), "Performance vs S&P 500 — no dated positions")
     df = pd.DataFrame(rows)
     fig = px.line(df, x="date", y="return", color="portfolio",
                   color_discrete_map=PF_COLORS)
     fig.update_traces(selector=dict(name="S&P 500"), line=dict(dash="dash"))
     return _dark_chart(fig, "Cumulative return % vs S&P 500 (equal-weight, est.)")
+
+
+def overview_figure(positions):
+    """Unified normalized comparison: each AI portfolio + the PAPER MIRROR + S&P
+    500, all as cumulative return %. The headline 'who's winning' chart."""
+    rows, _ = _perf_rows(positions)
+    rows = (rows or []) + _paper_perf_rows()
+    if not rows:
+        return _dark_chart(px.line(), "Normalized performance — no data yet")
+    df = pd.DataFrame(rows)
+    fig = px.line(df, x="date", y="return", color="portfolio",
+                  color_discrete_map=PF_COLORS)
+    fig.update_traces(selector=dict(name="S&P 500"), line=dict(dash="dash"))
+    fig.update_traces(selector=dict(name="My Paper"),
+                      line=dict(width=3.5))
+    return _dark_chart(fig, "Normalized performance — portfolios vs paper mirror "
+                            "vs S&P 500 (cumulative %)", h=420)
 
 
 # initial scaffolding (AI portfolios only — influencers live in their own tab)
@@ -1089,7 +1131,8 @@ app.title = "Pilot Trader — Signal Monitor"
 app.index_string = """<!DOCTYPE html>
 <html>
   <head>
-    {%metas%}<title>{%title%}</title>{%favicon%}{%css%}
+    {%metas%}<meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{%title%}</title>{%favicon%}{%css%}
     <style>
       body { background-color: #0d1117; margin: 0; }
       * { box-sizing: border-box; }
@@ -1329,39 +1372,304 @@ def ibkr_history_table(orders, positions):
                   empty="No orders yet.")
 
 
+# --- redesign: data helpers -------------------------------------------------
+def load_equity_curve():
+    """Read data/equity_curve.json (daily NetLiq points); [] if missing."""
+    if os.path.exists(EQUITY_FILE):
+        try:
+            with open(EQUITY_FILE) as f:
+                return json.load(f) or []
+        except (json.JSONDecodeError, OSError):
+            return []
+    return []
+
+
+def _breaker_state():
+    """Read data/circuit_breaker.json; {} if missing."""
+    if os.path.exists(BREAKER_FILE):
+        try:
+            with open(BREAKER_FILE) as f:
+                return json.load(f) or {}
+        except (json.JSONDecodeError, OSError):
+            return {}
+    return {}
+
+
+def _json_safe(obj):
+    """Recursively replace NaN floats with None so a value survives the
+    dcc.Store JSON round-trip."""
+    if isinstance(obj, float):
+        return None if obj != obj else obj
+    if isinstance(obj, dict):
+        return {k: _json_safe(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_json_safe(v) for v in obj]
+    return obj
+
+
+def portfolio_kpis(positions):
+    """Per-portfolio KPIs for the hero strip + leaderboard. Returns
+    (list[{label, ret, spy, delta, n_open, top}], overall_spy)."""
+    open_pos = [p for p in positions if p.get("status") == "open"]
+    by = {}
+    for p in open_pos:
+        by.setdefault(pf_of(p), []).append(p)
+    out, all_dates = [], []
+    for pf in sorted(by):
+        ps, rets, dates = by[pf], [], []
+        for p in ps:
+            r = compute_return(p["ticker"], p.get("entry_price"),
+                               p.get("trade_date"), (p.get("opened_at") or "")[:10],
+                               p.get("asset_type", "stock"))
+            d = p.get("trade_date") or (p.get("opened_at") or "")[:10]
+            if d:
+                dates.append(d)
+                all_dates.append(d)
+            if r:
+                rets.append((p["ticker"], r["val"]))
+        avg = round(sum(v for _, v in rets) / len(rets), 1) if rets else None
+        spy = spy_return_since(min(dates)) if dates else None
+        delta = (round(avg - spy, 1)
+                 if (avg is not None and spy is not None) else None)
+        top = max(rets, key=lambda x: x[1])[0] if rets else None
+        out.append({"label": PORTFOLIO_LABELS.get(pf, pf.title()), "ret": avg,
+                    "spy": spy, "delta": delta, "n_open": len(ps), "top": top})
+    overall_spy = spy_return_since(min(all_dates)) if all_dates else None
+    return out, overall_spy
+
+
+# --- redesign: components ---------------------------------------------------
+def _pill(text, color, filled=False):
+    style = {"display": "inline-flex", "alignItems": "center", "gap": "5px",
+             "padding": "3px 10px", "borderRadius": "999px",
+             "fontSize": "0.72rem", "fontWeight": "bold",
+             "border": f"1px solid {color}",
+             "color": C["bg"] if filled else color,
+             "background": color if filled else "transparent",
+             "whiteSpace": "nowrap"}
+    return html.Span(text, style=style)
+
+
+def status_bar(store):
+    """Top status bar of pills: data freshness, gateway, circuit-breaker halt,
+    plus a timezone note. Always visible across tabs."""
+    pills = []
+    # data freshness from monitor's last successful run
+    last, hours = None, None
+    try:
+        with open(STATE_FILE) as f:
+            last = json.load(f).get("_last_run")
+        if last:
+            hours = (datetime.now(timezone.utc)
+                     - datetime.fromisoformat(last)).total_seconds() / 3600
+    except (json.JSONDecodeError, OSError, ValueError):
+        pass
+    if hours is None:
+        pills.append(_pill("● NO DATA", C["dim"]))
+    elif hours > STALE_HOURS:
+        pills.append(_pill(f"⚠ DATA STALE {hours:.0f}h", C["red"], filled=True))
+    else:
+        pills.append(_pill(f"● LIVE · monitor {hours:.1f}h ago", C["green"]))
+    # IB gateway
+    if store and not store.get("offline"):
+        pills.append(_pill("● Gateway connected", C["green"]))
+    else:
+        pills.append(_pill("● Gateway offline", C["red"]))
+    # circuit breaker
+    br = _breaker_state()
+    if br.get("halted"):
+        pills.append(_pill(f"■ HALTED — {br.get('halt_reason', 'execution')}",
+                           C["red"], filled=True))
+    pills.append(html.Span("times shown in CET",
+                           style={"color": C["dim"], "fontSize": "0.68rem",
+                                  "marginLeft": "auto"}))
+    return html.Div(pills, style={
+        "display": "flex", "flexWrap": "wrap", "gap": "8px",
+        "alignItems": "center", "padding": "8px 0",
+        "borderBottom": f"1px solid {C['border']}"})
+
+
+def _kpi_tile(label, value, value_color, sub=None):
+    return html.Div(style={
+        "background": C["card"], "border": f"1px solid {C['border']}",
+        "borderRadius": "8px", "padding": "10px 14px", "minWidth": "0",
+        "flex": "1 1 140px"}, children=[
+        html.Div(label, style={"color": C["dim"], "fontSize": "0.68rem",
+                               "textTransform": "uppercase",
+                               "letterSpacing": "0.05em",
+                               "whiteSpace": "nowrap", "overflow": "hidden",
+                               "textOverflow": "ellipsis"}),
+        html.Div(value, style={"color": value_color, "fontSize": "1.15rem",
+                               "fontWeight": "bold", "marginTop": "2px"}),
+        html.Div(sub or "", style={"color": C["dim"], "fontSize": "0.7rem",
+                                   "marginTop": "1px", "minHeight": "0.9rem"}),
+    ])
+
+
+def hero_strip(store, kpis, overall_spy):
+    """Always-visible KPI strip: paper account headline + each portfolio vs SPY
+    + S&P. The 'are we winning' answer at a glance."""
+    tiles = []
+    acct = (store or {}).get("account") or {}
+    nl = acct.get("net_liquidation")
+    today, total = acct.get("daily_pnl"), acct.get("total_pnl")
+    if (store or {}).get("offline"):
+        tiles.append(_kpi_tile("Paper Account", "offline", C["red"],
+                               "IB Gateway unreachable"))
+    else:
+        nl_txt = _money(nl) if nl else "—"
+        sub = []
+        if today is not None:
+            sub.append(f"today {today:+,.0f}")
+        if total is not None:
+            sub.append(f"total {total:+,.0f}")
+        tiles.append(_kpi_tile("Paper NetLiq", nl_txt,
+                               _color(total if total is not None else 0),
+                               " · ".join(sub) or None))
+    for k in kpis:
+        v = k["ret"]
+        sub = (f"vs S&P {k['delta']:+.1f}" if k["delta"] is not None else
+               (f"S&P {_fmt_pct(k['spy'])}" if k["spy"] is not None else None))
+        tiles.append(_kpi_tile(k["label"], _fmt_pct(v), _color(v), sub))
+    tiles.append(_kpi_tile("S&P 500", _fmt_pct(overall_spy), _color(overall_spy),
+                           "benchmark"))
+    return html.Div(tiles, style={
+        "display": "flex", "flexWrap": "wrap", "gap": "10px",
+        "marginTop": "10px"})
+
+
+def leaderboard_table(kpis):
+    """Overview leaderboard: portfolio · return · vs SPY · #open · top holding,
+    sorted by return desc."""
+    rows = []
+    for k in sorted(kpis, key=lambda x: (x["ret"] is not None, x["ret"] or -1e9),
+                    reverse=True):
+        rows.append([
+            (k["label"], C["blue"]),
+            (_fmt_pct(k["ret"]), _color(k["ret"])),
+            (f"{k['delta']:+.1f}" if k["delta"] is not None else "—",
+             _color(k["delta"])),
+            str(k["n_open"]),
+            (k["top"] or "—", C["text"]),
+        ])
+    return _table(["Portfolio", "Return", "vs S&P", "# Open", "Top holding"],
+                  rows, empty="No open AI positions yet.")
+
+
+def ibkr_exposure_card(orders, store):
+    """Exposure gauge: open BUY notional vs the $10k cap, + cash/invested split."""
+    open_buy = sum(o.get("quantity", 0) for o in orders
+                   if o.get("action") == "BUY"
+                   and o.get("status") in ("pending", "filled"))
+    cap = 10_000.0
+    pct = min(open_buy / cap, 1.0) if cap else 0.0
+    bar_color = C["green"] if pct < 0.8 else C["yellow"] if pct < 1.0 else C["red"]
+    acct = (store or {}).get("account") or {}
+    nl, cash = acct.get("net_liquidation"), acct.get("total_cash")
+    invested = (nl - cash) if (nl and cash) else None
+    inv_txt = (f"  ·  invested {_money(invested)} / cash {_money(cash)}"
+               if invested is not None else "")
+    return html.Div(style={
+        "background": C["card"], "border": f"1px solid {C['border']}",
+        "borderRadius": "8px", "padding": "12px 16px", "marginTop": "4px"},
+        children=[
+            html.Div([
+                html.Span("Open BUY exposure  ", style={"color": C["dim"],
+                                                        "fontSize": "0.8rem"}),
+                html.Span(f"{_money(open_buy)} / {_money(cap)} "
+                          f"({pct*100:.0f}%)",
+                          style={"color": bar_color, "fontWeight": "bold",
+                                 "fontSize": "0.82rem"}),
+                html.Span(inv_txt, style={"color": C["dim"],
+                                          "fontSize": "0.72rem"}),
+            ]),
+            html.Div(style={"background": C["bg"], "borderRadius": "5px",
+                            "height": "10px", "marginTop": "7px",
+                            "border": f"1px solid {C['border']}",
+                            "overflow": "hidden"},
+                     children=html.Div(style={
+                         "width": f"{pct*100:.1f}%", "height": "100%",
+                         "background": bar_color})),
+        ])
+
+
+def ibkr_funnel(orders):
+    """Order-outcome funnel from the ledger: total → filled / pending / rejected
+    / cancelled."""
+    n = len(orders)
+    cnt = {s: sum(1 for o in orders if o.get("status") == s)
+           for s in ("filled", "pending", "submitted", "rejected", "cancelled",
+                     "failed")}
+    working = cnt["pending"] + cnt["submitted"]
+    parts = [("orders", n, C["text"]), ("filled", cnt["filled"], C["green"]),
+             ("working", working, C["yellow"]),
+             ("rejected", cnt["rejected"], C["red"]),
+             ("cancelled", cnt["cancelled"], C["dim"])]
+    children = []
+    for i, (label, val, col) in enumerate(parts):
+        if i:
+            children.append(html.Span(" → ", style={"color": C["dim"]}))
+        children.append(html.Span(f"{label} {val}",
+                                   style={"color": col, "fontWeight": "bold"}))
+    return html.Div(children, style={"fontSize": "0.82rem", "padding": "6px 2px"})
+
+
+def ibkr_halt_banner():
+    """Red banner if the circuit breaker has halted execution; else nothing."""
+    br = _breaker_state()
+    if not br.get("halted"):
+        return html.Span("")
+    return html.Div(
+        f"■ EXECUTION HALTED — {br.get('halt_reason', 'circuit breaker')} "
+        f"(resets next UTC day)",
+        style={"background": C["sell_bg"], "color": C["red"],
+               "border": f"1px solid {C['red']}", "borderRadius": "6px",
+               "padding": "8px 12px", "marginTop": "8px", "fontWeight": "bold",
+               "fontSize": "0.82rem"})
+
+
 app.layout = html.Div(
     style={"backgroundColor": C["bg"], "color": C["text"], "fontFamily": MONO,
            "minHeight": "100vh", "padding": "20px 26px"},
     children=[
-        html.Div([
-            html.H2("Pilot Trader — Signal Monitor",
-                    style={"margin": 0, "color": C["text"], "fontFamily": MONO,
-                           "fontSize": "1.35rem"}),
-            html.Div(id="summary", style={"color": C["dim"], "fontSize": "0.8rem",
-                                          "marginTop": "5px"}),
-            html.Div(id="prices-asof", style={"color": C["dim"],
-                                              "fontSize": "0.72rem", "marginTop": "2px"}),
-            html.Div(id="freshness"),
-            html.Div(id="api-credits", children=credits_cards()),
-            html.Div(id="api-costs", children=api_costs_card()),
-        ]),
+        dcc.Store(id="ibkr-store"),
         dcc.Interval(id="interval", interval=REFRESH_MS, n_intervals=0),
         # Separate, slow interval so the credits API is polled ~hourly, not 60s.
         dcc.Interval(id="credits-interval", interval=CREDITS_REFRESH_MS,
                      n_intervals=0),
 
-        # Top-level split: AI Portfolios vs Influencers (two distinct worlds).
-        dcc.Tabs(id="main-tabs", value="ai", style={"marginTop": "14px"},
+        html.H2("Pilot Trader", style={"margin": 0, "color": C["text"],
+                                       "fontFamily": MONO, "fontSize": "1.3rem"}),
+        # Always-visible status bar + hero KPI strip (across every tab).
+        html.Div(id="status-bar"),
+        html.Div(id="hero-strip"),
+        html.Div(id="summary", style={"color": C["dim"], "fontSize": "0.76rem",
+                                      "marginTop": "8px"}),
+
+        # Top-level tabs: Overview (landing) + AI Portfolios / Influencers /
+        # My Paper Account.
+        dcc.Tabs(id="main-tabs", value="overview", style={"marginTop": "12px"},
                  children=[
+                     dcc.Tab(label="Overview", value="overview",
+                             style=_TAB_STYLE, selected_style=_TAB_SELECTED),
                      dcc.Tab(label="AI Portfolios", value="ai",
                              style=_TAB_STYLE, selected_style=_TAB_SELECTED),
                      dcc.Tab(label="Influencers", value="influencers",
                              style=_TAB_STYLE, selected_style=_TAB_SELECTED),
-                     dcc.Tab(label="IBKR Paper Portfolio", value="ibkr",
+                     dcc.Tab(label="My Paper Account", value="ibkr",
                              style=_TAB_STYLE, selected_style=_TAB_SELECTED),
                  ]),
 
-        html.Div(id="ai-section", children=[
+        # Overview tab (landing): unified normalized chart + leaderboard.
+        html.Div(id="overview-section", children=[
+            html.Div("Normalized Performance — portfolios vs paper mirror vs S&P",
+                     style=_SECTION_H),
+            dcc.Graph(id="overview-chart", config={"displayModeBar": False}),
+            html.Div("Leaderboard", style=_SECTION_H),
+            html.Div(id="overview-leaderboard", style={"marginTop": "4px"}),
+        ]),
+
+        html.Div(id="ai-section", style={"display": "none"}, children=[
 
         html.Div("Portfolio Summary", style=_SECTION_H),
         html.Div(id="portfolio-summary",
@@ -1384,6 +1692,15 @@ app.layout = html.Div(
         html.Div(id="closed-trades", style={"marginTop": "4px"}),
 
         html.Div("All Signals", style=_SECTION_H),
+        html.Div([
+            html.Span("Legend: ", style={"color": C["dim"]}),
+            html.Span("*", style={"color": C["text"], "fontWeight": "bold"}),
+            html.Span(" estimated entry (close on trade date)   ",
+                      style={"color": C["dim"]}),
+            html.Span("?", style={"color": C["dim"], "fontWeight": "bold"}),
+            html.Span(" low/none confidence (excluded from positions.json)",
+                      style={"color": C["dim"]}),
+        ], style={"fontSize": "0.72rem", "marginTop": "8px"}),
         dash_table.DataTable(
             id="signals-table",
             columns=TABLE_COLUMNS,
@@ -1498,24 +1815,46 @@ app.layout = html.Div(
             ]),
         ]),
 
-        # --- IBKR Paper Portfolio tab -- hidden until selected ---------------
-        # Live reads from IB Gateway (127.0.0.1:4002) on each 60s refresh while
-        # this tab is active; degrades to "Gateway offline" if unreachable.
+        # --- My Paper Account tab -- hidden until selected -------------------
+        # Live reads from IB Gateway (127.0.0.1:4002) via the shared ibkr-store;
+        # degrades to "Gateway offline" (ledger-backed tables still render).
         html.Div(id="ibkr-section", style={"display": "none"}, children=[
+            html.Div(id="ibkr-halt"),
             html.Div("Account Summary", style=_SECTION_H),
             html.Div(id="ibkr-account"),
+            html.Div("Exposure", style=_SECTION_H),
+            html.Div(id="ibkr-exposure", style={"marginTop": "4px"}),
             html.Div("Open Positions", style=_SECTION_H),
             html.Div(id="ibkr-positions", style={"marginTop": "4px"}),
             html.Div("Pending / Working Orders", style=_SECTION_H),
             html.Div(id="ibkr-pending", style={"marginTop": "4px"}),
+            html.Div("Order Outcomes", style=_SECTION_H),
+            html.Div(id="ibkr-funnel", style={"marginTop": "4px"}),
             html.Div("Order History (last 20)", style=_SECTION_H),
             html.Div(id="ibkr-history", style={"marginTop": "4px"}),
+        ]),
+
+        # Collapsible footer: system status & API costs (item 6 — demoted from
+        # the header). prices-asof + freshness live here too (refresh() targets).
+        html.Details(style={"marginTop": "26px",
+                            "borderTop": f"1px solid {C['border']}",
+                            "paddingTop": "10px"}, children=[
+            html.Summary("System status & API costs", style={
+                "color": C["dim"], "cursor": "pointer", "fontSize": "0.8rem",
+                "letterSpacing": "0.04em"}),
+            html.Div(id="freshness"),
+            html.Div(id="prices-asof", style={"color": C["dim"],
+                                              "fontSize": "0.72rem",
+                                              "marginTop": "4px"}),
+            html.Div(id="api-credits", children=credits_cards()),
+            html.Div(id="api-costs", children=api_costs_card()),
         ]),
     ],
 )
 
 
 @app.callback(
+    Output("overview-section", "style"),
     Output("ai-section", "style"),
     Output("influencer-section", "style"),
     Output("ibkr-section", "style"),
@@ -1523,11 +1862,9 @@ app.layout = html.Div(
 )
 def switch_main_tab(tab):
     show, hide = {"display": "block"}, {"display": "none"}
-    if tab == "influencers":
-        return hide, show, hide
-    if tab == "ibkr":
-        return hide, hide, show
-    return show, hide, hide
+    order = {"overview": 0, "ai": 1, "influencers": 2, "ibkr": 3}
+    i = order.get(tab, 0)
+    return tuple(show if j == i else hide for j in range(4))
 
 
 @app.callback(
@@ -1535,27 +1872,79 @@ def switch_main_tab(tab):
     Output("ibkr-positions", "children"),
     Output("ibkr-pending", "children"),
     Output("ibkr-history", "children"),
-    Input("interval", "n_intervals"),
+    Output("ibkr-exposure", "children"),
+    Output("ibkr-funnel", "children"),
+    Output("ibkr-halt", "children"),
+    Input("ibkr-store", "data"),
     Input("main-tabs", "value"),
 )
-def refresh_ibkr(_n, tab):
-    # Only hit IB Gateway when the IBKR tab is actually showing (avoids a live
-    # connection every 60s for users sitting on other tabs). Fires immediately
-    # on switching to the tab, then every 60s while it stays active.
+def refresh_ibkr(store, tab):
+    # Renders from the SHARED ibkr-store (no own IB connection); skips rendering
+    # work when the tab isn't visible. The order tables + exposure + funnel + halt
+    # are ledger/file-backed and render even when the gateway is offline.
     if tab != "ibkr":
         raise PreventUpdate
     orders = load_orders()
-    snap = ibkr_snapshot()
-    if snap is None:
-        # Gateway offline: account card degrades, but the ledger-backed order
-        # tables still render (they don't need a live connection).
-        return (ibkr_offline(), "", ibkr_pending_table(orders),
-                ibkr_history_table(orders, []))
-    acct, positions = snap
+    halt = ibkr_halt_banner()
+    funnel = ibkr_funnel(orders)
+    pending = ibkr_pending_table(orders)
+    if not store or store.get("offline"):
+        return (ibkr_offline(), "", pending, ibkr_history_table(orders, []),
+                ibkr_exposure_card(orders, store), funnel, halt)
+    acct, positions = store.get("account") or {}, store.get("positions") or []
     return (ibkr_account_card(acct),
             ibkr_positions_table(positions),
-            ibkr_pending_table(orders),
-            ibkr_history_table(orders, positions))
+            pending,
+            ibkr_history_table(orders, positions),
+            ibkr_exposure_card(orders, store),
+            funnel, halt)
+
+
+@app.callback(
+    Output("ibkr-store", "data"),
+    Input("interval", "n_intervals"),
+)
+def update_ibkr_store(_n):
+    """ONE shared IB fetch per 60s on the singleton connection — feeds the hero
+    strip + status bar (always) and the My Paper Account tab. Records a daily
+    NetLiq point for the equity curve (item 2)."""
+    snap = ibkr_snapshot()
+    if snap is None:
+        return {"offline": True}
+    acct, positions = snap
+    try:
+        ibk.snapshot_equity(acct.get("net_liquidation"), acct.get("account", ""))
+    except Exception:        # noqa: BLE001 - snapshotting must never break the UI
+        pass
+    return _json_safe({"offline": False, "account": acct, "positions": positions})
+
+
+@app.callback(
+    Output("status-bar", "children"),
+    Output("hero-strip", "children"),
+    Input("interval", "n_intervals"),
+    Input("ibkr-store", "data"),
+)
+def refresh_topbar(_n, store):
+    positions = ai_positions(load_positions())
+    warm_prices({_yf_symbol(p["ticker"], p.get("asset_type", "stock"))
+                 for p in positions} | {"SPY"})
+    kpis, ospy = portfolio_kpis(positions)
+    return status_bar(store), hero_strip(store, kpis, ospy)
+
+
+@app.callback(
+    Output("overview-chart", "figure"),
+    Output("overview-leaderboard", "children"),
+    Input("interval", "n_intervals"),
+    Input("main-tabs", "value"),
+)
+def refresh_overview(_n, tab):
+    if tab != "overview":
+        raise PreventUpdate
+    positions = ai_positions(load_positions())
+    kpis, _ = portfolio_kpis(positions)
+    return overview_figure(positions), leaderboard_table(kpis)
 
 
 def _influencer_header(title, account):
