@@ -147,89 +147,6 @@ def get_getxapi_credits():
     return _credits_cache
 
 
-def credits_cards():
-    """Small header info card(s) for API credit balances. GetXAPI only —
-    Anthropic exposes no remaining-balance endpoint. Balance turns red below
-    CREDITS_LOW_USD; a failed fetch shows the last value with an error note."""
-    c = get_getxapi_credits()
-    bal = c["balance"]
-    if bal is None:
-        val_txt, val_color = "n/a", C["dim"]
-    else:
-        val_txt = f"${bal:,.2f}"
-        val_color = C["red"] if bal < CREDITS_LOW_USD else C["green"]
-    if c["fetched_at"]:
-        checked = _to_local(datetime.fromtimestamp(
-            c["fetched_at"], timezone.utc), "%Y-%m-%d %H:%M %Z")
-    else:
-        checked = "never"
-    note = "" if c["ok"] else "  (fetch error — last known)"
-
-    card = html.Div(style={
-        "background": C["card"], "border": f"1px solid {C['border']}",
-        "borderRadius": "6px", "padding": "6px 12px", "display": "inline-block"},
-        children=[
-            html.Span("GetXAPI Credits: ", style={"color": C["dim"]}),
-            html.Span(val_txt, style={"color": val_color, "fontWeight": "bold"}),
-            html.Span(note, style={"color": C["red"], "fontSize": "0.7rem"}),
-        ])
-    return html.Div(style={
-        "display": "flex", "flexWrap": "wrap", "gap": "10px",
-        "alignItems": "center", "marginTop": "8px", "fontSize": "0.8rem"},
-        children=[
-            card,
-            html.Span(f"checked {checked}",
-                      style={"color": C["dim"], "fontSize": "0.7rem"}),
-        ])
-
-
-def api_costs_card():
-    """Header card for Anthropic (Haiku+Sonnet) spend: today / this month /
-    all-time, summed from data/cost_log.json (written per run by monitor.py).
-    Shows '$0.00' when the log is absent/empty."""
-    try:
-        with open(COST_LOG_FILE) as f:
-            log = json.load(f)
-        if not isinstance(log, list):
-            log = []
-    except (json.JSONDecodeError, OSError):
-        log = []
-
-    now = datetime.now(timezone.utc)
-    today, month = now.strftime("%Y-%m-%d"), now.strftime("%Y-%m")
-    d_sum = m_sum = t_sum = 0.0
-    for r in log:
-        usd = r.get("total_usd") or 0.0
-        ts = r.get("timestamp") or ""
-        t_sum += usd
-        if ts[:7] == month:
-            m_sum += usd
-        if ts[:10] == today:
-            d_sum += usd
-
-    def part(label, val):
-        return html.Span([
-            html.Span(f"{label} ", style={"color": C["dim"]}),
-            html.Span(f"${val:,.2f}",
-                      style={"color": C["text"], "fontWeight": "bold"}),
-        ], style={"marginRight": "12px"})
-
-    card = html.Div(style={
-        "background": C["card"], "border": f"1px solid {C['border']}",
-        "borderRadius": "6px", "padding": "6px 12px", "display": "inline-block"},
-        children=[
-            html.Span("API Costs  ", style={"color": C["dim"]}),
-            part("today", d_sum), part("mo", m_sum), part("total", t_sum),
-        ])
-    note = "" if log else "  (no runs logged yet)"
-    return html.Div(style={
-        "display": "flex", "flexWrap": "wrap", "gap": "10px",
-        "alignItems": "center", "marginTop": "6px", "fontSize": "0.8rem"},
-        children=[
-            card,
-            html.Span(f"{len(log)} runs{note}",
-                      style={"color": C["dim"], "fontSize": "0.7rem"}),
-        ])
 PORTFOLIO_LABELS = {"grok": "Grok", "claude": "Claude",
                     "deepseek": "DeepSeek", "chatgpt": "ChatGPT"}
 # Merge null/"unknown" portfolio into the most likely one based on the posting
@@ -1527,54 +1444,138 @@ def portfolio_kpis(positions):
 
 
 # --- redesign: components ---------------------------------------------------
-def _pill(text, color, filled=False):
-    style = {"display": "inline-flex", "alignItems": "center", "gap": "5px",
-             "padding": "3px 10px", "borderRadius": "999px",
-             "fontSize": "0.72rem", "fontWeight": "bold",
-             "border": f"1px solid {color}",
-             "color": C["bg"] if filled else color,
-             "background": color if filled else "transparent",
-             "whiteSpace": "nowrap"}
-    return html.Span(text, style=style)
+def _sep():
+    """Dim ' · ' separator between status-bar segments."""
+    return html.Span("  ·  ", style={"color": C["border"]})
 
 
-def status_bar(store):
-    """Top status bar of pills: data freshness, gateway, circuit-breaker halt,
-    plus a timezone note. Always visible across tabs."""
-    pills = []
-    # data freshness from monitor's last successful run
-    last, hours = None, None
+def _cost_sums():
+    """(today, month, all-time) Anthropic spend from data/cost_log.json."""
+    try:
+        with open(COST_LOG_FILE) as f:
+            log = json.load(f)
+        if not isinstance(log, list):
+            log = []
+    except (json.JSONDecodeError, OSError):
+        log = []
+    now = datetime.now(timezone.utc)
+    today, month = now.strftime("%Y-%m-%d"), now.strftime("%Y-%m")
+    d = m = t = 0.0
+    for r in log:
+        usd = r.get("total_usd") or 0.0
+        ts = r.get("timestamp") or ""
+        t += usd
+        if ts[:7] == month:
+            m += usd
+        if ts[:10] == today:
+            d += usd
+    return d, m, t
+
+
+def _next_cron_run(now=None):
+    """Next monitor cron slot (returns a UTC datetime)."""
+    now = now or datetime.now(timezone.utc)
+    for hh in CRON_HOURS:
+        cand = now.replace(hour=hh, minute=0, second=0, microsecond=0)
+        if cand > now:
+            return cand
+    return (now + timedelta(days=1)).replace(hour=0, minute=0, second=0,
+                                             microsecond=0)
+
+
+def status_row_1(store):
+    """Status bar row 1: live/stale + monitor last & next run + gateway (+halt).
+    e.g. '● LIVE · monitor last run: 2026-06-03 14:02 CEST · next: 16:00 CEST
+    (~14m) · Gateway connected'."""
+    live_color, live_txt, last_txt = C["dim"], "NO DATA", "unknown"
+    last = None
     try:
         with open(STATE_FILE) as f:
             last = json.load(f).get("_last_run")
-        if last:
-            hours = (datetime.now(timezone.utc)
-                     - datetime.fromisoformat(last)).total_seconds() / 3600
-    except (json.JSONDecodeError, OSError, ValueError):
+    except (json.JSONDecodeError, OSError):
         pass
-    if hours is None:
-        pills.append(_pill("● NO DATA", C["dim"]))
-    elif hours > STALE_HOURS:
-        pills.append(_pill(f"⚠ DATA STALE {hours:.0f}h", C["red"], filled=True))
-    else:
-        pills.append(_pill(f"● LIVE · monitor {hours:.1f}h ago", C["green"]))
-    # IB gateway
-    if store and not store.get("offline"):
-        pills.append(_pill("● Gateway connected", C["green"]))
-    else:
-        pills.append(_pill("● Gateway offline", C["red"]))
-    # circuit breaker
+    if last:
+        try:
+            dt = datetime.fromisoformat(last)
+            hours = (datetime.now(timezone.utc) - dt).total_seconds() / 3600
+            last_txt = _to_local(dt, "%Y-%m-%d %H:%M %Z")
+            if hours > STALE_HOURS:
+                live_color, live_txt = C["red"], f"STALE {hours:.0f}h"
+            else:
+                live_color, live_txt = C["green"], "LIVE"
+        except ValueError:
+            pass
+    nxt = _next_cron_run()
+    next_local = _to_local(nxt, "%H:%M %Z")
+    mins = (nxt - datetime.now(timezone.utc)).total_seconds() / 60
+    gw_ok = bool(store) and not store.get("offline")
+    gw_color = C["green"] if gw_ok else C["red"]
+    gw_txt = "Gateway connected" if gw_ok else "Gateway offline"
+
+    segs = [
+        html.Span("● ", style={"color": live_color, "fontWeight": "bold"}),
+        html.Span(live_txt, style={"color": live_color, "fontWeight": "bold"}),
+        _sep(),
+        html.Span("monitor last run: ", style={"color": C["dim"]}),
+        html.Span(last_txt, style={"color": C["text"]}),
+        _sep(),
+        html.Span("next: ", style={"color": C["dim"]}),
+        html.Span(f"{next_local} (~{mins:.0f}m)", style={"color": C["text"]}),
+        _sep(),
+        html.Span(gw_txt, style={"color": gw_color, "fontWeight": "bold"}),
+    ]
     br = _breaker_state()
     if br.get("halted"):
-        pills.append(_pill(f"■ HALTED — {br.get('halt_reason', 'execution')}",
-                           C["red"], filled=True))
-    pills.append(html.Span("times shown in CET",
-                           style={"color": C["dim"], "fontSize": "0.68rem",
-                                  "marginLeft": "auto"}))
-    return html.Div(pills, style={
-        "display": "flex", "flexWrap": "wrap", "gap": "8px",
-        "alignItems": "center", "padding": "8px 0",
-        "borderBottom": f"1px solid {C['border']}"})
+        segs += [_sep(), html.Span(
+            f"■ HALTED: {br.get('halt_reason', 'execution')}",
+            style={"color": C["red"], "fontWeight": "bold"})]
+    return segs
+
+
+def status_row_2():
+    """Status bar row 2: container CPU/RAM + GetXAPI credits + API costs + prices.
+    e.g. 'Dashboard: CPU 0.1% · RAM 278/384MB · GetXAPI: $9.83 credits · API
+    Costs: today $0.80 / mo $4.13 / total $4.13 · Prices as of: 17:44 CEST
+    (yfinance, 1h cache)'."""
+    cs = container_stat()
+    if cs.get("ok"):
+        cpu = f"{cs['cpu_pct']:.1f}%" if cs["cpu_pct"] is not None else "--"
+        rm, lim = cs["ram_mb"], cs["ram_limit_mb"]
+        ram = (f"{rm:.0f}/{lim:.0f}MB" if (rm is not None and lim)
+               else (f"{rm:.0f}MB" if rm is not None else "--"))
+    else:
+        cpu, ram = "--", "--"
+
+    cr = get_getxapi_credits()
+    bal = cr["balance"]
+    if bal is None:
+        bal_txt, bal_color = "n/a", C["dim"]
+    else:
+        bal_txt = f"${bal:,.2f} credits"
+        bal_color = C["red"] if bal < CREDITS_LOW_USD else C["green"]
+
+    d, m, t = _cost_sums()
+    pa = _fetch_state["last"]
+    prices_txt = (
+        _to_local(datetime.fromtimestamp(pa, timezone.utc), "%H:%M %Z")
+        + " (yfinance, 1h cache)" if pa else "not fetched yet")
+
+    return [
+        html.Span("Dashboard: ", style={"color": C["dim"]}),
+        html.Span(f"CPU {cpu}", style={"color": C["text"]}),
+        _sep(),
+        html.Span(f"RAM {ram}", style={"color": C["text"]}),
+        _sep(),
+        html.Span("GetXAPI: ", style={"color": C["dim"]}),
+        html.Span(bal_txt, style={"color": bal_color, "fontWeight": "bold"}),
+        _sep(),
+        html.Span("API Costs: ", style={"color": C["dim"]}),
+        html.Span(f"today ${d:,.2f} / mo ${m:,.2f} / total ${t:,.2f}",
+                  style={"color": C["text"]}),
+        _sep(),
+        html.Span("Prices as of: ", style={"color": C["dim"]}),
+        html.Span(prices_txt, style={"color": C["dim"]}),
+    ]
 
 
 def _kpi_tile(label, value, value_color, sub=None):
@@ -1754,11 +1755,6 @@ def _docker_get(path):
         return None
 
 
-def _docker_restart(name=DASH_CONTAINER):
-    code, _ = _docker_req("POST", f"/containers/{name}/restart?t=2")
-    return code in (200, 204) if code is not None else False
-
-
 _cstat = {"data": None, "ts": 0.0}
 _cstat_lock = threading.Lock()
 
@@ -1812,131 +1808,35 @@ def container_stat(name=DASH_CONTAINER):
     return res
 
 
-def _fmt_uptime(seconds):
-    if seconds is None or seconds < 0:
-        return "up --"
-    s = int(seconds)
-    d, r = divmod(s, 86400)
-    h, r = divmod(r, 3600)
-    m, _ = divmod(r, 60)
-    if d >= 1:
-        return f"up {d}d {h}h"
-    if h >= 1:
-        return f"up {h}h {m}m"
-    return f"up {m}m"
-
-
-def _sys_card(children):
-    return html.Div(children, style={
-        "display": "flex", "alignItems": "center", "gap": "8px",
-        "padding": "5px 11px", "background": C["card"],
-        "border": f"1px solid {C['border']}", "borderRadius": "6px",
-        "fontSize": "0.72rem", "whiteSpace": "nowrap"})
-
-
-def container_stats_card():
-    """System-status card: dashboard container CPU + RAM bar + uptime + restarts."""
-    s = container_stat()
-    if not s.get("ok"):
-        return _sys_card([html.Span("container stats unavailable",
-                                    style={"color": C["dim"]})])
-    cpu = f"{s['cpu_pct']:.1f}%" if s["cpu_pct"] is not None else "--"
-    ram_mb, lim, ram_pct = s["ram_mb"], s["ram_limit_mb"], s["ram_pct"] or 0
-    bar_color = C["red"] if ram_pct > 80 else C["green"]
-    ram_str = (f"{ram_mb:.0f}/{lim:.0f} MB" if (ram_mb is not None and lim)
-               else (f"{ram_mb:.0f} MB" if ram_mb is not None else "--"))
-    rc = s.get("restart_count")
-    return _sys_card([
-        html.Span("dashboard", style={"color": C["text"], "fontWeight": "700"}),
-        html.Span(f"CPU {cpu}", style={"color": C["dim"], "fontFamily": MONO}),
-        html.Div(html.Div(style={
-            "height": "100%", "width": f"{min(100, ram_pct):.0f}%",
-            "background": bar_color, "borderRadius": "2px"}),
-            style={"width": "54px", "height": "5px", "background": C["border"],
-                   "borderRadius": "2px", "flexShrink": "0"}),
-        html.Span(f"RAM {ram_str}", style={"color": C["dim"], "fontFamily": MONO}),
-        html.Span(_fmt_uptime(s.get("uptime_s")),
-                  style={"color": C["dim"], "fontFamily": MONO}),
-        html.Span(f"R:{rc}" if rc is not None else "R:--", style={
-            "color": C["red"] if (rc or 0) > 0 else C["dim"],
-            "fontFamily": MONO, "fontWeight": "700" if (rc or 0) > 0 else "400"}),
-    ])
-
-
-def monitor_runs_card():
-    """System-status card: monitor last + next cron run."""
-    last_txt, last_color = "last run unknown", C["dim"]
-    try:
-        with open(STATE_FILE) as f:
-            last = json.load(f).get("_last_run")
-        if last:
-            h = (datetime.now(timezone.utc)
-                 - datetime.fromisoformat(last)).total_seconds() / 3600
-            last_txt = f"last {h:.1f}h ago"
-            last_color = C["red"] if h > STALE_HOURS else C["green"]
-    except (json.JSONDecodeError, OSError, ValueError, TypeError):
-        pass
-    now = datetime.now(timezone.utc)
-    nxt = None
-    for hh in CRON_HOURS:
-        cand = now.replace(hour=hh, minute=0, second=0, microsecond=0)
-        if cand > now:
-            nxt = cand
-            break
-    if nxt is None:
-        nxt = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0,
-                                                microsecond=0)
-    mins = (nxt - now).total_seconds() / 60
-    return _sys_card([
-        html.Span("monitor", style={"color": C["text"], "fontWeight": "700"}),
-        html.Span(last_txt, style={"color": last_color, "fontFamily": MONO}),
-        html.Span(f"next {nxt.strftime('%H:%M')}Z (~{mins:.0f}m)",
-                  style={"color": C["dim"], "fontFamily": MONO}),
-    ])
-
-
-_RESTART_BTN = {
-    "background": C["card"], "color": C["red"],
-    "border": f"1px solid {C['red']}", "borderRadius": "6px",
-    "padding": "5px 11px", "fontSize": "0.72rem", "fontFamily": MONO,
-    "cursor": "pointer", "fontWeight": "700"}
-
-
 app.layout = html.Div(
     style={"backgroundColor": C["bg"], "color": C["text"], "fontFamily": MONO,
            "minHeight": "100vh", "padding": "20px 26px"},
     children=[
         dcc.Store(id="ibkr-store"),
         dcc.Interval(id="interval", interval=REFRESH_MS, n_intervals=0),
-        # Separate, slow interval so the credits API is polled ~hourly, not 60s.
-        dcc.Interval(id="credits-interval", interval=CREDITS_REFRESH_MS,
-                     n_intervals=0),
 
         html.H2("Pilot Trader", style={"margin": 0, "color": C["text"],
                                        "fontFamily": MONO, "fontSize": "1.3rem"}),
 
-        # System status bar (item 1): monitor runs · container CPU/RAM · restart ·
-        # GetXAPI credits · API costs · prices-as-of. Top of page, paper_trader
-        # style. (credits/costs/prices keep their existing callbacks.)
-        html.Div(style={"display": "flex", "flexWrap": "wrap", "gap": "8px",
-                        "alignItems": "center", "marginTop": "8px"}, children=[
-            html.Div(id="monitor-runs"),
-            html.Div(id="container-stats"),
-            html.Div([
-                html.Button("⟳ Restart", id="restart-btn", n_clicks=0,
-                            style=_RESTART_BTN),
-                html.Span(id="restart-status",
-                          style={"marginLeft": "6px", "fontSize": "0.72rem"}),
-            ], style={"display": "flex", "alignItems": "center"}),
-            html.Div(id="api-credits", children=credits_cards()),
-            html.Div(id="api-costs", children=api_costs_card()),
-            html.Div(id="prices-asof", style={"color": C["dim"],
-                                              "fontSize": "0.7rem"}),
-            html.Div(id="freshness", style={"display": "none"}),  # legacy target
+        # System status bar — two clean rows in one panel:
+        #   row 1: live/stale · monitor last+next run · gateway
+        #   row 2: container CPU/RAM · GetXAPI credits · API costs · prices
+        html.Div(style={"background": C["card"],
+                        "border": f"1px solid {C['border']}",
+                        "borderRadius": "8px", "marginTop": "8px",
+                        "overflow": "hidden"}, children=[
+            html.Div(id="status-row-1", style={
+                "fontFamily": MONO, "fontSize": "0.74rem", "padding": "6px 12px",
+                "display": "flex", "flexWrap": "wrap", "alignItems": "center",
+                "lineHeight": "1.5",
+                "borderBottom": f"1px solid {C['border']}"}),
+            html.Div(id="status-row-2", style={
+                "fontFamily": MONO, "fontSize": "0.74rem", "padding": "6px 12px",
+                "display": "flex", "flexWrap": "wrap", "alignItems": "center",
+                "lineHeight": "1.5"}),
         ]),
 
-        # Always-visible status pills + hero KPI strip (across every tab).
-        html.Div(id="status-bar", style={"marginTop": "8px"}),
+        # Hero KPI strip (across every tab).
         html.Div(id="hero-strip"),
         html.Div(id="summary", style={"color": C["dim"], "fontSize": "0.76rem",
                                       "marginTop": "8px"}),
@@ -2201,7 +2101,6 @@ def update_ibkr_store(_n):
 
 
 @app.callback(
-    Output("status-bar", "children"),
     Output("hero-strip", "children"),
     Input("interval", "n_intervals"),
     Input("ibkr-store", "data"),
@@ -2214,31 +2113,17 @@ def refresh_topbar(_n, store):
     # S&P tile is YEAR-TO-DATE (since 2026-01-01), labelled accordingly; the
     # per-portfolio 'vs S&P' deltas stay window-matched to each open date.
     ytd_spy = spy_return_since("2026-01-01")
-    return status_bar(store), hero_strip(store, kpis, ytd_spy)
+    return hero_strip(store, kpis, ytd_spy)
 
 
 @app.callback(
-    Output("monitor-runs", "children"),
-    Output("container-stats", "children"),
+    Output("status-row-1", "children"),
+    Output("status-row-2", "children"),
     Input("interval", "n_intervals"),
+    Input("ibkr-store", "data"),
 )
-def refresh_system(_n):
-    return monitor_runs_card(), container_stats_card()
-
-
-@app.callback(
-    Output("restart-status", "children"),
-    Input("restart-btn", "n_clicks"),
-    prevent_initial_call=True,
-)
-def do_restart(n):
-    if not n:
-        raise PreventUpdate
-    ok = _docker_restart()
-    # On success the container is killed mid-response, so the browser usually
-    # just reconnects after restart; this text shows only if the POST returned.
-    return html.Span("restarting…" if ok else "restart failed (no docker socket?)",
-                     style={"color": C["yellow"] if ok else C["red"]})
+def refresh_status(_n, store):
+    return status_row_1(store), status_row_2()
 
 
 @app.callback(
@@ -2289,21 +2174,10 @@ def switch_influencer_subtab(account):
 
 
 @app.callback(
-    Output("api-credits", "children"),
-    Output("api-costs", "children"),
-    Input("credits-interval", "n_intervals"),
-)
-def refresh_credits(_n):
-    return credits_cards(), api_costs_card()
-
-
-@app.callback(
     Output("signals-table", "data"),
     Output("summary", "children"),
     Output("portfolio-summary", "children"),
-    Output("prices-asof", "children"),
     Output("closed-trades", "children"),
-    Output("freshness", "children"),
     Input("interval", "n_intervals"),
 )
 def refresh(_n):
@@ -2318,8 +2192,7 @@ def refresh(_n):
     if not df.empty:
         df = df[~df["account"].isin(NON_AI_ACCOUNTS)]
     if df.empty:
-        return ([], "No signals yet.", cards, _asof_text(), closed,
-                freshness_banner())
+        return ([], "No signals yet.", cards, closed)
 
     df = df.sort_values("timestamp", ascending=False)
     # Mark low/none-confidence rows (they are excluded from positions.json).
@@ -2349,47 +2222,7 @@ def refresh(_n):
                f"{len(positions)} reconciled positions · "
                f"last tweet {_iso_to_local(df['timestamp'].iloc[0], '%Y-%m-%d %H:%M %Z')}")
     cols = [c["id"] for c in TABLE_COLUMNS] + ["return_val"]
-    return (df[cols].to_dict("records"), summary, cards, _asof_text(), closed,
-            freshness_banner())
-
-
-def freshness_banner():
-    """Red 'DATA STALE' banner when monitor.py's last successful run is older
-    than STALE_HOURS; otherwise a dim last-update line."""
-    last = None
-    try:
-        with open(STATE_FILE) as f:
-            last = json.load(f).get("_last_run")
-    except (json.JSONDecodeError, OSError):
-        last = None
-    if not last:
-        return html.Span("")
-    try:
-        dt = datetime.fromisoformat(last)
-        hours = (datetime.now(timezone.utc) - dt).total_seconds() / 3600
-    except ValueError:
-        return html.Span("")
-    when = _to_local(dt, "%Y-%m-%d %H:%M %Z")
-    if hours > STALE_HOURS:
-        return html.Div(
-            f"⚠ DATA STALE — last update {hours:.0f}h ago ({when})",
-            style={"background": C["sell_bg"], "color": C["red"],
-                   "border": f"1px solid {C['red']}", "borderRadius": "6px",
-                   "padding": "6px 12px", "marginTop": "8px",
-                   "fontWeight": "bold", "fontSize": "0.82rem",
-                   "display": "inline-block"})
-    return html.Div(f"monitor last run {when} ({hours:.1f}h ago)",
-                    style={"color": C["dim"], "fontSize": "0.72rem",
-                           "marginTop": "4px"})
-
-
-def _asof_text():
-    ts = _fetch_state["last"]
-    if not ts:
-        return "Prices as of: (not fetched yet)"
-    when = _to_local(datetime.fromtimestamp(ts, timezone.utc),
-                     "%Y-%m-%d %H:%M:%S %Z")
-    return f"Prices as of: {when} · yfinance, cached up to 1h"
+    return (df[cols].to_dict("records"), summary, cards, closed)
 
 
 @app.callback(
