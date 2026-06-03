@@ -88,31 +88,6 @@
     "account": "CelalKucuker",
     "source_type": "influencer",
     "portfolio": null,
-    "ticker": "BTCUSDC",
-    "asset_type": "unknown",
-    "status": "open",
-    "entry_price": null,
-    "stop_loss": 65399.98,
-    "target": 158575.28,
-    "size_pct": null,
-    "trade_date": null,
-    "holding_thesis": null,
-    "opened_at": "2026-06-01T13:53:29+00:00",
-    "closed_at": null,
-    "signals": [
-      {
-        "tweet_id": "2061446034195177757",
-        "signal_type": "buy",
-        "timestamp": "2026-06-01T13:53:29+00:00",
-        "confidence": "medium",
-        "url": "https://x.com/CelalKucuker/status/2061446034195177757"
-      }
-    ]
-  },
-  {
-    "account": "CelalKucuker",
-    "source_type": "influencer",
-    "portfolio": null,
     "ticker": "EIGEN",
     "asset_type": "crypto",
     "status": "open",
@@ -687,31 +662,6 @@
     "account": "IncomeSharks",
     "source_type": "influencer",
     "portfolio": null,
-    "ticker": "PLTR",
-    "asset_type": "stock",
-    "status": "open",
-    "entry_price": null,
-    "stop_loss": 131.0,
-    "target": 153.0,
-    "size_pct": null,
-    "trade_date": null,
-    "holding_thesis": null,
-    "opened_at": "2026-05-29T02:01:58+00:00",
-    "closed_at": null,
-    "signals": [
-      {
-        "tweet_id": "2060179815274369394",
-        "signal_type": "buy",
-        "timestamp": "2026-05-29T02:01:58+00:00",
-        "confidence": "medium",
-        "url": "https://x.com/IncomeSharks/status/2060179815274369394"
-      }
-    ]
-  },
-  {
-    "account": "IncomeSharks",
-    "source_type": "influencer",
-    "portfolio": null,
     "ticker": "SMCI",
     "asset_type": "stock",
     "status": "open",
@@ -820,7 +770,7 @@
     "target": null,
     "size_pct": null,
     "trade_date": "2026-04-14",
-    "holding_thesis": "Multiple politicians including House Armed Services committee members buying AMD; company supplies chips for U.S. military AI and defense systems.",
+    "holding_thesis": "Multiple US politicians with defense/military committee positions buying AMD, suggesting confidence in the company's role in US military AI and defense chip systems.",
     "opened_at": "2026-05-11T14:24:34+00:00",
     "closed_at": null,
     "signals": [
@@ -842,7 +792,7 @@
         "tweet_id": "2057167381961515117",
         "signal_type": "buy",
         "timestamp": "2026-05-20T18:31:38+00:00",
-        "confidence": "high",
+        "confidence": "medium",
         "url": "https://x.com/PelosiTracker/status/2057167381961515117"
       }
     ]
@@ -859,7 +809,7 @@
     "target": null,
     "size_pct": null,
     "trade_date": "2026-05-04",
-    "holding_thesis": "Major U.S. semiconductor packaging and test company with military supply chain relevance.",
+    "holding_thesis": "Major U.S. semiconductor packaging and test company in military supply chain oversight.",
     "opened_at": "2026-05-04T16:05:30+00:00",
     "closed_at": null,
     "signals": [
@@ -901,31 +851,6 @@
     "account": "PelosiTracker",
     "source_type": "influencer",
     "portfolio": null,
-    "ticker": "BA",
-    "asset_type": "stock",
-    "status": "open",
-    "entry_price": null,
-    "stop_loss": null,
-    "target": null,
-    "size_pct": null,
-    "trade_date": "2026-04-22",
-    "holding_thesis": null,
-    "opened_at": "2026-04-22T13:51:54+00:00",
-    "closed_at": null,
-    "signals": [
-      {
-        "tweet_id": "2046950121556861050",
-        "signal_type": "buy",
-        "timestamp": "2026-04-22T13:51:54+00:00",
-        "confidence": "high",
-        "url": "https://x.com/PelosiTracker/status/2046950121556861050"
-      }
-    ]
-  },
-  {
-    "account": "PelosiTracker",
-    "source_type": "influencer",
-    "portfolio": null,
     "ticker": "CEG",
     "asset_type": "stock",
     "status": "closed",
@@ -942,7 +867,7 @@
         "tweet_id": "2052769825781350664",
         "signal_type": "sell",
         "timestamp": "2026-05-08T15:17:19+00:00",
-        "confidence": "medium",
+        "confidence": "high",
         "url": "https://x.com/PelosiTracker/status/2052769825781350664"
       }
     ]
@@ -967,7 +892,7 @@
         "tweet_id": "2052456172800581733",
         "signal_type": "position",
         "timestamp": "2026-05-07T18:30:59+00:00",
-        "confidence": "medium",
+        "confidence": "high",
         "url": "https://x.com/PelosiTracker/status/2052456172800581733"
       }
     ]
@@ -984,7 +909,7 @@
     "target": null,
     "size_pct": null,
     "trade_date": "2026-02-10",
-    "holding_thesis": "Trump has made multiple purchases totaling $5M+ and praised the company; Dell secured a major $9.7B Pentagon contract.",
+    "holding_thesis": "Trump has made multiple large purchases totaling millions and publicly endorsed the company; Dell just won a major $9.7B Pentagon contract.",
     "opened_at": "2026-05-14T14:24:35+00:00",
     "closed_at": null,
     "signals": [
@@ -1008,56 +933,6 @@
         "timestamp": "2026-05-28T20:32:11+00:00",
         "confidence": "high",
         "url": "https://x.com/PelosiTracker/status/2060096819690913905"
-      }
-    ]
-  },
-  {
-    "account": "PelosiTracker",
-    "source_type": "influencer",
-    "portfolio": null,
-    "ticker": "EPD",
-    "asset_type": "stock",
-    "status": "open",
-    "entry_price": null,
-    "stop_loss": null,
-    "target": null,
-    "size_pct": null,
-    "trade_date": "2026-03-13",
-    "holding_thesis": null,
-    "opened_at": "2026-04-16T14:02:03+00:00",
-    "closed_at": null,
-    "signals": [
-      {
-        "tweet_id": "2044778348346253673",
-        "signal_type": "buy",
-        "timestamp": "2026-04-16T14:02:03+00:00",
-        "confidence": "high",
-        "url": "https://x.com/PelosiTracker/status/2044778348346253673"
-      }
-    ]
-  },
-  {
-    "account": "PelosiTracker",
-    "source_type": "influencer",
-    "portfolio": null,
-    "ticker": "GS",
-    "asset_type": "stock",
-    "status": "open",
-    "entry_price": null,
-    "stop_loss": null,
-    "target": null,
-    "size_pct": null,
-    "trade_date": null,
-    "holding_thesis": null,
-    "opened_at": "2026-03-30T15:04:58+00:00",
-    "closed_at": null,
-    "signals": [
-      {
-        "tweet_id": "2038633591404433759",
-        "signal_type": "buy",
-        "timestamp": "2026-03-30T15:04:58+00:00",
-        "confidence": "high",
-        "url": "https://x.com/PelosiTracker/status/2038633591404433759"
       }
     ]
   },
@@ -1090,33 +965,8 @@
     "account": "PelosiTracker",
     "source_type": "influencer",
     "portfolio": null,
-    "ticker": "IBIT",
-    "asset_type": "crypto",
-    "status": "open",
-    "entry_price": null,
-    "stop_loss": null,
-    "target": null,
-    "size_pct": null,
-    "trade_date": "2026-03-04",
-    "holding_thesis": null,
-    "opened_at": "2026-04-17T13:44:46+00:00",
-    "closed_at": null,
-    "signals": [
-      {
-        "tweet_id": "2045136387003826630",
-        "signal_type": "buy",
-        "timestamp": "2026-04-17T13:44:46+00:00",
-        "confidence": "high",
-        "url": "https://x.com/PelosiTracker/status/2045136387003826630"
-      }
-    ]
-  },
-  {
-    "account": "PelosiTracker",
-    "source_type": "influencer",
-    "portfolio": null,
-    "ticker": "IDEF",
-    "asset_type": "unknown",
+    "ticker": "INTC",
+    "asset_type": "stock",
     "status": "open",
     "entry_price": null,
     "stop_loss": null,
@@ -1124,41 +974,9 @@
     "size_pct": null,
     "trade_date": null,
     "holding_thesis": null,
-    "opened_at": "2026-03-30T23:54:46+00:00",
+    "opened_at": "2026-04-29T22:29:56+00:00",
     "closed_at": null,
     "signals": [
-      {
-        "tweet_id": "2038766918794957017",
-        "signal_type": "buy",
-        "timestamp": "2026-03-30T23:54:46+00:00",
-        "confidence": "medium",
-        "url": "https://x.com/PelosiTracker/status/2038766918794957017"
-      }
-    ]
-  },
-  {
-    "account": "PelosiTracker",
-    "source_type": "influencer",
-    "portfolio": null,
-    "ticker": "INTC",
-    "asset_type": "stock",
-    "status": "open",
-    "entry_price": 24.8,
-    "stop_loss": null,
-    "target": null,
-    "size_pct": 10,
-    "trade_date": "2025-08-22",
-    "holding_thesis": "Trump administration's investment in Intel suggests confidence in the company's turnaround and earnings performance.",
-    "opened_at": "2026-04-23T20:12:18+00:00",
-    "closed_at": null,
-    "signals": [
-      {
-        "tweet_id": "2047408241718538612",
-        "signal_type": "buy",
-        "timestamp": "2026-04-23T20:12:18+00:00",
-        "confidence": "high",
-        "url": "https://x.com/PelosiTracker/status/2047408241718538612"
-      },
       {
         "tweet_id": "2049617206850314587",
         "signal_type": "buy",
@@ -1179,88 +997,6 @@
     "account": "PelosiTracker",
     "source_type": "influencer",
     "portfolio": null,
-    "ticker": "IONQ",
-    "asset_type": "stock",
-    "status": "open",
-    "entry_price": null,
-    "stop_loss": null,
-    "target": null,
-    "size_pct": null,
-    "trade_date": null,
-    "holding_thesis": null,
-    "opened_at": "2026-04-15T14:14:50+00:00",
-    "closed_at": null,
-    "signals": [
-      {
-        "tweet_id": "2044419178010964140",
-        "signal_type": "buy",
-        "timestamp": "2026-04-15T14:14:50+00:00",
-        "confidence": "medium",
-        "url": "https://x.com/PelosiTracker/status/2044419178010964140"
-      },
-      {
-        "tweet_id": "2046583563076685875",
-        "signal_type": "buy",
-        "timestamp": "2026-04-21T13:35:19+00:00",
-        "confidence": "high",
-        "url": "https://x.com/PelosiTracker/status/2046583563076685875"
-      }
-    ]
-  },
-  {
-    "account": "PelosiTracker",
-    "source_type": "influencer",
-    "portfolio": null,
-    "ticker": "KAZR",
-    "asset_type": "unknown",
-    "status": "open",
-    "entry_price": null,
-    "stop_loss": null,
-    "target": null,
-    "size_pct": null,
-    "trade_date": null,
-    "holding_thesis": null,
-    "opened_at": "2026-04-30T20:36:49+00:00",
-    "closed_at": null,
-    "signals": [
-      {
-        "tweet_id": "2049951128285241386",
-        "signal_type": "buy",
-        "timestamp": "2026-04-30T20:36:49+00:00",
-        "confidence": "medium",
-        "url": "https://x.com/PelosiTracker/status/2049951128285241386"
-      }
-    ]
-  },
-  {
-    "account": "PelosiTracker",
-    "source_type": "influencer",
-    "portfolio": null,
-    "ticker": "MA",
-    "asset_type": "stock",
-    "status": "open",
-    "entry_price": null,
-    "stop_loss": null,
-    "target": null,
-    "size_pct": null,
-    "trade_date": null,
-    "holding_thesis": null,
-    "opened_at": "2026-04-13T16:08:38+00:00",
-    "closed_at": null,
-    "signals": [
-      {
-        "tweet_id": "2043723042547744862",
-        "signal_type": "buy",
-        "timestamp": "2026-04-13T16:08:38+00:00",
-        "confidence": "high",
-        "url": "https://x.com/PelosiTracker/status/2043723042547744862"
-      }
-    ]
-  },
-  {
-    "account": "PelosiTracker",
-    "source_type": "influencer",
-    "portfolio": null,
     "ticker": "MRVL",
     "asset_type": "stock",
     "status": "open",
@@ -1269,7 +1005,7 @@
     "target": null,
     "size_pct": null,
     "trade_date": "2026-04-02",
-    "holding_thesis": "Politician buying signal; Rep Byron Donalds has regulatory oversight of AI and technology policy.",
+    "holding_thesis": "Politicians with regulatory oversight of AI and technology sectors buying the stock ahead of strong performance gains.",
     "opened_at": "2026-05-18T18:46:32+00:00",
     "closed_at": null,
     "signals": [
@@ -1300,38 +1036,6 @@
     "account": "PelosiTracker",
     "source_type": "influencer",
     "portfolio": null,
-    "ticker": "MSFT",
-    "asset_type": "stock",
-    "status": "open",
-    "entry_price": null,
-    "stop_loss": null,
-    "target": 325.0,
-    "size_pct": null,
-    "trade_date": "2026-04-07",
-    "holding_thesis": null,
-    "opened_at": "2026-04-09T14:09:33+00:00",
-    "closed_at": null,
-    "signals": [
-      {
-        "tweet_id": "2042243520920953026",
-        "signal_type": "buy",
-        "timestamp": "2026-04-09T14:09:33+00:00",
-        "confidence": "medium",
-        "url": "https://x.com/PelosiTracker/status/2042243520920953026"
-      },
-      {
-        "tweet_id": "2049508694954569744",
-        "signal_type": "position",
-        "timestamp": "2026-04-29T15:18:45+00:00",
-        "confidence": "high",
-        "url": "https://x.com/PelosiTracker/status/2049508694954569744"
-      }
-    ]
-  },
-  {
-    "account": "PelosiTracker",
-    "source_type": "influencer",
-    "portfolio": null,
     "ticker": "MU",
     "asset_type": "stock",
     "status": "open",
@@ -1339,37 +1043,16 @@
     "stop_loss": null,
     "target": null,
     "size_pct": null,
-    "trade_date": "2026-03-30",
-    "holding_thesis": "Micron received $6.165B CHIPS Act funding, the largest award in the program.",
-    "opened_at": "2026-04-07T13:55:12+00:00",
+    "trade_date": null,
+    "holding_thesis": null,
+    "opened_at": "2026-05-08T15:50:24+00:00",
     "closed_at": null,
     "signals": [
-      {
-        "tweet_id": "2041515134720373240",
-        "signal_type": "buy",
-        "timestamp": "2026-04-07T13:55:12+00:00",
-        "confidence": "medium",
-        "url": "https://x.com/PelosiTracker/status/2041515134720373240"
-      },
-      {
-        "tweet_id": "2048832516144963996",
-        "signal_type": "buy",
-        "timestamp": "2026-04-27T18:31:51+00:00",
-        "confidence": "high",
-        "url": "https://x.com/PelosiTracker/status/2048832516144963996"
-      },
-      {
-        "tweet_id": "2049291642713378946",
-        "signal_type": "buy",
-        "timestamp": "2026-04-29T00:56:16+00:00",
-        "confidence": "high",
-        "url": "https://x.com/PelosiTracker/status/2049291642713378946"
-      },
       {
         "tweet_id": "2052778152066207851",
         "signal_type": "buy",
         "timestamp": "2026-05-08T15:50:24+00:00",
-        "confidence": "high",
+        "confidence": "medium",
         "url": "https://x.com/PelosiTracker/status/2052778152066207851"
       },
       {
@@ -1392,8 +1075,8 @@
     "stop_loss": null,
     "target": null,
     "size_pct": null,
-    "trade_date": "2026-05-07",
-    "holding_thesis": null,
+    "trade_date": null,
+    "holding_thesis": "Nasdaq's crypto trading business stands to benefit from pending Digital Asset Market Clarity Act that the House subcommittee she serves on authored.",
     "opened_at": "2026-05-07T15:10:32+00:00",
     "closed_at": null,
     "signals": [
@@ -1417,18 +1100,11 @@
     "stop_loss": null,
     "target": null,
     "size_pct": null,
-    "trade_date": "2026-03-15",
-    "holding_thesis": null,
-    "opened_at": "2026-04-14T18:46:07+00:00",
+    "trade_date": "2026-01-06",
+    "holding_thesis": "Long-term conviction holding disclosed in SEC filing.",
+    "opened_at": "2026-05-15T17:22:29+00:00",
     "closed_at": null,
     "signals": [
-      {
-        "tweet_id": "2044125064111780086",
-        "signal_type": "buy",
-        "timestamp": "2026-04-14T18:46:07+00:00",
-        "confidence": "medium",
-        "url": "https://x.com/PelosiTracker/status/2044125064111780086"
-      },
       {
         "tweet_id": "2055338040885739861",
         "signal_type": "buy",
@@ -1456,25 +1132,11 @@
     "stop_loss": null,
     "target": null,
     "size_pct": null,
-    "trade_date": "2026-03-16",
-    "holding_thesis": "Trump acquired the position across multiple dates starting in early March, before publicly tweeting positively about Palantir's war-fighting capabilities.",
+    "trade_date": "2026-03-02",
+    "holding_thesis": "Trump made multiple purchases of Palantir starting March 2nd, accumulating $630,000 across multiple buys through March 26th.",
     "opened_at": "2026-05-14T18:41:24+00:00",
     "closed_at": null,
     "signals": [
-      {
-        "tweet_id": "2042647217039696355",
-        "signal_type": "buy",
-        "timestamp": "2026-04-10T16:53:41+00:00",
-        "confidence": "high",
-        "url": "https://x.com/PelosiTracker/status/2042647217039696355"
-      },
-      {
-        "tweet_id": "2044868223842099472",
-        "signal_type": "buy",
-        "timestamp": "2026-04-16T19:59:11+00:00",
-        "confidence": "medium",
-        "url": "https://x.com/PelosiTracker/status/2044868223842099472"
-      },
       {
         "tweet_id": "2051758233858261198",
         "signal_type": "sell",
@@ -1488,31 +1150,6 @@
         "timestamp": "2026-05-14T18:41:24+00:00",
         "confidence": "high",
         "url": "https://x.com/PelosiTracker/status/2054995512177098961"
-      }
-    ]
-  },
-  {
-    "account": "PelosiTracker",
-    "source_type": "influencer",
-    "portfolio": null,
-    "ticker": "PYPL",
-    "asset_type": "stock",
-    "status": "open",
-    "entry_price": null,
-    "stop_loss": null,
-    "target": null,
-    "size_pct": null,
-    "trade_date": null,
-    "holding_thesis": "Congressman buying the dip in a payment company under regulatory oversight from his committee.",
-    "opened_at": "2026-04-09T14:21:36+00:00",
-    "closed_at": null,
-    "signals": [
-      {
-        "tweet_id": "2042246555718050021",
-        "signal_type": "buy",
-        "timestamp": "2026-04-09T14:21:36+00:00",
-        "confidence": "high",
-        "url": "https://x.com/PelosiTracker/status/2042246555718050021"
       }
     ]
   },
@@ -1545,31 +1182,6 @@
     "account": "PelosiTracker",
     "source_type": "influencer",
     "portfolio": null,
-    "ticker": "SPCX",
-    "asset_type": "unknown",
-    "status": "open",
-    "entry_price": null,
-    "stop_loss": null,
-    "target": null,
-    "size_pct": null,
-    "trade_date": null,
-    "holding_thesis": null,
-    "opened_at": "2026-05-16T05:17:57+00:00",
-    "closed_at": null,
-    "signals": [
-      {
-        "tweet_id": "2055518092508168494",
-        "signal_type": "buy",
-        "timestamp": "2026-05-16T05:17:57+00:00",
-        "confidence": "medium",
-        "url": "https://x.com/PelosiTracker/status/2055518092508168494"
-      }
-    ]
-  },
-  {
-    "account": "PelosiTracker",
-    "source_type": "influencer",
-    "portfolio": null,
     "ticker": "SPY",
     "asset_type": "unknown",
     "status": "open",
@@ -1595,39 +1207,14 @@
     "account": "PelosiTracker",
     "source_type": "influencer",
     "portfolio": null,
-    "ticker": "TSM",
+    "ticker": "TXN",
     "asset_type": "stock",
     "status": "open",
     "entry_price": null,
     "stop_loss": null,
     "target": null,
     "size_pct": null,
-    "trade_date": "2026-04-09",
-    "holding_thesis": null,
-    "opened_at": "2026-04-21T14:15:58+00:00",
-    "closed_at": null,
-    "signals": [
-      {
-        "tweet_id": "2046593791763628164",
-        "signal_type": "buy",
-        "timestamp": "2026-04-21T14:15:58+00:00",
-        "confidence": "high",
-        "url": "https://x.com/PelosiTracker/status/2046593791763628164"
-      }
-    ]
-  },
-  {
-    "account": "PelosiTracker",
-    "source_type": "influencer",
-    "portfolio": null,
-    "ticker": "TXN",
-    "asset_type": "stock",
-    "status": "open",
-    "entry_price": 218,
-    "stop_loss": null,
-    "target": null,
-    "size_pct": null,
-    "trade_date": "2026-04-14",
+    "trade_date": null,
     "holding_thesis": null,
     "opened_at": "2026-05-27T14:22:19+00:00",
     "closed_at": null,
@@ -1636,40 +1223,8 @@
         "tweet_id": "2059641354225906080",
         "signal_type": "buy",
         "timestamp": "2026-05-27T14:22:19+00:00",
-        "confidence": "high",
-        "url": "https://x.com/PelosiTracker/status/2059641354225906080"
-      }
-    ]
-  },
-  {
-    "account": "PelosiTracker",
-    "source_type": "influencer",
-    "portfolio": null,
-    "ticker": "UNH",
-    "asset_type": "stock",
-    "status": "open",
-    "entry_price": null,
-    "stop_loss": null,
-    "target": null,
-    "size_pct": null,
-    "trade_date": "2026-02-25",
-    "holding_thesis": null,
-    "opened_at": "2026-04-21T16:24:46+00:00",
-    "closed_at": null,
-    "signals": [
-      {
-        "tweet_id": "2046626205278118049",
-        "signal_type": "buy",
-        "timestamp": "2026-04-21T16:24:46+00:00",
-        "confidence": "high",
-        "url": "https://x.com/PelosiTracker/status/2046626205278118049"
-      },
-      {
-        "tweet_id": "2054261341540536597",
-        "signal_type": "buy",
-        "timestamp": "2026-05-12T18:04:04+00:00",
         "confidence": "medium",
-        "url": "https://x.com/PelosiTracker/status/2054261341540536597"
+        "url": "https://x.com/PelosiTracker/status/2059641354225906080"
       }
     ]
   },
@@ -1685,7 +1240,7 @@
     "target": null,
     "size_pct": null,
     "trade_date": "2024-11-01",
-    "holding_thesis": "Viasat is a supplier of military communications equipment; Debbie Schultz's purchase while on the House Military Construction Subcommittee suggested insider conviction in defense spending.",
+    "holding_thesis": "Military communications equipment supplier to U.S. military; Debbie Schultz positioned via House Military Construction Subcommittee role.",
     "opened_at": "2026-05-13T17:06:05+00:00",
     "closed_at": null,
     "signals": [
@@ -2974,7 +2529,7 @@
   {
     "account": "theaiportfolios",
     "source_type": "portfolio",
-    "portfolio": "grok",
+    "portfolio": "claude",
     "ticker": "AVGO",
     "asset_type": "stock",
     "status": "open",
@@ -2999,7 +2554,7 @@
   {
     "account": "theaiportfolios",
     "source_type": "portfolio",
-    "portfolio": "grok",
+    "portfolio": "claude",
     "ticker": "MU",
     "asset_type": "stock",
     "status": "open",
@@ -3028,9 +2583,9 @@
     "ticker": "NOW",
     "asset_type": "stock",
     "status": "open",
-    "entry_price": 88,
-    "stop_loss": 115.0,
-    "target": 150.0,
+    "entry_price": null,
+    "stop_loss": null,
+    "target": null,
     "size_pct": null,
     "trade_date": "2026-04-01",
     "holding_thesis": null,
@@ -3145,38 +2700,6 @@
         "timestamp": "2026-06-01T18:26:56+00:00",
         "confidence": "medium",
         "url": "https://x.com/theaiportfolios/status/2061514853031010517"
-      }
-    ]
-  },
-  {
-    "account": "traderstewie",
-    "source_type": "influencer",
-    "portfolio": null,
-    "ticker": "$COMPQ",
-    "asset_type": "unknown",
-    "status": "open",
-    "entry_price": null,
-    "stop_loss": null,
-    "target": null,
-    "size_pct": null,
-    "trade_date": null,
-    "holding_thesis": null,
-    "opened_at": "2026-04-16T16:09:52+00:00",
-    "closed_at": null,
-    "signals": [
-      {
-        "tweet_id": "2044810516049399819",
-        "signal_type": "buy",
-        "timestamp": "2026-04-16T16:09:52+00:00",
-        "confidence": "medium",
-        "url": "https://x.com/traderstewie/status/2044810516049399819"
-      },
-      {
-        "tweet_id": "2044970066069090705",
-        "signal_type": "buy",
-        "timestamp": "2026-04-17T02:43:52+00:00",
-        "confidence": "medium",
-        "url": "https://x.com/traderstewie/status/2044970066069090705"
       }
     ]
   },
@@ -3932,6 +3455,31 @@
         "timestamp": "2025-11-30T23:13:09+00:00",
         "confidence": "medium",
         "url": "https://x.com/traderstewie/status/1995269902111006922"
+      }
+    ]
+  },
+  {
+    "account": "traderstewie",
+    "source_type": "influencer",
+    "portfolio": null,
+    "ticker": "QUBT",
+    "asset_type": "stock",
+    "status": "open",
+    "entry_price": null,
+    "stop_loss": null,
+    "target": 17,
+    "size_pct": null,
+    "trade_date": null,
+    "holding_thesis": "Inside day candle with increasingly bullish volume patterns suggests imminent breakout.",
+    "opened_at": "2026-06-02T21:51:03+00:00",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2061928607572996335",
+        "signal_type": "buy",
+        "timestamp": "2026-06-02T21:51:03+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/traderstewie/status/2061928607572996335"
       }
     ]
   },

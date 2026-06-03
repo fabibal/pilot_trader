@@ -875,8 +875,8 @@ def influencer_positions_table(resolutions):
 
 def longterm_holdings_table(positions, account=None):
     """Long-term conviction holdings (no TP/stop columns; shows the one-line
-    thesis, sorted by return % desc). If `account` is given, restrict to that
-    one handle; else all long-term accounts."""
+    thesis, sorted by Held Since desc — newest additions first). If `account`
+    is given, restrict to that one handle; else all long-term accounts."""
     rows = []
     for p in longterm_positions(positions):
         if p.get("status") != "open":
@@ -885,28 +885,38 @@ def longterm_holdings_table(positions, account=None):
             continue
         atype = p.get("asset_type", "stock") or "stock"
         sym = _yf_symbol(p["ticker"], atype)
-        tdate = p.get("trade_date") or (p.get("opened_at") or "")[:10] or None
+        # "Held since" date: the stated actual trade_date when known (most
+        # accurate for a long-term hold), else the first-disclosure date
+        # (opened_at, in Budapest), flagged with * to mark it as estimated.
+        # Days Held derives from the SAME value so the two columns agree.
+        td = p.get("trade_date")
+        since_date = td or _local_date(p.get("opened_at"))
+        since_cell = (since_date + "*") if (since_date and not td) else \
+            (since_date or "—")
         entry, est = estimate_entry(p["ticker"], p.get("entry_price"),
                                     p.get("trade_date"),
                                     (p.get("opened_at") or "")[:10], atype)
         cur = get_price(sym)
         ret = round((cur - entry) / entry * 100, 1) if (entry and cur) else None
-        days = _days_held(tdate)
+        days = _days_held(since_date)
         rows.append((
             (
                 (p["ticker"], C["blue"]),
                 _money(entry) + ("*" if est and entry else ""),
                 _money(cur),
                 (_fmt_pct(ret), _color(ret)),
+                since_cell,
                 str(days) if days is not None else "—",
                 p.get("holding_thesis") or "—",
             ),
-            ret if ret is not None else float("-inf"),   # sort key
+            since_date or "",   # sort key: ISO date sorts chronologically
         ))
+    # Newest entries first (ISO YYYY-MM-DD sorts lexicographically = by date);
+    # rows missing a date ("") sink to the bottom.
     rows.sort(key=lambda r: r[1], reverse=True)
     label = f"@{account}" if account else "long-term"
-    return _table(["Ticker", "Entry $", "Current $", "Return %", "Days Held",
-                   "Thesis"], [r[0] for r in rows],
+    return _table(["Ticker", "Entry $", "Current $", "Return %", "Held Since",
+                   "Days Held", "Thesis"], [r[0] for r in rows],
                   empty=f"No open {label} holdings")
 
 
@@ -1265,6 +1275,20 @@ def switch_main_tab(tab):
     return show, hide
 
 
+def _influencer_header(title, account):
+    """Section title plus a clickable '→ @handle' link to the X profile
+    (opens in a new tab). The parent header div uppercases the title via CSS;
+    the link overrides textTransform so the handle keeps its original case."""
+    return [
+        title,
+        html.A(f"→ @{account}", href=f"https://x.com/{account}",
+               target="_blank", rel="noopener noreferrer",
+               style={"color": C["blue"], "marginLeft": "14px",
+                      "textTransform": "none", "letterSpacing": "normal",
+                      "textDecoration": "none", "fontWeight": "normal"}),
+    ]
+
+
 @app.callback(
     Output("influencer-trade-view", "style"),
     Output("longterm-view", "style"),
@@ -1276,9 +1300,12 @@ def switch_main_tab(tab):
 def switch_influencer_subtab(account):
     show, hide = {"display": "block"}, {"display": "none"}
     if account in LONGTERM_ACCOUNTS:
-        return hide, show, "", "", f"{account} — Long-term Holdings"
-    return (show, hide, f"{account} — Open Positions",
-            f"{account} — Signals", "")
+        return (hide, show, "", "",
+                _influencer_header(f"{account} — Long-term Holdings", account))
+    return (show, hide,
+            _influencer_header(f"{account} — Open Positions", account),
+            _influencer_header(f"{account} — Signals", account),
+            "")
 
 
 @app.callback(
