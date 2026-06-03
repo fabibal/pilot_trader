@@ -22,6 +22,7 @@ Run with the project venv:
 
 import json
 import os
+import threading
 import time
 import urllib.request
 import urllib.error
@@ -33,17 +34,28 @@ import plotly.express as px
 import plotly.graph_objects as go
 import yfinance as yf
 from dash import Dash, dash_table, dcc, html, Input, Output
+from dash.exceptions import PreventUpdate
 
 import resolver
+
+# Live IBKR paper-account reads (optional). Imported guarded so the dashboard
+# still boots if ib_insync is absent; the IBKR tab then shows "Gateway offline".
+try:
+    import ibkr_connector as ibk
+except Exception:        # noqa: BLE001 - any import failure -> feature disabled
+    ibk = None
 
 HOME = "/home/fbazsa/pilot_trader"
 TRADES_FILE = "/home/fbazsa/pilot_trader/trades.json"
 POSITIONS_FILE = "/home/fbazsa/pilot_trader/positions.json"
+ORDERS_FILE = "/home/fbazsa/pilot_trader/data/orders.json"
 STATE_FILE = "/home/fbazsa/pilot_trader/.monitor_state.json"
 ENV_FILE = "/home/fbazsa/pilot_trader/.env"
 STALE_HOURS = 8           # cron runs every 4h; >8h means a run was missed
 REFRESH_MS = 60_000
 PORT = 8051
+DASH_CLIENT_ID = 20       # distinct from auto_trader (7) and test scripts (8-11)
+DASH_IB_TIMEOUT = 8       # short connect deadline so the tab degrades fast
 
 # All stored timestamps are UTC (ISO with +00:00, or naive UTC epochs); the
 # dashboard DISPLAYS everything in Budapest local time (CET/CEST, UTC+1/+2).
@@ -989,6 +1001,23 @@ def _dark_chart(fig, title, h=360):
     return fig
 
 
+def _norm_date(val):
+    """Normalize an LLM-extracted date to a valid 'YYYY-MM-DD' string, or None.
+    Pads month-only ('YYYY-MM' -> 'YYYY-MM-01'); rejects anything that won't
+    parse. One bad date used to poison `start` and make yfinance throw for
+    every ticker (incl. SPY), blanking the whole chart."""
+    if not val:
+        return None
+    s = str(val)[:10]
+    if len(s) == 7:            # 'YYYY-MM' -> first of month
+        s += "-01"
+    try:
+        datetime.strptime(s, "%Y-%m-%d")
+        return s
+    except ValueError:
+        return None
+
+
 def performance_figure(positions):
     """Cumulative equal-weight return % per portfolio vs S&P 500, from the first
     open date to today, using daily price history."""
@@ -1000,7 +1029,7 @@ def performance_figure(positions):
         entry, _ = estimate_entry(p["ticker"], p.get("entry_price"),
                                   p.get("trade_date"),
                                   (p.get("opened_at") or "")[:10], atype)
-        od = p.get("trade_date") or (p.get("opened_at") or "")[:10]
+        od = _norm_date(p.get("trade_date")) or _norm_date((p.get("opened_at") or "")[:10])
         if entry and od:
             entries.append((PORTFOLIO_LABELS.get(pf_of(p), pf_of(p).title()),
                             _yf_symbol(p["ticker"], atype), entry, od))
@@ -1093,6 +1122,213 @@ _TAB_SELECTED = {"backgroundColor": C["card"], "color": C["text"],
                  "borderTop": f"2px solid {C['blue']}", "fontFamily": MONO,
                  "padding": "6px 14px"}
 
+
+# --- IBKR paper portfolio (live from IB Gateway) ----------------------------
+def load_orders():
+    """Read the order ledger (data/orders.json); [] if missing/unreadable."""
+    if os.path.exists(ORDERS_FILE):
+        try:
+            with open(ORDERS_FILE) as f:
+                return json.load(f)
+        except (json.JSONDecodeError, OSError):
+            return []
+    return []
+
+
+# Cached singleton IB connection for the dashboard. Dash callbacks run in
+# multiple worker threads; a fresh connect (same clientId) per 60s refresh
+# collided when two threads/viewers overlapped. Instead we keep ONE connection
+# (clientId DASH_CLIENT_ID) on a persistent loop and serialize all access with a
+# lock, reconnecting only if the session dropped.
+_IB_LOCK = threading.Lock()
+_ib_state = {"ib": None, "loop": None}
+
+
+def _ibkr_call(fn):
+    """Run fn(ib) on the cached singleton connection under the lock. Reconnects
+    if needed. Raises on failure (caller maps that to 'Gateway offline')."""
+    if ibk is None:
+        raise RuntimeError("ibkr_connector unavailable")
+    import asyncio
+    with _IB_LOCK:
+        loop = _ib_state["loop"]
+        if loop is None or loop.is_closed():
+            loop = asyncio.new_event_loop()
+            _ib_state["loop"] = loop
+        asyncio.set_event_loop(loop)
+        ib = _ib_state["ib"]
+        if ib is None or not ib.isConnected():
+            ib = ibk.connect(client_id=DASH_CLIENT_ID, timeout=DASH_IB_TIMEOUT)
+            _ib_state["ib"] = ib
+        return fn(ib)
+
+
+def _ibkr_reset():
+    """Drop the cached connection so the next call reconnects fresh."""
+    with _IB_LOCK:
+        ib = _ib_state.get("ib")
+        if ib is not None:
+            try:
+                ib.disconnect()
+            except Exception:
+                pass
+        _ib_state["ib"] = None
+
+
+def ibkr_snapshot():
+    """Live (account, positions) via the cached singleton, or None if offline.
+    Never raises — failure resets the connection and returns None so the tab
+    degrades to 'Gateway offline'."""
+    try:
+        return _ibkr_call(lambda ib: (ibk.get_account_value(ib),
+                                      ibk.get_portfolio(ib)))
+    except Exception:        # noqa: BLE001 - offline is a normal state here
+        _ibkr_reset()
+        return None
+
+
+def _nan(v):
+    return v is None or (isinstance(v, float) and v != v)
+
+
+def _pnl_span(v, pct=False):
+    """Signed, colored money (or percent) span; '—' for None/NaN."""
+    if _nan(v):
+        return html.Span("—", style={"color": C["dim"]})
+    txt = f"{v:+.2f}%" if pct else f"${v:,.2f}"
+    return html.Span(txt, style={"color": _color(v), "fontWeight": "bold"})
+
+
+def ibkr_offline(detail="IB Gateway not reachable on 127.0.0.1:4002"):
+    return html.Div([
+        html.Span("● ", style={"color": C["red"], "fontWeight": "bold"}),
+        html.Span("Gateway offline", style={"color": C["red"],
+                                            "fontWeight": "bold"}),
+        html.Div(detail, style={"color": C["dim"], "fontSize": "0.78rem",
+                                "marginTop": "4px"}),
+    ], style={"background": C["card"], "border": f"1px solid {C['border']}",
+              "borderRadius": "8px", "padding": "14px 18px", "marginTop": "12px"})
+
+
+def ibkr_account_card(acct):
+    now = datetime.now(timezone.utc).astimezone(DISPLAY_TZ).strftime("%Y-%m-%d %H:%M:%S")
+    return html.Div(
+        style={"background": C["card"], "border": f"1px solid {C['border']}",
+               "borderRadius": "8px", "padding": "14px 18px", "minWidth": "320px",
+               "maxWidth": "460px", "marginTop": "12px"},
+        children=[
+            html.Div(f"Paper Account {acct.get('account', '')}", style={
+                "fontWeight": "bold", "fontSize": "0.95rem", "color": C["text"],
+                "marginBottom": "8px", "borderBottom": f"1px solid {C['border']}",
+                "paddingBottom": "6px", "textTransform": "uppercase",
+                "letterSpacing": "0.05em"}),
+            _stat_line("net liquidation:",
+                       html.Span(_money(acct.get("net_liquidation")),
+                                 style={"color": C["text"], "fontWeight": "bold"})),
+            _stat_line("available funds:",
+                       html.Span(_money(acct.get("available_funds")),
+                                 style={"color": C["text"]})),
+            _stat_line("total cash:",
+                       html.Span(_money(acct.get("total_cash")),
+                                 style={"color": C["text"]})),
+            _stat_line("today's P&L:", _pnl_span(acct.get("daily_pnl"))),
+            _stat_line("total P&L since start:", _pnl_span(acct.get("total_pnl"))),
+            html.Div(f"last updated {now} {DISPLAY_TZ.key.split('/')[-1]}",
+                     style={"color": C["dim"], "fontSize": "0.7rem",
+                            "marginTop": "8px"}),
+        ],
+    )
+
+
+def ibkr_positions_table(positions):
+    rows_data = []
+    for p in positions:
+        if p.get("sec_type") != "STK" or not p.get("position"):
+            continue
+        avg = p.get("avg_cost") or 0.0
+        cur = p.get("market_price") or 0.0
+        pnl_pct = ((cur - avg) / avg * 100) if avg else None
+        rows_data.append((p, pnl_pct))
+    # Sort by unrealized P&L descending.
+    rows_data.sort(key=lambda x: (x[0].get("unrealized_pnl") or 0.0), reverse=True)
+    rows = []
+    for p, pnl_pct in rows_data:
+        col = _color(pnl_pct)
+        rows.append([
+            (p["ticker"], C["blue"]),
+            f"{p['position']:g}",
+            _money(p.get("avg_cost")),
+            _money(p.get("market_price")),
+            _money(p.get("market_value")),
+            (_fmt_pct(pnl_pct), col),
+        ])
+    return _table(["Ticker", "Qty", "Avg Cost", "Current", "Mkt Value",
+                   "Unrealized P&L %"], rows, empty="No open positions.")
+
+
+# Status -> color for the order tables (issues 5/9).
+_STATUS_COLOR = {
+    "filled": C["green"], "submitted": C["yellow"], "pending": C["yellow"],
+    "rejected": C["red"], "cancelled": C["dim"], "failed": C["red"],
+}
+
+
+def ibkr_pending_table(orders):
+    """Working orders waiting to execute — pending/submitted (incl. MOO orders
+    resting for the next open). Read from the ledger, no IB needed (issue 5)."""
+    pend = [o for o in orders if o.get("status") in ("pending", "submitted")]
+    pend.sort(key=lambda o: o.get("timestamp") or "", reverse=True)
+    rows = []
+    for o in pend:
+        qty = o.get("shares")
+        qtxt = f"{qty:g}" if qty else f"${o.get('quantity', 0):,.0f} notional"
+        rows.append([
+            _iso_to_local(o.get("timestamp"), "%Y-%m-%d %H:%M"),
+            (o.get("ticker", "?"), C["blue"]),
+            o.get("action", "?"),
+            qtxt,
+            (o.get("ib_status") or "queued", C["yellow"]),
+        ])
+    return _table(["Placed", "Ticker", "Action", "Qty", "IB Status"], rows,
+                  empty="No working orders (none waiting for the open).")
+
+
+def ibkr_history_table(orders, positions):
+    """Last 20 orders of ANY status (filled/pending/submitted/rejected/
+    cancelled/failed), color-coded by status (issue 9)."""
+    price_by_tkr = {p["ticker"]: p.get("market_price") for p in positions
+                    if p.get("market_price")}
+    allo = sorted(orders,
+                  key=lambda o: o.get("updated_at") or o.get("timestamp") or "",
+                  reverse=True)
+    rows = []
+    for o in allo[:20]:
+        tkr = o.get("ticker", "?")
+        status = o.get("status", "?")
+        fill = o.get("fill_price")
+        qty = o.get("filled_qty") or o.get("shares") or "—"
+        if fill:
+            cur = price_by_tkr.get(tkr) or get_price(tkr)
+            ret = ((cur - fill) / fill * 100) if (cur and fill) else None
+        else:
+            cur, ret = None, None
+        date = _iso_to_local(o.get("updated_at") or o.get("timestamp"),
+                             "%Y-%m-%d %H:%M")
+        rows.append([
+            date,
+            (tkr, C["blue"]),
+            o.get("action", "?"),
+            str(qty),
+            _money(fill) if fill else "—",
+            _money(cur) if cur else "—",
+            (_fmt_pct(ret), _color(ret)) if ret is not None else "—",
+            (status, _STATUS_COLOR.get(status, C["dim"])),
+        ])
+    return _table(["Date", "Ticker", "Action", "Qty", "Fill Price",
+                   "Current", "Return %", "Status"], rows,
+                  empty="No orders yet.")
+
+
 app.layout = html.Div(
     style={"backgroundColor": C["bg"], "color": C["text"], "fontFamily": MONO,
            "minHeight": "100vh", "padding": "20px 26px"},
@@ -1120,6 +1356,8 @@ app.layout = html.Div(
                      dcc.Tab(label="AI Portfolios", value="ai",
                              style=_TAB_STYLE, selected_style=_TAB_SELECTED),
                      dcc.Tab(label="Influencers", value="influencers",
+                             style=_TAB_STYLE, selected_style=_TAB_SELECTED),
+                     dcc.Tab(label="IBKR Paper Portfolio", value="ibkr",
                              style=_TAB_STYLE, selected_style=_TAB_SELECTED),
                  ]),
 
@@ -1259,6 +1497,20 @@ app.layout = html.Div(
                 html.Div(id="longterm-holdings", style={"marginTop": "4px"}),
             ]),
         ]),
+
+        # --- IBKR Paper Portfolio tab -- hidden until selected ---------------
+        # Live reads from IB Gateway (127.0.0.1:4002) on each 60s refresh while
+        # this tab is active; degrades to "Gateway offline" if unreachable.
+        html.Div(id="ibkr-section", style={"display": "none"}, children=[
+            html.Div("Account Summary", style=_SECTION_H),
+            html.Div(id="ibkr-account"),
+            html.Div("Open Positions", style=_SECTION_H),
+            html.Div(id="ibkr-positions", style={"marginTop": "4px"}),
+            html.Div("Pending / Working Orders", style=_SECTION_H),
+            html.Div(id="ibkr-pending", style={"marginTop": "4px"}),
+            html.Div("Order History (last 20)", style=_SECTION_H),
+            html.Div(id="ibkr-history", style={"marginTop": "4px"}),
+        ]),
     ],
 )
 
@@ -1266,13 +1518,44 @@ app.layout = html.Div(
 @app.callback(
     Output("ai-section", "style"),
     Output("influencer-section", "style"),
+    Output("ibkr-section", "style"),
     Input("main-tabs", "value"),
 )
 def switch_main_tab(tab):
     show, hide = {"display": "block"}, {"display": "none"}
     if tab == "influencers":
-        return hide, show
-    return show, hide
+        return hide, show, hide
+    if tab == "ibkr":
+        return hide, hide, show
+    return show, hide, hide
+
+
+@app.callback(
+    Output("ibkr-account", "children"),
+    Output("ibkr-positions", "children"),
+    Output("ibkr-pending", "children"),
+    Output("ibkr-history", "children"),
+    Input("interval", "n_intervals"),
+    Input("main-tabs", "value"),
+)
+def refresh_ibkr(_n, tab):
+    # Only hit IB Gateway when the IBKR tab is actually showing (avoids a live
+    # connection every 60s for users sitting on other tabs). Fires immediately
+    # on switching to the tab, then every 60s while it stays active.
+    if tab != "ibkr":
+        raise PreventUpdate
+    orders = load_orders()
+    snap = ibkr_snapshot()
+    if snap is None:
+        # Gateway offline: account card degrades, but the ledger-backed order
+        # tables still render (they don't need a live connection).
+        return (ibkr_offline(), "", ibkr_pending_table(orders),
+                ibkr_history_table(orders, []))
+    acct, positions = snap
+    return (ibkr_account_card(acct),
+            ibkr_positions_table(positions),
+            ibkr_pending_table(orders),
+            ibkr_history_table(orders, positions))
 
 
 def _influencer_header(title, account):

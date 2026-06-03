@@ -210,6 +210,9 @@ def queue_order(signal, path=ORDERS_FILE):
         "ticker": ticker,
         "action": action,
         "quantity": quantity,
+        # sell_kind drives share sizing at execution: the connector sells the
+        # ACTUAL IB position (100% full / 50% partial), not notional/price.
+        "sell_kind": (signal.get("sell_kind") if st == "sell" else None),
         "status": "pending",
         "timestamp": datetime.now(timezone.utc).isoformat(),
     })

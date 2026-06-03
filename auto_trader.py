@@ -25,6 +25,7 @@ skip-existing logic all live in order_manager.queue_order() / risk_check().
   run(no_trade=False) -> summary dict
 """
 
+import fcntl
 import json
 import os
 from datetime import datetime, timezone
@@ -32,6 +33,11 @@ from datetime import datetime, timezone
 import monitor                      # reuse load_env / _send_telegram / TRADES_FILE
 import order_manager as om
 import ibkr_connector as ibk
+
+try:                               # ticker allowlist (issue 6); optional dep
+    import yfinance as yf
+except Exception:                  # noqa: BLE001
+    yf = None
 
 HOME = monitor.HOME
 LOG_FILE = os.path.join(HOME, "auto_trader.log")
@@ -52,6 +58,33 @@ ACCOUNT_DEFAULT_PF = {"grkportfolio": "grok", "theaiportfolios": "claude",
 # (no standalone handle; only surfaces via @aifinancelabs text).
 MIRROR_PORTFOLIOS = {"grok", "claude", "deepseek"}
 
+# --- circuit breaker (issue 4) ---------------------------------------------
+DATA_DIR = os.path.join(HOME, "data")
+BREAKER_FILE = os.path.join(DATA_DIR, "circuit_breaker.json")
+LOCK_FILE = os.path.join(DATA_DIR, "auto_trader.lock")
+MAX_CONSECUTIVE_REJECTS = 3        # halt after N IB rejects in a row
+MAX_ORDERS_PER_DAY = 5             # across all tickers, per UTC day
+DAILY_LOSS_LIMIT_PCT = 0.05        # halt if NetLiq drops >5% from day start
+
+
+def _utc_today():
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+
+def _load_breaker():
+    return monitor.load_json(BREAKER_FILE, {})
+
+
+def _save_breaker(state):
+    os.makedirs(DATA_DIR, exist_ok=True)
+    monitor.write_json_atomic(BREAKER_FILE, state)
+
+
+def _orders_today_count():
+    """Order attempts recorded in the ledger today (all tickers, UTC day)."""
+    today = _utc_today()
+    return sum(1 for o in om._load() if (o.get("timestamp") or "")[:10] == today)
+
 
 # --- logging ----------------------------------------------------------------
 def _log(msg):
@@ -67,6 +100,34 @@ def _log(msg):
 
 
 # --- signal filter ----------------------------------------------------------
+_TICKER_OK_CACHE = set()           # tickers confirmed valid (positives only)
+
+
+def _valid_us_equity(ticker):
+    """Issue 6: best-effort allowlist — is `ticker` a real US equity/ETF?
+    Confirmed-valid tickers are cached. Returns False for a clearly bogus or
+    non-equity symbol (so it's deferred, NOT marked actioned, and retried). Fails
+    OPEN on a yfinance outage (returns True) so a transient gap never blocks a
+    real signal; execute_order still rejects an unqualifiable ticker downstream."""
+    t = (ticker or "").upper().strip()
+    if not t:
+        return False
+    if yf is None or t in _TICKER_OK_CACHE:
+        return True
+    try:
+        info = yf.Ticker(t).info or {}
+    except Exception:              # noqa: BLE001 - yfinance flaky -> fail open
+        return True
+    qt = (info.get("quoteType") or "").upper()
+    price = info.get("regularMarketPrice") or info.get("currentPrice")
+    if qt in ("CRYPTOCURRENCY", "CURRENCY", "INDEX"):
+        return False
+    valid = qt in ("EQUITY", "ETF") or price is not None
+    if valid:
+        _TICKER_OK_CACHE.add(t)
+    return valid
+
+
 def _effective_pf(sig):
     return sig.get("portfolio") or ACCOUNT_DEFAULT_PF.get(sig.get("account"))
 
@@ -111,6 +172,27 @@ def _notify_executed(sig, res):
 
 # --- main entry -------------------------------------------------------------
 def run(no_trade=False, trades_path=None):
+    """Issue 7: acquire an exclusive run lock (flock) so two instances (cron +
+    a manual run) can't execute concurrently — that would double-order or clash
+    on clientId 7. If the lock is held, skip this run. Delegates to _run_locked."""
+    os.makedirs(DATA_DIR, exist_ok=True)
+    lockf = open(LOCK_FILE, "w")
+    try:
+        fcntl.flock(lockf, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except (BlockingIOError, OSError):
+        _log("another auto_trader instance holds the lock; skipping this run")
+        lockf.close()
+        return {"candidates": 0, "skipped_locked": True}
+    try:
+        return _run_locked(no_trade=no_trade, trades_path=trades_path)
+    finally:
+        try:
+            fcntl.flock(lockf, fcntl.LOCK_UN)
+        finally:
+            lockf.close()
+
+
+def _run_locked(no_trade=False, trades_path=None):
     """Execute qualifying new AI-portfolio signals. Returns a summary dict."""
     for p in monitor.TELEGRAM_ENVS:
         monitor.load_env(p)
@@ -122,16 +204,22 @@ def run(no_trade=False, trades_path=None):
                       s.get("tweet_id") or s.get("signal_id"))]
 
     summary = {"candidates": len(candidates), "queued": 0, "filled": 0,
-               "submitted": 0, "rejected": 0, "failed": 0}
+               "submitted": 0, "rejected": 0, "cancelled": 0, "failed": 0}
 
-    if not candidates:
-        _log("no actionable new AI-portfolio signals this run")
+    # Pending orders (e.g. MOO orders resting for the open) must be reconciled
+    # even on a run with no new signals, so don't bail out while any exist.
+    pending_exists = any(o.get("status") == "pending" and o.get("ib_order_id")
+                         for o in om._load())
+    if not candidates and not pending_exists:
+        _log("no actionable new signals and no pending orders to reconcile")
         return summary
 
-    _log(f"{len(candidates)} candidate AI-portfolio signal(s); "
-         f"no_trade={no_trade}")
+    if candidates:
+        _log(f"{len(candidates)} candidate AI-portfolio signal(s); "
+             f"no_trade={no_trade}")
 
     ibh = None
+    breaker = {}
     if not no_trade:
         try:
             ibh = ibk.connect()
@@ -142,16 +230,79 @@ def run(no_trade=False, trades_path=None):
         except ibk.IBKRError as e:
             # Gateway unreachable: queue nothing so the next run retries cleanly.
             _log(f"FAILED to connect to IB Gateway, skipping execution: {e}")
-            monitor.notify_telegram(f"auto_trader: IB Gateway unreachable, "
-                                    f"{len(candidates)} signal(s) deferred")
+            if candidates:
+                monitor.notify_telegram(f"auto_trader: IB Gateway unreachable, "
+                                        f"{len(candidates)} signal(s) deferred")
             summary["failed"] = len(candidates)
             return summary
 
+        # Issue 2: reconcile pending MOO orders that filled/cancelled at the open
+        # BEFORE processing new signals (so exposure + history reflect reality).
+        try:
+            rec = ibk.reconcile_open_orders(ibh)
+            if rec["checked"]:
+                _log(f"reconciled pending orders: {rec}")
+        except Exception as e:        # reconciliation must never block trading
+            _log(f"reconcile_open_orders failed (non-fatal): {e!r}")
+
+        # Issue 4: circuit breaker — daily reset + daily-loss-limit halt.
+        breaker = _load_breaker()
+        if breaker.get("date") != _utc_today():
+            breaker = {"date": _utc_today(), "consecutive_rejects": 0,
+                       "day_start_netliq": acct.get("net_liquidation"),
+                       "halted": False, "halt_reason": None}
+            _save_breaker(breaker)
+        nl, start = acct.get("net_liquidation"), breaker.get("day_start_netliq")
+        if (not breaker.get("halted") and start and nl and nl == nl
+                and start == start and nl < start * (1 - DAILY_LOSS_LIMIT_PCT)):
+            breaker["halted"] = True
+            breaker["halt_reason"] = (
+                f"daily loss limit: NetLiq ${nl:,.0f} down "
+                f">{DAILY_LOSS_LIMIT_PCT*100:.0f}% from day start ${start:,.0f}")
+            _save_breaker(breaker)
+            _log(f"HALT — {breaker['halt_reason']}")
+            monitor.notify_telegram(
+                f"⚠️ pilot_trader: execution halted — daily loss limit "
+                f"(NetLiq ${nl:,.0f} vs day start ${start:,.0f})")
+
+    # If halted (this run's loss check or a prior trigger today), do NOT queue or
+    # place anything — skip so signals retry after the daily reset.
+    if breaker.get("halted") and not no_trade:
+        _log(f"execution halted ({breaker.get('halt_reason')}); skipping "
+             f"{len(candidates)} candidate(s) until daily reset")
+        summary["halted"] = True
+        if ibh is not None:
+            ibh.disconnect()
+        return summary
+
+    daily_cap_alerted = False
     try:
         for sig in candidates:
             tkr = (sig.get("tickers") or ["?"])[0]
             pf = _effective_pf(sig)
             sid = sig.get("tweet_id") or sig.get("signal_id")
+
+            # Issue 6: ticker allowlist — skip a bogus/unknown symbol BEFORE
+            # queuing so it isn't marked actioned (it defers + retries).
+            if not _valid_us_equity(tkr):
+                _log(f"REJECTED [{pf}] {sig.get('signal_type','?').upper()} {tkr} "
+                     f"(not a recognized US equity) signal={sid}")
+                summary["rejected"] += 1
+                continue
+
+            # Issue 4: global daily order cap — defer the rest to the next UTC day
+            # (don't queue, so they aren't marked actioned and retry tomorrow).
+            if not no_trade and _orders_today_count() >= MAX_ORDERS_PER_DAY:
+                if not daily_cap_alerted:
+                    daily_cap_alerted = True
+                    _log(f"daily order cap reached ({MAX_ORDERS_PER_DAY}/day); "
+                         f"deferring remaining candidate(s)")
+                    monitor.notify_telegram(
+                        f"pilot_trader: daily order cap ({MAX_ORDERS_PER_DAY}) "
+                        f"reached; remaining signals deferred to tomorrow")
+                summary["deferred"] = summary.get("deferred", 0) + 1
+                continue
+
             order_id = om.queue_order(sig)
             if order_id is None:
                 _log(f"REJECTED [{pf}] {sig.get('signal_type','?').upper()} {tkr} "
@@ -172,17 +323,38 @@ def run(no_trade=False, trades_path=None):
                 _log(f"FILLED [{pf}] {res['action']} {res['shares']}x {tkr} @ "
                      f"${res['fill_price']:.2f} order={order_id} signal={sid}")
                 _notify_executed(sig, res)
+                breaker["consecutive_rejects"] = 0
             elif status == "submitted":
                 _log(f"SUBMITTED [{pf}] {res['action']} {res['shares']}x {tkr} "
                      f"(MarketOrder, {res['detail']}) order={order_id} "
                      f"signal={sid}")
                 _notify_executed(sig, res)
+                breaker["consecutive_rejects"] = 0
+            elif status == "cancelled":
+                _log(f"CANCELLED (no-op) [{pf}] {res['action']} {tkr}: "
+                     f"{res['detail']} order={order_id} signal={sid}")
             elif status == "rejected":
                 _log(f"REJECTED-BY-IB {res['action']} {tkr}: {res['detail']} "
                      f"order={order_id} signal={sid}")
-            else:
+                breaker["consecutive_rejects"] = (
+                    breaker.get("consecutive_rejects", 0) + 1)
+            else:   # failed (exception / gateway hiccup) — neutral for the streak
                 _log(f"FAILED {res['action']} {tkr}: {res['detail']} "
                      f"order={order_id} signal={sid}")
+
+            # Persist the breaker and halt after N consecutive IB rejects.
+            _save_breaker(breaker)
+            if breaker.get("consecutive_rejects", 0) >= MAX_CONSECUTIVE_REJECTS:
+                breaker["halted"] = True
+                breaker["halt_reason"] = (
+                    f"{MAX_CONSECUTIVE_REJECTS} consecutive IB rejects")
+                _save_breaker(breaker)
+                _log(f"HALT — {breaker['halt_reason']}")
+                monitor.notify_telegram(
+                    "⚠️ pilot_trader: execution halted after "
+                    f"{MAX_CONSECUTIVE_REJECTS} consecutive rejects")
+                summary["halted"] = True
+                break
     finally:
         if ibh is not None:
             ibh.disconnect()

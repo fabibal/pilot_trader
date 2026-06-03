@@ -21,6 +21,7 @@ Public API:
   is_market_open(now=None)              -> bool
 """
 
+import json
 import os
 from datetime import datetime, time as dtime
 from zoneinfo import ZoneInfo
@@ -31,6 +32,9 @@ HOST = "127.0.0.1"
 PORT = 4002
 DEFAULT_CLIENT_ID = 7
 FILL_TIMEOUT_S = 30          # how long to wait for a fill (spec: 30s)
+STARTING_CAPITAL = 1_000_000.0   # fallback baseline if the file is unavailable
+BASELINE_FILE = os.path.join(os.path.dirname(om.ORDERS_FILE) or ".",
+                             "account_baseline.json")
 
 MAX_TOTAL_EXPOSURE = om.MAX_TOTAL_EXPOSURE   # $10,000
 MAX_POSITION_USD = om.MAX_POSITION_USD       # $1,000
@@ -43,16 +47,17 @@ class IBKRError(RuntimeError):
 
 
 # --- connection -------------------------------------------------------------
-def connect(client_id=DEFAULT_CLIENT_ID):
+def connect(client_id=DEFAULT_CLIENT_ID, timeout=20):
     """Connect to IB Gateway paper on 127.0.0.1:4002. Raises IBKRError on
-    failure (gateway down, port closed, login incomplete)."""
+    failure (gateway down, port closed, login incomplete). `timeout` is the
+    connect deadline (lower it for latency-sensitive callers like the dashboard)."""
     try:
         from ib_insync import IB
     except ImportError as e:
         raise IBKRError(f"ib_insync not installed: {e}")
     ib = IB()
     try:
-        ib.connect(HOST, PORT, clientId=client_id, timeout=20)
+        ib.connect(HOST, PORT, clientId=client_id, timeout=timeout)
     except Exception as e:   # ib_insync raises bare Exceptions / asyncio errors
         raise IBKRError(f"cannot connect to IB Gateway {HOST}:{PORT} "
                         f"(is it logged in?): {e!r}")
@@ -68,13 +73,33 @@ def _maybe_connect(ib):
     return connect(), True
 
 
+# NYSE full-day closures for 2026 (regular holidays + observed). Early-close
+# half-days (e.g. day after Thanksgiving) are NOT listed — those are caught at
+# runtime by the Error-10349 -> MOO fallback in execute_order.
+NYSE_HOLIDAYS_2026 = {
+    "2026-01-01",  # New Year's Day
+    "2026-01-19",  # MLK Jr. Day
+    "2026-02-16",  # Washington's Birthday
+    "2026-04-03",  # Good Friday
+    "2026-05-25",  # Memorial Day
+    "2026-06-19",  # Juneteenth
+    "2026-07-03",  # Independence Day (observed; Jul 4 is a Saturday)
+    "2026-09-07",  # Labor Day
+    "2026-11-26",  # Thanksgiving
+    "2026-12-25",  # Christmas
+}
+
+
 # --- market hours -----------------------------------------------------------
 def is_market_open(now=None):
-    """US regular session check (Mon-Fri 09:30-16:00 America/New_York).
-    Holiday calendar is NOT modelled (spec open question) — a market order
-    submitted on a holiday is simply held by IB until the next session."""
+    """US regular session check: Mon-Fri 09:30-16:00 America/New_York, excluding
+    NYSE holidays (NYSE_HOLIDAYS_2026). Early-close half-days are not modelled
+    here; an order placed after a half-day close is rejected by IB (10349) and
+    execute_order resubmits it as Market-On-Open."""
     now = (now or datetime.now(tz=_NY)).astimezone(_NY)
     if now.weekday() >= 5:                      # Sat/Sun
+        return False
+    if now.strftime("%Y-%m-%d") in NYSE_HOLIDAYS_2026:
         return False
     return dtime(9, 30) <= now.time() <= dtime(16, 0)
 
@@ -143,29 +168,114 @@ def get_portfolio(ib=None):
 
 def get_account_value(ib=None):
     """Return {account, net_liquidation, available_funds, buying_power,
-    total_cash} for the paper account."""
+    total_cash, daily_pnl, unrealized_pnl, realized_pnl, baseline_netliq,
+    total_pnl} for the paper account. total_pnl = NetLiquidation - baseline,
+    where baseline is recorded once on first connect (issue 10). The daily/
+    unrealized/realized P&L come from reqPnL (best-effort: NaN if unavailable)."""
     ib, owns = _maybe_connect(ib)
     try:
         accts = ib.managedAccounts()
         acct = accts[0] if accts else ""
         summ = {r.tag: r.value for r in ib.accountSummary(acct)}
         f = lambda k: float(summ.get(k, "nan"))
+        netliq = f("NetLiquidation")
+
+        # Daily / unrealized / realized P&L via reqPnL (needs a moment to stream).
+        daily = unreal = real = float("nan")
+        try:
+            pnl = ib.reqPnL(acct)
+            ib.sleep(2.0)
+            daily, unreal, real = pnl.dailyPnL, pnl.unrealizedPnL, pnl.realizedPnL
+            ib.cancelPnL(acct)
+        except Exception:
+            pass
+
+        baseline = _account_baseline(acct, netliq)
         return {
             "account": acct,
-            "net_liquidation": f("NetLiquidation"),
+            "net_liquidation": netliq,
             "available_funds": f("AvailableFunds"),
             "buying_power": f("BuyingPower"),
             "total_cash": f("TotalCashValue"),
+            "daily_pnl": daily,
+            "unrealized_pnl": unreal,
+            "realized_pnl": real,
+            "baseline_netliq": baseline,
+            "total_pnl": (netliq - baseline
+                          if netliq == netliq else float("nan")),
         }
     finally:
         if owns:
             ib.disconnect()
 
 
+def _account_baseline(account, netliq):
+    """Issue 10: the account's baseline NetLiquidation for total-P&L, recorded
+    ONCE on first connect to data/account_baseline.json (instead of a hardcoded
+    $1M). Returns the stored baseline, creating it from the current NetLiq if the
+    file is absent. Falls back to STARTING_CAPITAL on any IO error."""
+    try:
+        if os.path.exists(BASELINE_FILE):
+            with open(BASELINE_FILE) as f:
+                b = (json.load(f) or {}).get("baseline_netliq")
+            if b:
+                return float(b)
+        if netliq and netliq == netliq:        # first connect: record it
+            os.makedirs(os.path.dirname(BASELINE_FILE) or ".", exist_ok=True)
+            with open(BASELINE_FILE, "w") as f:
+                json.dump({"account": account, "baseline_netliq": float(netliq),
+                           "recorded_at": datetime.now(_NY).isoformat()},
+                          f, indent=2)
+            return float(netliq)
+    except (OSError, ValueError):
+        pass
+    return STARTING_CAPITAL
+
+
 def _stock_exposure(ib):
     """Sum of current LONG stock market value (toward MAX_TOTAL_EXPOSURE)."""
     return sum(p["market_value"] for p in get_portfolio(ib)
                if p["sec_type"] == "STK" and (p["market_value"] or 0) > 0)
+
+
+def _held_shares(ib, ticker):
+    """Net shares currently held at IB for a stock `ticker` (0.0 if none)."""
+    t = (ticker or "").upper()
+    return sum(p.position for p in ib.positions()
+               if p.contract.secType == "STK" and p.contract.symbol.upper() == t)
+
+
+def _place_and_wait(ib, contract, action, shares, moo):
+    """Place a MarketOrder (DAY, or Market-On-Open when `moo`) and wait for a
+    terminal/resting state. Returns (trade, status, filled, avg_price, err_log)."""
+    from ib_insync import MarketOrder
+    mo = MarketOrder(action, shares)
+    if moo:
+        mo.tif = "OPG"
+    trade = ib.placeOrder(contract, mo)
+    # During RTH wait up to FILL_TIMEOUT_S for a fill; a MOO can't fill until the
+    # open, so wait only briefly for it to reach a resting/rejected state.
+    wait_cap = 5.0 if moo else FILL_TIMEOUT_S
+    waited = 0.0
+    while waited < wait_cap:
+        ib.sleep(1.0)
+        waited += 1.0
+        st = trade.orderStatus.status
+        if st == "Filled":
+            break
+        if st in ("Cancelled", "ApiCancelled", "Inactive"):
+            # ⚠️ This paper account bounces DAY market orders with Error 10349
+            # ("Order TIF was set to DAY based on order preset") and then
+            # SELF-RECOVERS and fills during RTH. So keep polling through a 10349
+            # bounce — only a cancel WITHOUT 10349 is genuinely terminal.
+            codes = {l.errorCode for l in trade.log if l.errorCode}
+            if 10349 not in codes:
+                break
+    st = trade.orderStatus.status
+    filled = trade.orderStatus.filled or 0
+    avg = trade.orderStatus.avgFillPrice or 0.0
+    err = next((l for l in trade.log if l.errorCode), None)
+    return trade, st, filled, avg, err
 
 
 # --- order execution --------------------------------------------------------
@@ -185,10 +295,12 @@ def execute_order(order, ib=None):
       submitted — accepted but not filled within the window (held for open /
                   still working); ledger stays 'pending'
       rejected  — IB rejected the order; ledger -> 'rejected'
+      cancelled — no-op (e.g. SELL with no live position); ledger -> 'cancelled'
       failed    — exception before/around submission; ledger -> 'failed'
-    """
-    from ib_insync import MarketOrder
 
+    SELL share sizing reads the ACTUAL IB position (full=100%, partial=50% of
+    held shares), never notional/price; BUY converts USD notional at the ask.
+    """
     ticker = (order.get("ticker") or "").upper()
     action = (order.get("action") or "").upper()
     notional = float(order.get("quantity_usd") or order.get("quantity") or 0)
@@ -222,13 +334,29 @@ def execute_order(order, ib=None):
     ib, owns = _maybe_connect(ib)
     try:
         contract = _stock(ib, ticker)
-        price = _price(ib, contract)
-        shares = max(1, round(notional / price))
-        result["shares"] = shares
 
-        # Total-exposure guard for buys (spec §5): current long stock MV + this
-        # order's notional must stay under the book cap.
-        if action == "BUY":
+        if action == "SELL":
+            # Sell the ACTUAL IB position, never notional/price (spec §4):
+            # full -> 100% of held shares, partial -> 50%. Never oversell.
+            held = _held_shares(ib, ticker)
+            if held <= 0:
+                result["detail"] = f"no live {ticker} position to sell (no-op)"
+                _ledger("cancelled", reject_reason=result["detail"])
+                result["status"] = "cancelled"
+                return result
+            sell_kind = (order.get("sell_kind") or "full").lower()
+            if sell_kind == "partial":
+                shares = min(int(held), max(1, int(round(held * 0.5))))
+            else:
+                shares = int(held)               # full close
+            result["shares"] = shares
+            result["detail"] = f"selling {shares}/{int(held)} held ({sell_kind})"
+        else:  # BUY: USD notional -> whole shares at the live ask
+            price = _price(ib, contract)
+            shares = max(1, round(notional / price))
+            result["shares"] = shares
+            # Total-exposure guard (spec §5): long stock MV + this order's
+            # notional must stay under the book cap.
             exposure = _stock_exposure(ib)
             if exposure + shares * price > MAX_TOTAL_EXPOSURE + 1.0:
                 result["detail"] = (f"would exceed total exposure cap "
@@ -244,29 +372,27 @@ def execute_order(order, ib=None):
         # when the market is closed we send a Market-On-Open (TIF=OPG) order that
         # rests for the opening auction. During RTH a normal DAY market order
         # fills immediately.
-        mo = MarketOrder(action, shares)
         moo = not is_market_open()
-        if moo:
-            mo.tif = "OPG"
-        trade = ib.placeOrder(contract, mo)
+        trade, st, filled, avg, err = _place_and_wait(ib, contract, action,
+                                                      shares, moo)
 
-        # Wait for a fill up to FILL_TIMEOUT_S during RTH. Outside RTH the MOO
-        # order can't fill until the open, so wait only briefly for it to reach
-        # an accepted/resting (or rejected) state, then return.
-        wait_cap = 5.0 if moo else FILL_TIMEOUT_S
-        waited = 0.0
-        while waited < wait_cap:
-            ib.sleep(1.0)
-            waited += 1.0
-            if trade.isDone() or trade.orderStatus.status == "Filled":
-                break
-
-        st = trade.orderStatus.status
-        filled = trade.orderStatus.filled or 0
-        avg = trade.orderStatus.avgFillPrice or 0.0
-        err = next((l for l in trade.log if l.errorCode), None)
+        # Holiday/half-day guard: our calendar can miss an early close or an
+        # unlisted holiday. If a DAY order ended UNFILLED with Error 10349 (the
+        # bounce did NOT self-recover, i.e. the market really is closed),
+        # resubmit as Market-On-Open rather than dropping the signal as
+        # 'rejected' (which idempotency would never retry). A 10349 that DID
+        # recover to Filled during RTH skips this (st == 'Filled', filled > 0).
+        if (not moo and filled == 0 and st != "Filled"
+                and err is not None and getattr(err, "errorCode", 0) == 10349):
+            _log_retry = "DAY hit 10349 (market closed) -> resubmit MOO"
+            moo = True
+            trade, st, filled, avg, err = _place_and_wait(ib, contract, action,
+                                                          shares, True)
+            result["detail"] = _log_retry + f"; ib_status={st}"
+        else:
+            result["detail"] = f"ib_status={st}" + (" (MOO)" if moo else "")
+        result["market_open"] = not moo
         result["filled_qty"] = filled
-        result["detail"] = f"ib_status={st}" + (" (MOO)" if moo else "")
 
         if st == "Filled" and filled > 0:
             result["status"] = "filled"
@@ -288,8 +414,14 @@ def execute_order(order, ib=None):
             _ledger("pending", shares=shares, ib_order_id=trade.order.orderId,
                     ib_status=st)
         return result
-    except IBKRError:
-        raise
+    except IBKRError as e:
+        # Order-level problem (e.g. unqualifiable ticker, no price) — reject it
+        # cleanly rather than crashing the run. The connection is already open
+        # at this point, so this is never a connect failure.
+        result["status"] = "rejected"
+        result["detail"] = f"{e}"
+        _ledger("rejected", reject_reason=str(e))
+        return result
     except Exception as e:
         result["status"] = "failed"
         result["detail"] = f"{e!r}"
@@ -300,8 +432,120 @@ def execute_order(order, ib=None):
             ib.disconnect()
 
 
+# --- reconciliation ---------------------------------------------------------
+def reconcile_open_orders(ib=None):
+    """Poll IB for the fate of ledger orders still marked 'pending' (mainly
+    Market-On-Open orders that filled at the open after execute_order returned).
+    Flips each to filled / cancelled in data/orders.json. Returns a summary.
+
+    Matches on ib_order_id against the current session's trades (ib.trades()
+    covers open + done-this-session). Orders not visible (e.g. completed in a
+    prior session before a gateway restart) are left pending for the weekly
+    position reconcile to flag."""
+    orders = om._load()
+    pending = [o for o in orders
+               if o.get("status") == "pending" and o.get("ib_order_id")]
+    summary = {"checked": len(pending), "filled": 0, "cancelled": 0,
+               "still_pending": 0, "unmatched": 0}
+    if not pending:
+        return summary
+
+    ib, owns = _maybe_connect(ib)
+    try:
+        ib.reqAllOpenOrders()
+        ib.sleep(1.0)
+        trades_by_id = {t.order.orderId: t for t in ib.trades()}
+        for o in pending:
+            t = trades_by_id.get(o.get("ib_order_id"))
+            if t is None:
+                summary["unmatched"] += 1
+                continue
+            st = t.orderStatus.status
+            filled = t.orderStatus.filled or 0
+            avg = t.orderStatus.avgFillPrice or 0.0
+            if st == "Filled" and filled > 0:
+                om.update_order_status(o["order_id"], "filled",
+                                       fill_price=round(float(avg), 4),
+                                       filled_qty=filled, ib_status=st)
+                summary["filled"] += 1
+            elif st in ("Cancelled", "ApiCancelled", "Inactive"):
+                om.update_order_status(o["order_id"], "cancelled",
+                                       ib_status=st,
+                                       reject_reason=f"reconcile: {st}")
+                summary["cancelled"] += 1
+            else:
+                summary["still_pending"] += 1
+        return summary
+    finally:
+        if owns:
+            ib.disconnect()
+
+
+def reconcile_positions(ib=None, log_path=None):
+    """Compare expected net shares per ticker (from FILLED ledger orders) against
+    actual IB positions; append any divergence to reconcile.log. Returns the list
+    of divergences [{ticker, expected, actual, diff}]. (Weekly cron job, §8.)"""
+    log_path = log_path or os.path.join(os.path.dirname(om.ORDERS_FILE) or ".",
+                                        "..", "reconcile.log")
+    orders = om._load()
+    expected = {}
+    for o in orders:
+        if o.get("status") != "filled":
+            continue
+        q = o.get("filled_qty") or o.get("shares") or 0
+        expected[o["ticker"]] = expected.get(o["ticker"], 0.0) + (
+            q if o["action"] == "BUY" else -q)
+
+    ib, owns = _maybe_connect(ib)
+    try:
+        actual = {}
+        for p in ib.positions():
+            if p.contract.secType == "STK":
+                actual[p.contract.symbol.upper()] = (
+                    actual.get(p.contract.symbol.upper(), 0.0) + p.position)
+        tickers = set(expected) | set(actual)
+        diverged = []
+        for t in sorted(tickers):
+            e = round(expected.get(t, 0.0), 4)
+            a = round(actual.get(t, 0.0), 4)
+            if abs(e - a) > 1e-6:
+                diverged.append({"ticker": t, "expected": e, "actual": a,
+                                 "diff": round(a - e, 4)})
+        ts = datetime.now(_NY).isoformat()
+        try:
+            with open(log_path, "a") as f:
+                if diverged:
+                    for d in diverged:
+                        f.write(f"{ts}  DIVERGENCE {d['ticker']}: "
+                                f"ledger={d['expected']} ib={d['actual']} "
+                                f"diff={d['diff']}\n")
+                else:
+                    f.write(f"{ts}  OK: ledger matches IB "
+                            f"({len(tickers)} tickers)\n")
+        except OSError:
+            pass
+        return diverged
+    finally:
+        if owns:
+            ib.disconnect()
+
+
 if __name__ == "__main__":
-    # Smoke test: print account + portfolio.
+    import argparse
+    _ap = argparse.ArgumentParser(description="IBKR connector utilities.")
+    _ap.add_argument("--reconcile-orders", action="store_true",
+                     help="poll IB and flip pending ledger orders to filled/cancelled")
+    _ap.add_argument("--reconcile-positions", action="store_true",
+                     help="compare ledger filled positions vs IB; log divergence")
+    _args = _ap.parse_args()
+    if _args.reconcile_orders:
+        print("reconcile_open_orders:", reconcile_open_orders())
+        raise SystemExit(0)
+    if _args.reconcile_positions:
+        div = reconcile_positions()
+        print("divergences:", div if div else "none")
+        raise SystemExit(0)
+    # Default smoke test: print account + portfolio.
     _ib = connect()
     try:
         import json
