@@ -1,19 +1,23 @@
 #!/usr/bin/env python3
-"""Automatic execution glue for the pilot_trader Grok mirror.
+"""Automatic execution glue for the pilot_trader AI-portfolio mirror.
 
 Called from monitor.py at the end of each live run (and runnable standalone).
-Reads trades.json, picks the qualifying NEW Grok signals, and runs each through
-the idempotent order layer (order_manager) into the IBKR paper account
-(ibkr_connector). Every decision is logged to auto_trader.log; every executed
-trade pings Telegram.
+Reads trades.json, picks the qualifying NEW signals from the mirrored AI
+portfolios (grok, claude, deepseek), and runs each through the idempotent order
+layer (order_manager) into the IBKR paper account (ibkr_connector). Every
+decision is logged to auto_trader.log; every executed trade pings Telegram.
 
 Qualifying signal (IBKR_SPEC.md):
-  - effective portfolio == grok
+  - effective portfolio in {grok, claude, deepseek}   (MIRROR_PORTFOLIOS)
   - signal_type in {buy, sell}        (position recaps are state, not orders)
   - asset_type == stock               (no crypto)
   - buys: confidence in {high, medium}
   - timestamp date >= SINCE_DATE      (spec §8: don't back-fill old positions)
   - not already actioned              (idempotency via order_manager)
+
+Note: order_manager keys orders on TICKER, not portfolio (IBKR_SPEC §1), so the
+same ticker called by two portfolios collapses to one consolidated position (the
+2nd same-day buy hits the 1-order-per-ticker-per-day cap).
 
 Sizing, the $10k/$1k caps, the 1-order-per-ticker-per-day limit and the
 skip-existing logic all live in order_manager.queue_order() / risk_check().
@@ -38,10 +42,15 @@ TRADES_FILE = monitor.TRADES_FILE
 SINCE_DATE = "2026-06-02"
 
 # Account -> default portfolio when the LLM left portfolio null (mirrors
-# pf_of() in dashboard.py). aifinancelabs grok posts carry portfolio="grok"
-# explicitly, so they resolve to grok regardless of this fallback.
+# pf_of() in dashboard.py). aifinancelabs posts carry the portfolio explicitly
+# from the tweet text (grok/claude/deepseek/chatgpt), so they resolve regardless
+# of this fallback.
 ACCOUNT_DEFAULT_PF = {"grkportfolio": "grok", "theaiportfolios": "claude",
                       "aifinancelabs": "deepseek"}
+
+# AI portfolios we mirror to the paper account. ChatGPT is intentionally excluded
+# (no standalone handle; only surfaces via @aifinancelabs text).
+MIRROR_PORTFOLIOS = {"grok", "claude", "deepseek"}
 
 
 # --- logging ----------------------------------------------------------------
@@ -63,7 +72,7 @@ def _effective_pf(sig):
 
 
 def _qualifies(sig):
-    if _effective_pf(sig) != om.MIRROR_PORTFOLIO:        # grok only
+    if _effective_pf(sig) not in MIRROR_PORTFOLIOS:      # grok/claude/deepseek
         return False
     st = sig.get("signal_type")
     if st not in ("buy", "sell"):                        # not a recap/none
@@ -84,8 +93,9 @@ def _telegram(text):
 def _notify_executed(sig, res):
     """Telegram for an executed/queued trade, e.g.
     '🟢 BOUGHT 5x AVGO @ $459.50 (paper) | signal: grok high conf'."""
+    pf = _effective_pf(sig) or "?"
     conf = sig.get("confidence") or "?"
-    tag = f"grok {conf} conf" if sig.get("signal_type") == "buy" else "grok"
+    tag = f"{pf} {conf} conf" if sig.get("signal_type") == "buy" else pf
     n = res["shares"]
     tkr = res["ticker"]
     if res["status"] == "filled":
@@ -101,7 +111,7 @@ def _notify_executed(sig, res):
 
 # --- main entry -------------------------------------------------------------
 def run(no_trade=False, trades_path=None):
-    """Execute qualifying new Grok signals. Returns a summary dict."""
+    """Execute qualifying new AI-portfolio signals. Returns a summary dict."""
     for p in monitor.TELEGRAM_ENVS:
         monitor.load_env(p)
 
@@ -115,10 +125,10 @@ def run(no_trade=False, trades_path=None):
                "submitted": 0, "rejected": 0, "failed": 0}
 
     if not candidates:
-        _log("no actionable new Grok signals this run")
+        _log("no actionable new AI-portfolio signals this run")
         return summary
 
-    _log(f"{len(candidates)} candidate Grok signal(s); "
+    _log(f"{len(candidates)} candidate AI-portfolio signal(s); "
          f"no_trade={no_trade}")
 
     ibh = None
@@ -140,17 +150,18 @@ def run(no_trade=False, trades_path=None):
     try:
         for sig in candidates:
             tkr = (sig.get("tickers") or ["?"])[0]
+            pf = _effective_pf(sig)
             sid = sig.get("tweet_id") or sig.get("signal_id")
             order_id = om.queue_order(sig)
             if order_id is None:
-                _log(f"REJECTED {sig.get('signal_type','?').upper()} {tkr} "
+                _log(f"REJECTED [{pf}] {sig.get('signal_type','?').upper()} {tkr} "
                      f"(failed threshold/risk/sizing or no-op) signal={sid}")
                 summary["rejected"] += 1
                 continue
             summary["queued"] += 1
             order = om.get_order(order_id)
             if no_trade:
-                _log(f"QUEUED (no-trade) {order['action']} {tkr} "
+                _log(f"QUEUED (no-trade) [{pf}] {order['action']} {tkr} "
                      f"${order['quantity']:,.2f} order={order_id} signal={sid}")
                 continue
 
@@ -158,11 +169,11 @@ def run(no_trade=False, trades_path=None):
             status = res["status"]
             summary[status] = summary.get(status, 0) + 1
             if status == "filled":
-                _log(f"FILLED {res['action']} {res['shares']}x {tkr} @ "
+                _log(f"FILLED [{pf}] {res['action']} {res['shares']}x {tkr} @ "
                      f"${res['fill_price']:.2f} order={order_id} signal={sid}")
                 _notify_executed(sig, res)
             elif status == "submitted":
-                _log(f"SUBMITTED {res['action']} {res['shares']}x {tkr} "
+                _log(f"SUBMITTED [{pf}] {res['action']} {res['shares']}x {tkr} "
                      f"(MarketOrder, {res['detail']}) order={order_id} "
                      f"signal={sid}")
                 _notify_executed(sig, res)
@@ -182,7 +193,9 @@ def run(no_trade=False, trades_path=None):
 
 if __name__ == "__main__":
     import argparse
-    ap = argparse.ArgumentParser(description="Execute new Grok signals on IBKR paper.")
+    ap = argparse.ArgumentParser(
+        description="Execute new AI-portfolio signals (grok/claude/deepseek) on "
+                    "IBKR paper.")
     ap.add_argument("--no-trade", action="store_true",
                     help="queue orders but do NOT submit to IBKR")
     a = ap.parse_args()

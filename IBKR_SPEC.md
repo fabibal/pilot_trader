@@ -7,13 +7,17 @@ tests against. Live execution (IB Gateway on port 4002) is a later, separate ste
 Grounded in `positions.json` / `trades.json` as of 2026-06-02.
 
 ## 1. What we mirror
-- **Portfolio: Grok only.** Source of truth = signals whose effective portfolio
-  resolves to `grok` (see `pf_of()` / `ACCOUNT_DEFAULT_PF`).
-- **Consolidate across accounts.** ⚠️ A Grok holding can be disclosed by BOTH
-  `@grkportfolio` AND `@aifinancelabs` (which posts Grok updates). Today AVGO, MU,
-  and SOC each appear under multiple `(account, portfolio, ticker)` keys. The
-  mirror treats `(grok, ticker)` as ONE logical position; the order layer keys on
-  `ticker`, not on the account that posted it.
+- **Portfolios: grok, claude, deepseek.** Source of truth = signals whose
+  effective portfolio resolves to one of these three (see `pf_of()` /
+  `ACCOUNT_DEFAULT_PF`; `auto_trader.MIRROR_PORTFOLIOS`). ChatGPT and influencers
+  are excluded. *(Amended 2026-06-03 — originally Grok-only; expanded to all three
+  AI portfolios. All other rules below are unchanged.)*
+- **Consolidate across accounts AND portfolios.** ⚠️ A holding can be disclosed
+  by multiple accounts (e.g. a Grok holding by BOTH `@grkportfolio` AND
+  `@aifinancelabs`), and the same ticker can be called by two portfolios. The
+  order layer keys on **`ticker`** (not account or portfolio), so each ticker is
+  ONE logical position; a second same-UTC-day order for it is blocked by the
+  1-order-per-ticker-per-day cap (§5).
 
 ## 2. Position sizing
 - **Equal-weight across open mirrored positions**, hard-capped per name.
