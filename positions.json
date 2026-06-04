@@ -11,7 +11,7 @@
     "target": 144000,
     "size_pct": null,
     "trade_date": null,
-    "holding_thesis": "Bitcoin's liquidity map indicates a path to 144K with current support above 65K.",
+    "holding_thesis": "Bitcoin positioning and market structure; waiting for recovery above 72-74K after liquidity liquidation event.",
     "opened_at": "2026-05-29T15:25:30+00:00",
     "closed_at": null,
     "signals": [
@@ -56,6 +56,13 @@
         "timestamp": "2026-06-02T18:13:31+00:00",
         "confidence": "medium",
         "url": "https://x.com/CelalKucuker/status/2061873863193952441"
+      },
+      {
+        "tweet_id": "2062160143131771259",
+        "signal_type": "position",
+        "timestamp": "2026-06-03T13:11:05+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/CelalKucuker/status/2062160143131771259"
       }
     ]
   },
@@ -117,11 +124,11 @@
     "asset_type": "crypto",
     "status": "open",
     "entry_price": null,
-    "stop_loss": 1400,
-    "target": 2600,
+    "stop_loss": 1650,
+    "target": 9000,
     "size_pct": null,
     "trade_date": null,
-    "holding_thesis": null,
+    "holding_thesis": "Ethereum has not finished its bull cycle; channel holds with liquidity targets above previous ATH.",
     "opened_at": "2026-05-28T15:39:47+00:00",
     "closed_at": null,
     "signals": [
@@ -131,6 +138,13 @@
         "timestamp": "2026-05-28T15:39:47+00:00",
         "confidence": "medium",
         "url": "https://x.com/CelalKucuker/status/2060023237786886292"
+      },
+      {
+        "tweet_id": "2062175595476169181",
+        "signal_type": "position",
+        "timestamp": "2026-06-03T14:12:29+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/CelalKucuker/status/2062175595476169181"
       }
     ]
   },
@@ -196,7 +210,7 @@
     "target": 600,
     "size_pct": null,
     "trade_date": null,
-    "holding_thesis": null,
+    "holding_thesis": "Sitting on long-term trend support with attractive risk/reward profile.",
     "opened_at": "2026-05-29T20:00:59+00:00",
     "closed_at": null,
     "signals": [
@@ -206,6 +220,13 @@
         "timestamp": "2026-05-29T20:00:59+00:00",
         "confidence": "medium",
         "url": "https://x.com/CelalKucuker/status/2060451356092035455"
+      },
+      {
+        "tweet_id": "2062245439181615503",
+        "signal_type": "buy",
+        "timestamp": "2026-06-03T18:50:02+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/CelalKucuker/status/2062245439181615503"
       }
     ]
   },
@@ -218,10 +239,10 @@
     "status": "open",
     "entry_price": 0.8,
     "stop_loss": 0.8113,
-    "target": 18,
+    "target": 10,
     "size_pct": null,
     "trade_date": null,
-    "holding_thesis": "Project with real 10x potential from current support levels if market stays strong.",
+    "holding_thesis": "Chart setup suggests the bottom is in place with strong upside potential.",
     "opened_at": "2026-05-28T14:48:19+00:00",
     "closed_at": null,
     "signals": [
@@ -238,6 +259,13 @@
         "timestamp": "2026-05-30T12:35:50+00:00",
         "confidence": "medium",
         "url": "https://x.com/CelalKucuker/status/2060701717717483936"
+      },
+      {
+        "tweet_id": "2062240911535243662",
+        "signal_type": "buy",
+        "timestamp": "2026-06-03T18:32:02+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/CelalKucuker/status/2062240911535243662"
       }
     ]
   },
@@ -300,7 +328,7 @@
     "status": "open",
     "entry_price": null,
     "stop_loss": null,
-    "target": 12,
+    "target": 5.0,
     "size_pct": null,
     "trade_date": null,
     "holding_thesis": "Chart breakout above $1.74 resistance with Fibonacci extension target to $12 suggests strong upside momentum.",
@@ -320,6 +348,13 @@
         "timestamp": "2026-06-02T12:33:45+00:00",
         "confidence": "medium",
         "url": "https://x.com/CelalKucuker/status/2061788357928083904"
+      },
+      {
+        "tweet_id": "2062271062486753493",
+        "signal_type": "buy",
+        "timestamp": "2026-06-03T20:31:51+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/CelalKucuker/status/2062271062486753493"
       }
     ]
   },
@@ -1118,6 +1153,13 @@
         "timestamp": "2026-06-01T17:08:42+00:00",
         "confidence": "medium",
         "url": "https://x.com/PelosiTracker/status/2061495163642323302"
+      },
+      {
+        "tweet_id": "2062187215917097137",
+        "signal_type": "sell",
+        "timestamp": "2026-06-03T14:58:40+00:00",
+        "confidence": "high",
+        "url": "https://x.com/PelosiTracker/status/2062187215917097137"
       }
     ]
   },
@@ -2112,7 +2154,7 @@
     "target": null,
     "size_pct": 70.0,
     "trade_date": "2025-04-05",
-    "holding_thesis": "Incredibly undervalued with significant upside potential compared to peers like NBIS.",
+    "holding_thesis": "Secured power generation capacity at 5.8 GW demonstrates operational progress and asset base expansion.",
     "opened_at": "2026-05-28T13:30:32+00:00",
     "closed_at": null,
     "signals": [
@@ -2185,6 +2227,27 @@
         "timestamp": "2026-06-02T09:15:18+00:00",
         "confidence": "medium",
         "url": "https://x.com/moninvestor/status/2061738415494664488"
+      },
+      {
+        "tweet_id": "2062083753317401079",
+        "signal_type": "position",
+        "timestamp": "2026-06-03T08:07:33+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/moninvestor/status/2062083753317401079"
+      },
+      {
+        "tweet_id": "2062133383757521119",
+        "signal_type": "position",
+        "timestamp": "2026-06-03T11:24:45+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/moninvestor/status/2062133383757521119"
+      },
+      {
+        "tweet_id": "2062136483297829089",
+        "signal_type": "position",
+        "timestamp": "2026-06-03T11:37:04+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/moninvestor/status/2062136483297829089"
       }
     ]
   },
@@ -2328,7 +2391,7 @@
     "target": null,
     "size_pct": null,
     "trade_date": null,
-    "holding_thesis": "Still early in growth potential.",
+    "holding_thesis": "Currently top conviction stock holding.",
     "opened_at": "2026-06-01T16:57:25+00:00",
     "closed_at": null,
     "signals": [
@@ -2345,6 +2408,13 @@
         "timestamp": "2026-06-01T18:13:12+00:00",
         "confidence": "medium",
         "url": "https://x.com/moninvestor/status/2061511395569483891"
+      },
+      {
+        "tweet_id": "2061905372198191256",
+        "signal_type": "position",
+        "timestamp": "2026-06-02T20:18:43+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/moninvestor/status/2061905372198191256"
       }
     ]
   },
@@ -2466,6 +2536,13 @@
         "timestamp": "2026-06-02T14:13:04+00:00",
         "confidence": "medium",
         "url": "https://x.com/moninvestor/status/2061813350577619316"
+      },
+      {
+        "tweet_id": "2061901877428576687",
+        "signal_type": "buy",
+        "timestamp": "2026-06-02T20:04:50+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/moninvestor/status/2061901877428576687"
       }
     ]
   },
@@ -2491,6 +2568,31 @@
         "timestamp": "2026-06-02T09:58:37+00:00",
         "confidence": "medium",
         "url": "https://x.com/moninvestor/status/2061749315903594580"
+      }
+    ]
+  },
+  {
+    "account": "moninvestor",
+    "source_type": "influencer",
+    "portfolio": null,
+    "ticker": "SMR",
+    "asset_type": "stock",
+    "status": "open",
+    "entry_price": null,
+    "stop_loss": null,
+    "target": null,
+    "size_pct": null,
+    "trade_date": null,
+    "holding_thesis": "Nuclear energy sector conviction pick.",
+    "opened_at": "2026-06-03T10:23:57+00:00",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2062118081502056580",
+        "signal_type": "position",
+        "timestamp": "2026-06-03T10:23:57+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/moninvestor/status/2062118081502056580"
       }
     ]
   },
@@ -2538,7 +2640,7 @@
     "target": null,
     "size_pct": null,
     "trade_date": "2026-04-07",
-    "holding_thesis": null,
+    "holding_thesis": "Broadcom consistently beats its own guidance and is positioned to grow AI chip revenue significantly toward $100B by 2027.",
     "opened_at": "2026-05-31T14:12:51.000Z",
     "closed_at": null,
     "signals": [
@@ -2548,6 +2650,52 @@
         "timestamp": "2026-05-31T14:12:51.000Z",
         "confidence": "high",
         "url": "https://x.com/theaiportfolios/status/2061088521608388833"
+      },
+      {
+        "tweet_id": "2062220942072586571",
+        "signal_type": "position",
+        "timestamp": "2026-06-03T17:12:41+00:00",
+        "confidence": "high",
+        "url": "https://x.com/theaiportfolios/status/2062220942072586571"
+      },
+      {
+        "tweet_id": "2062223461842583958",
+        "signal_type": "position",
+        "timestamp": "2026-06-03T17:22:42+00:00",
+        "confidence": "high",
+        "url": "https://x.com/theaiportfolios/status/2062223461842583958"
+      },
+      {
+        "tweet_id": "2062228540775641208",
+        "signal_type": "position",
+        "timestamp": "2026-06-03T17:42:53+00:00",
+        "confidence": "high",
+        "url": "https://x.com/theaiportfolios/status/2062228540775641208"
+      }
+    ]
+  },
+  {
+    "account": "theaiportfolios",
+    "source_type": "portfolio",
+    "portfolio": "claude",
+    "ticker": "INTR",
+    "asset_type": "stock",
+    "status": "open",
+    "entry_price": null,
+    "stop_loss": null,
+    "target": null,
+    "size_pct": null,
+    "trade_date": null,
+    "holding_thesis": "Profitable Brazilian digital bank earning record ROE at ~6x forward earnings vs. competitor at 14x; upside hinges on August credit numbers.",
+    "opened_at": "2026-06-03T17:16:57+00:00",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2062222015432642796",
+        "signal_type": "position",
+        "timestamp": "2026-06-03T17:16:57+00:00",
+        "confidence": "high",
+        "url": "https://x.com/theaiportfolios/status/2062222015432642796"
       }
     ]
   },
@@ -2588,7 +2736,7 @@
     "target": null,
     "size_pct": null,
     "trade_date": "2026-04-01",
-    "holding_thesis": null,
+    "holding_thesis": "Net-cash company growing around 22% with AI product potential; valuation has absorbed disruption fears at 24x forward earnings versus prior 40-60x multiple.",
     "opened_at": "2026-05-28T21:59:10.000Z",
     "closed_at": null,
     "signals": [
@@ -2654,6 +2802,38 @@
         "timestamp": "2026-06-01T17:31:06+00:00",
         "confidence": "medium",
         "url": "https://x.com/theaiportfolios/status/2061500801592488147"
+      },
+      {
+        "tweet_id": "2062229530832720365",
+        "signal_type": "position",
+        "timestamp": "2026-06-03T17:46:49+00:00",
+        "confidence": "high",
+        "url": "https://x.com/theaiportfolios/status/2062229530832720365"
+      }
+    ]
+  },
+  {
+    "account": "theaiportfolios",
+    "source_type": "portfolio",
+    "portfolio": "claude",
+    "ticker": "NVDA",
+    "asset_type": "stock",
+    "status": "open",
+    "entry_price": 83,
+    "stop_loss": null,
+    "target": null,
+    "size_pct": null,
+    "trade_date": "2026-04-01",
+    "holding_thesis": "Agent platform delivery potential; positioned after spring panic at attractive entry.",
+    "opened_at": "2026-06-01T17:20:30+00:00",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2061498134161989924",
+        "signal_type": "position",
+        "timestamp": "2026-06-01T17:20:30+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/theaiportfolios/status/2061498134161989924"
       }
     ]
   },
@@ -2669,7 +2849,7 @@
     "target": null,
     "size_pct": 11,
     "trade_date": "2026-05-12",
-    "holding_thesis": null,
+    "holding_thesis": "Strong fundamental analysis supports the investment thesis.",
     "opened_at": "2026-05-31T04:13:09.000Z",
     "closed_at": null,
     "signals": [
@@ -2693,6 +2873,13 @@
         "timestamp": "2026-06-01T17:59:44+00:00",
         "confidence": "high",
         "url": "https://x.com/theaiportfolios/status/2061508005003137368"
+      },
+      {
+        "tweet_id": "2061513559595773976",
+        "signal_type": "position",
+        "timestamp": "2026-06-01T18:21:48+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/theaiportfolios/status/2061513559595773976"
       },
       {
         "tweet_id": "2061514853031010517",

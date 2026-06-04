@@ -1878,8 +1878,23 @@ app.layout = html.Div(
                                    value=pf, style=_TAB_STYLE,
                                    selected_style=_TAB_SELECTED)
                            for pf in _portfolios]),
-        dcc.Graph(id="holdings-pie", config={"displayModeBar": False}),
-        html.Div(id="position-detail", style={"marginTop": "6px"}),
+        # Pie (40%, fixed) + position detail table (flexible) side by side in one
+        # row. No flex-wrap, so they never stack vertically; minWidth:0 lets the
+        # table shrink/overflow within its column instead of forcing a wrap.
+        html.Div(style={"display": "flex", "flexDirection": "row",
+                        "alignItems": "flex-start", "gap": "20px",
+                        "marginTop": "6px"},
+                 children=[
+                     html.Div(style={"flex": "0 0 40%", "maxWidth": "40%"},
+                              children=[
+                                  dcc.Graph(id="holdings-pie",
+                                            config={"displayModeBar": False},
+                                            style={"width": "100%"}),
+                              ]),
+                     html.Div(id="position-detail",
+                              style={"flex": "1", "minWidth": "0",
+                                     "overflowX": "auto"}),
+                 ]),
 
         html.Div("Recent Closed Trades", style=_SECTION_H),
         html.Div(id="closed-trades", style={"marginTop": "4px"}),
