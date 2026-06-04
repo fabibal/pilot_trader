@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
-"""Idempotent order layer for the IBKR Grok mirror (LOGIC ONLY — no IBKR yet).
+"""Idempotent order layer for the IBKR AI-portfolio mirror (LOGIC ONLY — no IBKR).
+
+Portfolio-agnostic: it sizes/risk-checks whatever signal it's handed. Which
+portfolios actually feed it is decided upstream by auto_trader.MIRROR_PORTFOLIOS
+({grok, claude, deepseek}); orders are keyed on ticker, not portfolio.
 
 Implements the rules in IBKR_SPEC.md against a JSON ledger
 (`data/orders.json`). It decides WHETHER and HOW MUCH to trade for a signal and
 records the intended order with status="pending"; it does NOT talk to IBKR. The
-connection layer (later) reads pending orders, converts USD notional to shares,
-submits to IB Gateway, and flips status to filled/rejected.
+connection layer reads pending orders, converts USD notional to shares, submits
+to IB Gateway, and flips status to filled/rejected.
 
 Quantities are **USD notional** (see IBKR_SPEC.md §2), not shares.
 
@@ -28,7 +32,6 @@ HOME = "/home/fbazsa/pilot_trader"
 ORDERS_FILE = os.path.join(HOME, "data", "orders.json")
 
 # --- spec constants (mirror IBKR_SPEC.md) ----------------------------------
-MIRROR_PORTFOLIO = "grok"
 MAX_TOTAL_EXPOSURE = 10_000.0          # §5 total book cap (USD)
 MAX_POSITION_PCT = 0.10                # §2 max 10% per position
 MAX_POSITION_USD = MAX_TOTAL_EXPOSURE * MAX_POSITION_PCT   # $1,000
