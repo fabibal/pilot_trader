@@ -40,6 +40,31 @@ INFLUENCER_ACCOUNTS = {"IncomeSharks", "moninvestor"}
 # position state (see confidence gate).
 GATED_CONFIDENCE = {"low", "none"}
 
+# Non-tradeable pseudo-tickers — market indices / commodities / forex / crypto
+# dominance the LLM sometimes lifts from macro commentary (e.g. CelalKucuker).
+# They are NOT positions; reject them so they never enter positions.json.
+NON_TRADEABLE_TICKERS = {
+    "BTCDOMINANCE", "BTC.D", "ETH.D", "USDT.D", "TOTAL", "TOTAL2", "TOTAL3",
+    "DXY", "XAUUSD", "XAGUSD", "SPX", "SPX500", "VIX", "DJI", "DJIA",
+    "US10Y", "US30", "NAS100", "GOLD", "SILVER",
+}
+
+
+def is_junk_ticker(ticker):
+    """True for index/commodity/forex/dominance pseudo-tickers that aren't real
+    positions (BTCDOMINANCE, XAUUSD, DXY, BTC.D, ...). Explicit blocklist plus a
+    couple of unambiguous patterns; conservative to avoid rejecting real equities."""
+    t = (ticker or "").upper().strip()
+    if not t:
+        return True
+    if t in NON_TRADEABLE_TICKERS:
+        return True
+    if t.endswith(".D"):                # crypto dominance (BTC.D, ETH.D, ...)
+        return True
+    if t.startswith(("XAU", "XAG")):    # gold / silver spot pairs (XAUUSD, ...)
+        return True
+    return False
+
 
 def pf_of(account, portfolio):
     """Resolve the effective portfolio for keying. Influencers keep null."""
@@ -88,6 +113,9 @@ def reconcile(trades_file=TRADES_FILE, positions_file=POSITIONS_FILE):
         if (e.get("confidence") or "").lower() in GATED_CONFIDENCE:
             continue
         ticker = tickers[0]
+        # Drop index/commodity/forex pseudo-tickers (not real positions).
+        if is_junk_ticker(ticker):
+            continue
         account = e.get("account")
         portfolio = pf_of(account, e.get("portfolio"))
         key = (account, portfolio, ticker)

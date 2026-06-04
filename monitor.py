@@ -1217,9 +1217,12 @@ def _log_failure(exc):
 if __name__ == "__main__":
     try:
         main()
-    except SystemExit:
+    except (SystemExit, KeyboardInterrupt):
+        # Clean operator exits, NOT failures: argparse --help / usage errors raise
+        # SystemExit, and Ctrl-C raises KeyboardInterrupt. Neither should write a
+        # FAILED block or page Telegram — just propagate the exit code.
         raise
-    except BaseException as exc:   # log anything, then surface a non-zero exit
+    except BaseException as exc:   # log anything else, then surface a non-zero exit
         _log_failure(exc)
         # Env may not have loaded if main() crashed early; load creds here too.
         try:

@@ -70,31 +70,6 @@
     "account": "CelalKucuker",
     "source_type": "influencer",
     "portfolio": null,
-    "ticker": "BTCDOMINANCE",
-    "asset_type": "crypto",
-    "status": "closed",
-    "entry_price": null,
-    "stop_loss": null,
-    "target": null,
-    "size_pct": null,
-    "trade_date": null,
-    "holding_thesis": null,
-    "opened_at": null,
-    "closed_at": "2026-06-02T16:19:11+00:00",
-    "signals": [
-      {
-        "tweet_id": "2061845091434533059",
-        "signal_type": "sell",
-        "timestamp": "2026-06-02T16:19:11+00:00",
-        "confidence": "medium",
-        "url": "https://x.com/CelalKucuker/status/2061845091434533059"
-      }
-    ]
-  },
-  {
-    "account": "CelalKucuker",
-    "source_type": "influencer",
-    "portfolio": null,
     "ticker": "EIGEN",
     "asset_type": "crypto",
     "status": "open",
@@ -266,31 +241,6 @@
         "timestamp": "2026-06-03T18:32:02+00:00",
         "confidence": "medium",
         "url": "https://x.com/CelalKucuker/status/2062240911535243662"
-      }
-    ]
-  },
-  {
-    "account": "CelalKucuker",
-    "source_type": "influencer",
-    "portfolio": null,
-    "ticker": "XAUUSD",
-    "asset_type": "unknown",
-    "status": "closed",
-    "entry_price": null,
-    "stop_loss": null,
-    "target": null,
-    "size_pct": null,
-    "trade_date": null,
-    "holding_thesis": null,
-    "opened_at": null,
-    "closed_at": "2026-05-31T20:46:07+00:00",
-    "signals": [
-      {
-        "tweet_id": "2061187490329891159",
-        "signal_type": "sell",
-        "timestamp": "2026-05-31T20:46:07+00:00",
-        "confidence": "medium",
-        "url": "https://x.com/CelalKucuker/status/2061187490329891159"
       }
     ]
   },
@@ -1808,38 +1758,6 @@
         "timestamp": "2026-05-19T20:52:18.000Z",
         "confidence": "high",
         "url": "https://x.com/grkportfolio/status/2056840391840694402"
-      }
-    ]
-  },
-  {
-    "account": "grkportfolio",
-    "source_type": "portfolio",
-    "portfolio": "grok",
-    "ticker": "HBM",
-    "asset_type": "stock",
-    "status": "open",
-    "entry_price": null,
-    "stop_loss": null,
-    "target": null,
-    "size_pct": null,
-    "trade_date": null,
-    "holding_thesis": null,
-    "opened_at": "2026-05-25T21:40:26.000Z",
-    "closed_at": null,
-    "signals": [
-      {
-        "tweet_id": "2059026832205459528",
-        "signal_type": "position",
-        "timestamp": "2026-05-25T21:40:26.000Z",
-        "confidence": "medium",
-        "url": "https://x.com/grkportfolio/status/2059026832205459528"
-      },
-      {
-        "tweet_id": "2059028124013318638",
-        "signal_type": "position",
-        "timestamp": "2026-05-25T21:45:34.000Z",
-        "confidence": "medium",
-        "url": "https://x.com/grkportfolio/status/2059028124013318638"
       }
     ]
   },
