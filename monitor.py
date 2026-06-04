@@ -65,10 +65,20 @@ ACCOUNT_STYLE = {"moninvestor": "conviction_long",
                  "PelosiTracker": "conviction_long"}
 # Slow accounts: fetch only if the last fetch was more than N hours ago (instead
 # of an exact-hour cron match, which fails entirely if that one cron run fails).
-# Absent => polled on every run. moninvestor (10h) and PelosiTracker (11h) are
-# long-term, so ~twice a day. 8 < N < 12 lands the fetch on the 00:00 and 12:00
-# UTC cron slots (and skips 04/08/16/20); 11h biases toward firing at 12:00.
-POLL_MIN_INTERVAL_H = {"moninvestor": 10, "PelosiTracker": 11}
+# Absent => polled on every run. moninvestor/PelosiTracker (long-term holders)
+# and the 3 AI portfolios (grok/claude/deepseek — they rebalance ~monthly, so 4h
+# polling is wasteful) are ~twice a day.
+# ⚠️ Use 11h, NOT 12h: a real fetch records last_fetch a few seconds AFTER the
+# cron slot (GetXAPI latency), so a 16:00->04:00 gap measures ~11h59m58s. With a
+# 12h threshold that is `< 12` => the 04:00 run SKIPS and the phase drifts. 11h
+# leaves a full ~1h cushion over the real ~12h gap, so the 2x/day cadence is
+# stable. The phase (WHICH two slots) is set by each account's seed last_fetch in
+# .monitor_state.json; the AI portfolios are seeded to the 04:00/16:00 UTC slots
+# so fresh data is guaranteed by the 04:00 run (finishes ~05:00 UTC = 07:00
+# Budapest, before the 08:00 Budapest target).
+POLL_MIN_INTERVAL_H = {"moninvestor": 10, "PelosiTracker": 11,
+                       "grkportfolio": 11, "theaiportfolios": 11,
+                       "aifinancelabs": 11}
 # Accounts fetched from the POSTS-ONLY endpoint (no @-replies in the thread).
 POSTS_ONLY_ACCOUNTS = {"traderstewie", "PelosiTracker"}
 HOME = "/home/fbazsa/pilot_trader"
@@ -122,6 +132,12 @@ VISION_MODEL = "claude-sonnet-4-6"
 SONNET_INPUT_PER_1M = 3.00           # $ / 1M input tokens
 SONNET_OUTPUT_PER_1M = 15.00         # $ / 1M output tokens
 MAX_VISION_IMAGES = 2                # cap images/tweet to bound vision cost
+
+# Batch API (--batch live runs + --backfill-batch). 50% cheaper than real-time,
+# but asynchronous: a live run SUBMITS one job and blocks-polls it to completion.
+BATCH_POLL_INTERVAL_S = 20           # seconds between batch status polls
+BATCH_MAX_WAIT_S = 55 * 60           # live runs defer to next cron if it exceeds
+                                     # this (cron spacing is 4h, user accepts <=60m)
 
 # --- LLM extraction --------------------------------------------------------
 # No pre-filter: every tweet is sent to Claude, which decides what is a signal.
@@ -340,6 +356,9 @@ class Interpreter:
         self.vision_calls = 0
         self.vision_input_tokens = 0
         self.vision_output_tokens = 0
+        # Batch API (Haiku) usage — billed at 50%, tracked apart from real-time.
+        self.batch_input_tokens = 0
+        self.batch_output_tokens = 0
 
     def extract(self, text, account, tweet_date):
         """Return the parsed signal dict, or None on API/parse error."""
@@ -402,6 +421,10 @@ class Interpreter:
     def vision_cost(self):
         return (self.vision_input_tokens / 1_000_000 * SONNET_INPUT_PER_1M
                 + self.vision_output_tokens / 1_000_000 * SONNET_OUTPUT_PER_1M)
+
+    def batch_cost(self):
+        return (self.batch_input_tokens / 1_000_000 * HAIKU_INPUT_PER_1M
+                + self.batch_output_tokens / 1_000_000 * HAIKU_OUTPUT_PER_1M) * 0.5
 
 
 SELL_VERBS = ("sold", "dumped", "exited", "trimmed", "closed", "out of",
@@ -713,6 +736,99 @@ def tweets_for_account(account, state, backfill, source):
     return tweets, len(tweets), calls
 
 
+def _build_batch_requests(candidates):
+    """candidates: list of (custom_id, account, tw). Returns one Batch API Request
+    per tweet for the Haiku text pass — identical params to real-time extract()."""
+    return [
+        Request(custom_id=cid, params=MessageCreateParamsNonStreaming(
+            model=MODEL, max_tokens=300, system=_system_blocks(),
+            output_config=_output_config(),
+            messages=[_user_message(account, tw.get("text", ""),
+                                    (tw.get("created_at") or "")[:10])]))
+        for cid, account, tw in candidates
+    ]
+
+
+def _poll_batch(interp, batch_id, max_wait_s=None):
+    """Block-poll a submitted batch until processing_status == 'ended'. Returns
+    True when ended, or False if max_wait_s elapsed first (None = wait forever,
+    used by the latency-insensitive --backfill-batch)."""
+    waited = 0
+    while True:
+        b = interp.client.messages.batches.retrieve(batch_id)
+        if b.processing_status == "ended":
+            return True
+        if max_wait_s is not None and waited >= max_wait_s:
+            return False
+        rc = b.request_counts
+        print(f"  status={b.processing_status} processing={rc.processing} "
+              f"succeeded={rc.succeeded} errored={rc.errored}")
+        time.sleep(BATCH_POLL_INTERVAL_S)
+        waited += BATCH_POLL_INTERVAL_S
+
+
+def _collect_batch(interp, batch_id, lookup):
+    """Stream a completed batch's results. Returns (parsed, errored) where parsed
+    is a list of (account, tw, parsed_dict). Accumulates batch token usage on
+    interp (billed at 50%). Records are TEXT-only; callers add the vision pass."""
+    parsed, errored = [], 0
+    for result in interp.client.messages.batches.results(batch_id):
+        if result.result.type != "succeeded":
+            errored += 1
+            continue
+        msg = result.result.message
+        u = msg.usage
+        interp.batch_input_tokens += u.input_tokens + \
+            (u.cache_read_input_tokens or 0) + (u.cache_creation_input_tokens or 0)
+        interp.batch_output_tokens += u.output_tokens
+        account, tw = lookup[result.custom_id]
+        parsed.append((account, tw, _parse_json_text(msg.content)))
+    return parsed, errored
+
+
+def _vision_enrich(interp, account, tw, parsed):
+    """Run the real-time influencer chart pass (Sonnet vision) on a batch-parsed
+    result, mirroring build_signal's back half so batch mode keeps the same
+    chart enrichment as the live path. Mutates `parsed` in place."""
+    actionable = parsed and parsed["action"] != "none" and parsed.get("ticker")
+    if (SOURCE_TYPE.get(account) == "influencer" and tw.get("media")
+            and (actionable or _mentions_asset(parsed, tw.get("text", "")))):
+        chart = interp.extract_chart(tw["media"], tw.get("text", ""),
+                                     account, (tw.get("created_at") or "")[:10])
+        merge_chart(parsed, chart)
+        if not actionable:
+            promote_with_chart(parsed, chart)
+
+
+def collect_live_batch(interp, candidates):
+    """Submit live-run candidates as ONE Batch API job, block-poll it (bounded by
+    BATCH_MAX_WAIT_S), then build signal records. The influencer chart-vision pass
+    still runs real-time, so batch mode produces the SAME records as the live path
+    at half the Haiku cost. Returns the new records, or None if the batch did not
+    finish in time (caller must defer: don't persist state, retry next run)."""
+    lookup = {cid: (account, tw) for cid, account, tw in candidates}
+    batch = interp.client.messages.batches.create(
+        requests=_build_batch_requests(candidates))
+    print(f"Submitted batch {batch.id}: {len(candidates)} requests. "
+          f"Polling (max {BATCH_MAX_WAIT_S // 60} min)...")
+    if not _poll_batch(interp, batch.id, BATCH_MAX_WAIT_S):
+        print(f"Batch {batch.id} did not finish within {BATCH_MAX_WAIT_S // 60} "
+              f"min - deferring signals to the next run.", file=sys.stderr)
+        notify_telegram(f"batch {batch.id} exceeded "
+                        f"{BATCH_MAX_WAIT_S // 60}min; deferring to next run")
+        return None
+    parsed, errored = _collect_batch(interp, batch.id, lookup)
+    records = []
+    for account, tw, p in parsed:
+        _vision_enrich(interp, account, tw, p)
+        rec = record_from_parsed(account, tw, p)
+        if rec:
+            records.append(rec)
+    if errored:
+        print(f"  batch: {errored} requests errored (skipped).", file=sys.stderr)
+    return records
+
+
 def backfill_batch(interp):
     """Interpret all local snapshot tweets via the Anthropic Batch API (50%
     cheaper). Submits one batch, polls until complete, then writes results.
@@ -736,40 +852,17 @@ def backfill_batch(interp):
         print("No candidate tweets to batch.")
         return
     lookup = {cid: (account, tw) for cid, account, tw in candidates}
-    requests = [
-        Request(custom_id=cid, params=MessageCreateParamsNonStreaming(
-            model=MODEL, max_tokens=300, system=_system_blocks(),
-            output_config=_output_config(),
-            messages=[_user_message(account, tw.get("text", ""),
-                                    (tw.get("created_at") or "")[:10])]))
-        for cid, account, tw in candidates
-    ]
-
-    batch = interp.client.messages.batches.create(requests=requests)
-    print(f"Submitted batch {batch.id}: {len(requests)} requests "
+    batch = interp.client.messages.batches.create(
+        requests=_build_batch_requests(candidates))
+    print(f"Submitted batch {batch.id}: {len(candidates)} requests "
           f"({skipped} replies skipped). Polling...")
-    while True:
-        b = interp.client.messages.batches.retrieve(batch.id)
-        if b.processing_status == "ended":
-            break
-        rc = b.request_counts
-        print(f"  status={b.processing_status} "
-              f"processing={rc.processing} succeeded={rc.succeeded} "
-              f"errored={rc.errored}")
-        time.sleep(20)
+    _poll_batch(interp, batch.id)                 # backfill: wait as long as needed
 
-    signals, in_tok, out_tok, errored = [], 0, 0, 0
-    for result in interp.client.messages.batches.results(batch.id):
-        if result.result.type != "succeeded":
-            errored += 1
-            continue
-        msg = result.result.message
-        u = msg.usage
-        in_tok += u.input_tokens + (u.cache_read_input_tokens or 0) + \
-            (u.cache_creation_input_tokens or 0)
-        out_tok += u.output_tokens
-        account, tw = lookup[result.custom_id]
-        rec = record_from_parsed(account, tw, _parse_json_text(msg.content))
+    # Backfill stays TEXT-only (no vision pass), matching the prior behaviour.
+    parsed, errored = _collect_batch(interp, batch.id, lookup)
+    signals = []
+    for account, tw, p in parsed:
+        rec = record_from_parsed(account, tw, p)
         if rec:
             signals.append(rec)
 
@@ -777,18 +870,18 @@ def backfill_batch(interp):
     write_json_atomic(TRADES_FILE, signals)
     reconcile(TRADES_FILE, POSITIONS_FILE)
 
-    batch_cost = (in_tok / 1e6 * HAIKU_INPUT_PER_1M
-                  + out_tok / 1e6 * HAIKU_OUTPUT_PER_1M) * 0.5   # 50% off
+    batch_cost = interp.batch_cost()
     realtime_cost = batch_cost * 2
     by = {}
     for s in signals:
         key = (s["account"], s["signal_type"])
         by[key] = by.get(key, 0) + 1
     print(f"\nBatch complete: {len(signals)} signals "
-          f"({len(requests)} requests, {errored} errored).")
+          f"({len(candidates)} requests, {errored} errored).")
     for (acct, st), c in sorted(by.items()):
         print(f"  {acct:16} {st:9} {c}")
-    print(f"\nTokens: input {in_tok}, output {out_tok}")
+    print(f"\nTokens: input {interp.batch_input_tokens}, "
+          f"output {interp.batch_output_tokens}")
     print(f"Batch API cost: ${batch_cost:.4f} (50% off)")
     print(f"  vs real-time: ${realtime_cost:.4f}  -> saved ${realtime_cost - batch_cost:.4f}")
     print(f"Saved -> {TRADES_FILE} + {POSITIONS_FILE}")
@@ -801,6 +894,13 @@ def main():
     ap.add_argument("--backfill-batch", action="store_true",
                     help="like --backfill but via the Anthropic Batch API (50%% "
                          "cheaper); submits one job and polls to completion")
+    ap.add_argument("--batch", action="store_true",
+                    help=f"live incremental run via the Anthropic Batch API (50%% "
+                         f"cheaper Haiku text pass). Fetches fresh tweets, submits "
+                         f"ONE batch and block-polls it to completion (up to "
+                         f"{BATCH_MAX_WAIT_S // 60} min), then writes/reconciles/"
+                         f"trades as usual. Signals are delayed by the batch "
+                         f"turnaround.")
     ap.add_argument("--source", choices=["official", "getxapi"], default="getxapi",
                     help="tweet backend: getxapi (default, tweets_and_replies) "
                          "or official X API")
@@ -869,6 +969,7 @@ def main():
 
     all_new, total_reads, total_skipped, total_sell_cand, total_calls = \
         [], 0, 0, 0, 0
+    candidates = []          # (custom_id, account, tw) accumulator for --batch
     now = datetime.now(timezone.utc)
     for account in accounts:
         # Slow accounts (POLL_MIN_INTERVAL_H): skip on a live run if fetched too
@@ -879,6 +980,15 @@ def main():
                 print(f"[{account}] skipped (last fetch {age_h:.1f}h ago "
                       f"< {POLL_MIN_INTERVAL_H[account]}h min)")
                 continue
+        # High-water mark of tweet ids already PROCESSED in a prior run. GetXAPI
+        # returns the full latest page every run (no server-side since_id), so
+        # without this every non-signal tweet on the page is re-sent to the LLM
+        # each run (only SIGNAL-bearing tweets land in trades.json -> seen_ids).
+        # newest_id is advanced inside tweets_for_account below, so capture it
+        # first. Live mode only: backfill/dry-run must scan the whole snapshot.
+        prior_newest = None
+        if not (args.backfill or args.dry_run):
+            prior_newest = (run_state.get(account) or {}).get("newest_id")
         try:
             tweets, reads, calls = tweets_for_account(
                 account, run_state, args.backfill, args.source)
@@ -892,9 +1002,15 @@ def main():
             run_state.setdefault(account, {})["last_fetch"] = now.isoformat()
         total_reads += reads
         total_calls += calls
-        new, skipped, sell_cand, foreign = 0, 0, 0, 0
+        new, skipped, sell_cand, foreign, seen = 0, 0, 0, 0, 0
         for tw in tweets:
             if tw["id"] in seen_ids:
+                continue
+            # Already processed in a prior run (id at/below the high-water mark):
+            # skip BEFORE the LLM so non-signal tweets aren't re-interpreted.
+            if (prior_newest and str(tw["id"]).isdigit()
+                    and int(tw["id"]) <= int(prior_newest)):
+                seen += 1
                 continue
             # Drop thread replies authored by OTHER users (tweets_and_replies
             # returns the whole conversation). Without this a follower's reply
@@ -918,16 +1034,38 @@ def main():
                 else:
                     skipped += 1
                     continue
-            sig = build_signal(account, tw, interp)
-            if sig:
-                all_new.append(sig)
+            if args.batch:
+                # Defer the LLM call: queue the tweet for one bulk Batch API job
+                # submitted after every account is fetched. `new` counts queued
+                # tweets here (actual signals are resolved post-batch).
+                candidates.append((f"{account}__{tw['id']}", account, tw))
                 seen_ids.add(tw["id"])
                 new += 1
+            else:
+                sig = build_signal(account, tw, interp)
+                if sig:
+                    all_new.append(sig)
+                    seen_ids.add(tw["id"])
+                    new += 1
         total_skipped += skipped
         total_sell_cand += sell_cand
-        print(f"[{account}] scanned {len(tweets)}, foreign-author-skipped "
-              f"{foreign}, reply-skipped {skipped}, "
-              f"reply-sell-candidate {sell_cand}, new signals {new}")
+        label = "queued for batch" if args.batch else "new signals"
+        print(f"[{account}] scanned {len(tweets)}, already-seen-skipped {seen}, "
+              f"foreign-author-skipped {foreign}, reply-skipped {skipped}, "
+              f"reply-sell-candidate {sell_cand}, {label} {new}")
+
+    # --batch: now run the single bulk job. A timeout leaves state unwritten so
+    # the next run refetches+resubmits these tweets (no signals are lost).
+    if args.batch:
+        if candidates:
+            result = collect_live_batch(interp, candidates)
+            if result is None:
+                print("Batch did not complete; no writes this run.",
+                      file=sys.stderr)
+                return
+            all_new = result
+        else:
+            print("No candidate tweets to batch.")
 
     merged = existing + all_new
     merged.sort(key=lambda r: r["timestamp"], reverse=True)
@@ -959,10 +1097,15 @@ def main():
     print(f"LLM text calls (Haiku): {interp.calls}  "
           f"(input {interp.input_tokens} tok, output {interp.output_tokens} tok)"
           f"  ${interp.cost():.4f}")
+    if interp.batch_input_tokens or interp.batch_output_tokens:
+        print(f"LLM batch text (Haiku, 50% off): input "
+              f"{interp.batch_input_tokens} tok, output "
+              f"{interp.batch_output_tokens} tok  ${interp.batch_cost():.4f}")
     print(f"LLM vision calls (Sonnet): {interp.vision_calls}  "
           f"(input {interp.vision_input_tokens} tok, "
           f"output {interp.vision_output_tokens} tok)  ${interp.vision_cost():.4f}")
-    print(f"LLM cost this run: ${interp.cost() + interp.vision_cost():.4f}")
+    print(f"LLM cost this run: "
+          f"${interp.cost() + interp.batch_cost() + interp.vision_cost():.4f}")
     if not args.backfill:
         if args.source == "getxapi":
             print(f"GetXAPI [{args.source}]: {total_reads} tweets in "
@@ -972,7 +1115,8 @@ def main():
                   f"(${total_reads * TWITTER_COST_PER_TWEET:.4f})")
 
     # Append per-run cost telemetry (skip dry-run writes and zero-LLM runs).
-    if not args.dry_run and (interp.calls or interp.vision_calls):
+    if not args.dry_run and (interp.calls or interp.vision_calls
+                             or interp.batch_input_tokens):
         log_cost(interp)
 
     # Automatic execution: on a live run that produced new signals, hand off to
@@ -992,11 +1136,14 @@ def log_cost(interp):
     but never breaks the run."""
     rec = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
-        "haiku_input_tok": interp.input_tokens,
-        "haiku_output_tok": interp.output_tokens,
+        # Fold batch Haiku tokens into the haiku_* totals (dashboard sums these);
+        # total_usd already discounts the batch portion via interp.batch_cost().
+        "haiku_input_tok": interp.input_tokens + interp.batch_input_tokens,
+        "haiku_output_tok": interp.output_tokens + interp.batch_output_tokens,
         "sonnet_input_tok": interp.vision_input_tokens,
         "sonnet_output_tok": interp.vision_output_tokens,
-        "total_usd": round(interp.cost() + interp.vision_cost(), 6),
+        "total_usd": round(
+            interp.cost() + interp.batch_cost() + interp.vision_cost(), 6),
     }
     try:
         log = load_json(COST_LOG_FILE, [])

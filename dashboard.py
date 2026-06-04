@@ -1899,7 +1899,7 @@ app.layout = html.Div(
         html.Div("Recent Closed Trades", style=_SECTION_H),
         html.Div(id="closed-trades", style={"marginTop": "4px"}),
 
-        html.Div("All Signals", style=_SECTION_H),
+        html.Div("All Signals", id="signals-header", style=_SECTION_H),
         html.Div([
             html.Span("Legend: ", style={"color": C["dim"]}),
             html.Span("*", style={"color": C["text"], "fontWeight": "bold"}),
@@ -2193,9 +2193,11 @@ def switch_influencer_subtab(account):
     Output("summary", "children"),
     Output("portfolio-summary", "children"),
     Output("closed-trades", "children"),
+    Output("signals-header", "children"),
     Input("interval", "n_intervals"),
+    Input("portfolio-tabs", "value"),
 )
-def refresh(_n):
+def refresh(_n, portfolio):
     df = load_trades()
     positions = ai_positions(load_positions())   # AI views exclude influencers
     # Batch live-price fetch for every symbol in play (one yf.download).
@@ -2203,11 +2205,18 @@ def refresh(_n):
                  for p in positions} | {"SPY"})
     cards = portfolio_cards(positions)   # uses the now-warm price cache
     closed = closed_trades_table(positions)
+    signals_header = f"{PORTFOLIO_LABELS.get(portfolio, portfolio.title())} — Signals"
 
     if not df.empty:
         df = df[~df["account"].isin(NON_AI_ACCOUNTS)]
+        # Filter to the portfolio selected in the Holdings sub-tab (effective
+        # portfolio = explicit value, else the account default — same as pf_of).
+        eff_pf = df["portfolio"].where(
+            df["portfolio"].notna(),
+            df["account"].map(ACCOUNT_DEFAULT_PF))
+        df = df[eff_pf == portfolio]
     if df.empty:
-        return ([], "No signals yet.", cards, closed)
+        return ([], "No signals yet.", cards, closed, signals_header)
 
     df = df.sort_values("timestamp", ascending=False)
     # Mark low/none-confidence rows (they are excluded from positions.json).
@@ -2237,7 +2246,7 @@ def refresh(_n):
                f"{len(positions)} reconciled positions · "
                f"last tweet {_iso_to_local(df['timestamp'].iloc[0], '%Y-%m-%d %H:%M %Z')}")
     cols = [c["id"] for c in TABLE_COLUMNS] + ["return_val"]
-    return (df[cols].to_dict("records"), summary, cards, closed)
+    return (df[cols].to_dict("records"), summary, cards, closed, signals_header)
 
 
 @app.callback(

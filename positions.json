@@ -2152,9 +2152,9 @@
     "entry_price": null,
     "stop_loss": null,
     "target": null,
-    "size_pct": 70.0,
+    "size_pct": 70,
     "trade_date": "2025-04-05",
-    "holding_thesis": "Secured power generation capacity at 5.8 GW demonstrates operational progress and asset base expansion.",
+    "holding_thesis": "Expansion of sites in Australia expected to drive growth.",
     "opened_at": "2026-05-28T13:30:32+00:00",
     "closed_at": null,
     "signals": [
@@ -2248,6 +2248,20 @@
         "timestamp": "2026-06-03T11:37:04+00:00",
         "confidence": "medium",
         "url": "https://x.com/moninvestor/status/2062136483297829089"
+      },
+      {
+        "tweet_id": "2062239785842798910",
+        "signal_type": "position",
+        "timestamp": "2026-06-03T18:27:34+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/moninvestor/status/2062239785842798910"
+      },
+      {
+        "tweet_id": "2062239877123494248",
+        "signal_type": "position",
+        "timestamp": "2026-06-03T18:27:55+00:00",
+        "confidence": "high",
+        "url": "https://x.com/moninvestor/status/2062239877123494248"
       }
     ]
   },
@@ -2391,7 +2405,7 @@
     "target": null,
     "size_pct": null,
     "trade_date": null,
-    "holding_thesis": "Currently top conviction stock holding.",
+    "holding_thesis": "Hyperscalers and neoclouds are tapping into the company's property to generate their own electricity, providing a competitive advantage in power supply.",
     "opened_at": "2026-06-01T16:57:25+00:00",
     "closed_at": null,
     "signals": [
@@ -2415,6 +2429,13 @@
         "timestamp": "2026-06-02T20:18:43+00:00",
         "confidence": "medium",
         "url": "https://x.com/moninvestor/status/2061905372198191256"
+      },
+      {
+        "tweet_id": "2062283087887659347",
+        "signal_type": "position",
+        "timestamp": "2026-06-03T21:19:38+00:00",
+        "confidence": "high",
+        "url": "https://x.com/moninvestor/status/2062283087887659347"
       }
     ]
   },
