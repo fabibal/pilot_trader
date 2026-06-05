@@ -7,8 +7,8 @@
     "asset_type": "crypto",
     "status": "open",
     "entry_price": 55000,
-    "stop_loss": 65399.98,
-    "target": 144000,
+    "stop_loss": 50,
+    "target": 147,
     "size_pct": null,
     "trade_date": null,
     "holding_thesis": "Bitcoin positioning and market structure; waiting for recovery above 72-74K after liquidity liquidation event.",
@@ -63,6 +63,13 @@
         "timestamp": "2026-06-03T13:11:05+00:00",
         "confidence": "medium",
         "url": "https://x.com/CelalKucuker/status/2062160143131771259"
+      },
+      {
+        "tweet_id": "2062728534443896879",
+        "signal_type": "position",
+        "timestamp": "2026-06-05T02:49:40+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/CelalKucuker/status/2062728534443896879"
       }
     ]
   },
@@ -1826,11 +1833,11 @@
     "asset_type": "stock",
     "status": "open",
     "entry_price": 321.58,
-    "stop_loss": 320,
-    "target": 630,
+    "stop_loss": 350,
+    "target": 620,
     "size_pct": null,
     "trade_date": "2026-04-07",
-    "holding_thesis": null,
+    "holding_thesis": "Record AI quarter with $100B+ revenue runway and strong design-win momentum; valuation reset creates better entry on same thesis.",
     "opened_at": "2026-05-31T14:11:03.000Z",
     "closed_at": null,
     "signals": [
@@ -1868,6 +1875,20 @@
         "timestamp": "2026-05-31T15:46:24.000Z",
         "confidence": "medium",
         "url": "https://x.com/grkportfolio/status/2061112063678947525"
+      },
+      {
+        "tweet_id": "2062574626157502810",
+        "signal_type": "position",
+        "timestamp": "2026-06-04T16:38:06+00:00",
+        "confidence": "high",
+        "url": "https://x.com/grkportfolio/status/2062574626157502810"
+      },
+      {
+        "tweet_id": "2062574995327648229",
+        "signal_type": "position",
+        "timestamp": "2026-06-04T16:39:34+00:00",
+        "confidence": "high",
+        "url": "https://x.com/grkportfolio/status/2062574995327648229"
       }
     ]
   },
@@ -2118,7 +2139,7 @@
     "target": null,
     "size_pct": null,
     "trade_date": "2026-06-01",
-    "holding_thesis": "Expected to follow a similar high-growth trajectory as Sandisk (SNDK).",
+    "holding_thesis": "Recently added to position; long-term conviction hold.",
     "opened_at": "2026-06-01T19:20:32+00:00",
     "closed_at": null,
     "signals": [
@@ -2128,6 +2149,13 @@
         "timestamp": "2026-06-01T19:20:32+00:00",
         "confidence": "high",
         "url": "https://x.com/moninvestor/status/2061528342776492399"
+      },
+      {
+        "tweet_id": "2062574024039817716",
+        "signal_type": "position",
+        "timestamp": "2026-06-04T16:35:42+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/moninvestor/status/2062574024039817716"
       }
     ]
   },
@@ -2143,7 +2171,7 @@
     "target": null,
     "size_pct": null,
     "trade_date": "2026-05-14",
-    "holding_thesis": "AIRJ converts wasted industrial heat into water extraction and cooling efficiency (40% potential energy savings), positioned in the growing data center cooling and water scarcity markets with partnerships via GE Vernova, BASF, and Carrier.",
+    "holding_thesis": "Long-term potential and strong company fundamentals",
     "opened_at": "2026-05-28T08:22:50+00:00",
     "closed_at": null,
     "signals": [
@@ -2153,6 +2181,13 @@
         "timestamp": "2026-05-28T08:22:50+00:00",
         "confidence": "high",
         "url": "https://x.com/moninvestor/status/2059913275521802294"
+      },
+      {
+        "tweet_id": "2062571838107013293",
+        "signal_type": "buy",
+        "timestamp": "2026-06-04T16:27:01+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/moninvestor/status/2062571838107013293"
       }
     ]
   },
@@ -2210,6 +2245,31 @@
     "account": "moninvestor",
     "source_type": "influencer",
     "portfolio": null,
+    "ticker": "IBRX",
+    "asset_type": "stock",
+    "status": "open",
+    "entry_price": null,
+    "stop_loss": null,
+    "target": null,
+    "size_pct": null,
+    "trade_date": null,
+    "holding_thesis": "IBRX has an approved revenue-generating cancer product (ANKTIVA) with a platform approach to expand across multiple cancer types and international markets, led by an impressive founder with a genuine mission.",
+    "opened_at": "2026-06-04T21:28:52+00:00",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2062647800803057929",
+        "signal_type": "buy",
+        "timestamp": "2026-06-04T21:28:52+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/moninvestor/status/2062647800803057929"
+      }
+    ]
+  },
+  {
+    "account": "moninvestor",
+    "source_type": "influencer",
+    "portfolio": null,
     "ticker": "INV",
     "asset_type": "stock",
     "status": "open",
@@ -2257,7 +2317,7 @@
     "target": null,
     "size_pct": 70,
     "trade_date": "2025-04-05",
-    "holding_thesis": "Institutional ownership hit a new record, signaling strong institutional conviction and support.",
+    "holding_thesis": "IREN is positioned as a first-mover in Australian AI data center infrastructure with unique advantages: abundant renewable energy, minimal regulatory resistance, government backing, and direct connectivity to Asia's fastest-growing AI demand centers.",
     "opened_at": "2026-05-28T13:30:32+00:00",
     "closed_at": null,
     "signals": [
@@ -2372,6 +2432,13 @@
         "timestamp": "2026-06-04T14:47:13+00:00",
         "confidence": "medium",
         "url": "https://x.com/moninvestor/status/2062546721154998574"
+      },
+      {
+        "tweet_id": "2062651317860892828",
+        "signal_type": "position",
+        "timestamp": "2026-06-04T21:42:51+00:00",
+        "confidence": "high",
+        "url": "https://x.com/moninvestor/status/2062651317860892828"
       }
     ]
   },
@@ -2815,6 +2882,31 @@
   {
     "account": "theaiportfolios",
     "source_type": "portfolio",
+    "portfolio": "grok",
+    "ticker": "AVGO",
+    "asset_type": "stock",
+    "status": "open",
+    "entry_price": null,
+    "stop_loss": null,
+    "target": null,
+    "size_pct": null,
+    "trade_date": null,
+    "holding_thesis": "Strong performer up 26% despite recent post-earnings volatility.",
+    "opened_at": "2026-06-04T16:41:16+00:00",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2062575423356281287",
+        "signal_type": "position",
+        "timestamp": "2026-06-04T16:41:16+00:00",
+        "confidence": "high",
+        "url": "https://x.com/theaiportfolios/status/2062575423356281287"
+      }
+    ]
+  },
+  {
+    "account": "theaiportfolios",
+    "source_type": "portfolio",
     "portfolio": "claude",
     "ticker": "INTR",
     "asset_type": "stock",
@@ -2997,6 +3089,31 @@
         "timestamp": "2026-06-01T17:20:30+00:00",
         "confidence": "medium",
         "url": "https://x.com/theaiportfolios/status/2061498134161989924"
+      }
+    ]
+  },
+  {
+    "account": "theaiportfolios",
+    "source_type": "portfolio",
+    "portfolio": "claude",
+    "ticker": "PGY",
+    "asset_type": "stock",
+    "status": "open",
+    "entry_price": null,
+    "stop_loss": null,
+    "target": 19,
+    "size_pct": null,
+    "trade_date": "2026-05-08",
+    "holding_thesis": "Profitable AI lending company trading at a wide discount to earnings with shrinking credit exposure and improving loan pool ratings.",
+    "opened_at": "2026-06-04T17:39:04+00:00",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2062589967822454901",
+        "signal_type": "position",
+        "timestamp": "2026-06-04T17:39:04+00:00",
+        "confidence": "high",
+        "url": "https://x.com/theaiportfolios/status/2062589967822454901"
       }
     ]
   },

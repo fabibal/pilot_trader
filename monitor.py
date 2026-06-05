@@ -204,9 +204,15 @@ EXTRACTION_SYSTEM = (
     "- asset_type: \"stock\" for equities/ETFs, \"crypto\" for cryptocurrencies, "
     "\"unknown\" if unclear.\n"
     "- size_pct: position size as a percent of the portfolio/book if stated "
-    "(e.g. 8.46), as a number. Do NOT use gain/return percentages. null if absent.\n"
-    "- entry_price: the buy/entry price in dollars as a number, only if stated "
-    "as an entry/purchase price (not a current price). null if absent.\n"
+    "(e.g. 8.46), as a number BETWEEN 0 AND 100. It must be an explicit "
+    "percentage (a \"%\" sign or wording like \"X% of the book/portfolio\"). "
+    "Do NOT use gain/return percentages. NEVER put a dollar allocation here: "
+    "\"took our $50,000 and bought $PGY\" or \"deployed $5k into NVDA\" states "
+    "DOLLARS, not a percent, so size_pct = null. null if absent.\n"
+    "- entry_price: the PER-SHARE buy/entry price in dollars as a number, only "
+    "if stated as an entry/purchase price per share (not a current price, and "
+    "NOT a total dollar amount deployed — \"bought $50,000 of PGY\" is a total "
+    "spend, not an entry price, so entry_price = null). null if absent.\n"
     "- stop_loss: the stop-loss price in dollars as a number if stated. null if absent.\n"
     "- target: the price target / take-profit in dollars as a number if stated. "
     "null if absent.\n"
@@ -239,7 +245,7 @@ SIGNAL_SCHEMA = {
             {"type": "string", "enum": ["full", "partial"]},
             {"type": "null"},
         ]},
-        "size_pct": {"type": ["number", "null"]},
+        "size_pct": {"type": ["number", "null"], "minimum": 0, "maximum": 100},
         "entry_price": {"type": ["number", "null"]},
         "stop_loss": {"type": ["number", "null"]},
         "target": {"type": ["number", "null"]},
@@ -535,6 +541,16 @@ def _mentions_asset(parsed, text):
     return "$" in (text or "")
 
 
+def _sane_size_pct(v):
+    """Deterministic backstop against dollar-amounts-as-percent leakage
+    (e.g. "took our $50,000 and bought $PGY" -> size_pct=50000). A position
+    weight is only meaningful in (0, 100]; anything else is a misextraction,
+    so null it. Independent of the LLM/schema so it always holds."""
+    if not isinstance(v, (int, float)) or isinstance(v, bool):
+        return None
+    return v if 0 < v <= 100 else None
+
+
 def record_from_parsed(account, tw, parsed):
     """Build a trades.json signal record from a parsed LLM result, or None if
     it isn't an actionable signal. Shared by the real-time and batch paths."""
@@ -542,6 +558,7 @@ def record_from_parsed(account, tw, parsed):
         return None
     if parsed["action"] == "none" or not parsed.get("ticker"):
         return None
+    parsed["size_pct"] = _sane_size_pct(parsed.get("size_pct"))
     return {
         "account": account,
         "source_type": SOURCE_TYPE.get(account, "portfolio"),
