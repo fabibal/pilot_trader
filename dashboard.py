@@ -479,7 +479,7 @@ TABLE_COLUMNS = [
     {"name": "ENTRY $", "id": "entry_price"},
     {"name": "RETURN %", "id": "return_pct"},
     {"name": "LINK", "id": "link", "presentation": "markdown"},
-    {"name": "TWEET", "id": "text"},
+    {"name": "SUMMARY", "id": "reasoning"},
 ]
 
 # Influencer (IncomeSharks) signals table — its own column set with the
@@ -628,7 +628,13 @@ def _money(v):
 
 def position_detail_table(positions, portfolio):
     rows = []
-    for p in positions:
+    # Newest first: sort by trade_date (ISO dates sort chronologically), falling
+    # back to opened_at; positions with no date sort to the bottom.
+    ordered = sorted(positions,
+                     key=lambda q: q.get("trade_date")
+                     or (q.get("opened_at") or "")[:10] or "",
+                     reverse=True)
+    for p in ordered:
         if p.get("status") != "open" or pf_of(p) != portfolio:
             continue
         tdate = p.get("trade_date") or (p.get("opened_at") or "")[:10] or None
@@ -651,9 +657,6 @@ def position_detail_table(positions, portfolio):
             (_fmt_pct(ret), _color(ret)),
             str(days) if days is not None else "—",
         ))
-    # sort by size desc (None last)
-    rows.sort(key=lambda r: float(r[1][:-1]) if r[1].endswith("%") else -1,
-              reverse=True)
     return _table(["Ticker", "Size %", "Trade Date", "Entry", "Current",
                    "Return %", "Days Held"], rows,
                   empty=f"No open positions for {PORTFOLIO_LABELS.get(portfolio, portfolio)}")
@@ -1932,7 +1935,7 @@ app.layout = html.Div(
             style_data={"backgroundColor": C["bg"]},
             style_filter={"backgroundColor": C["card"], "color": C["text"]},
             style_cell_conditional=[
-                {"if": {"column_id": "text"}, "minWidth": "320px",
+                {"if": {"column_id": "reasoning"}, "minWidth": "320px",
                  "color": C["dim"]},
             ],
             style_data_conditional=[

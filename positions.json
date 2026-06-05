@@ -70,6 +70,56 @@
     "account": "CelalKucuker",
     "source_type": "influencer",
     "portfolio": null,
+    "ticker": "BTCUSD",
+    "asset_type": "unknown",
+    "status": "open",
+    "entry_price": null,
+    "stop_loss": null,
+    "target": 82030.4,
+    "size_pct": null,
+    "trade_date": null,
+    "holding_thesis": null,
+    "opened_at": "2026-06-04T16:02:54+00:00",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2062565768038944859",
+        "signal_type": "buy",
+        "timestamp": "2026-06-04T16:02:54+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/CelalKucuker/status/2062565768038944859"
+      }
+    ]
+  },
+  {
+    "account": "CelalKucuker",
+    "source_type": "influencer",
+    "portfolio": null,
+    "ticker": "DOGE",
+    "asset_type": "crypto",
+    "status": "open",
+    "entry_price": null,
+    "stop_loss": 0.08779,
+    "target": 0.27859,
+    "size_pct": null,
+    "trade_date": null,
+    "holding_thesis": "Weekly downtrend channel breakout with excellent MACD signals.",
+    "opened_at": "2026-06-04T18:31:17+00:00",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2062603112355962951",
+        "signal_type": "buy",
+        "timestamp": "2026-06-04T18:31:17+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/CelalKucuker/status/2062603112355962951"
+      }
+    ]
+  },
+  {
+    "account": "CelalKucuker",
+    "source_type": "influencer",
+    "portfolio": null,
     "ticker": "EIGEN",
     "asset_type": "crypto",
     "status": "open",
@@ -131,11 +181,11 @@
     "asset_type": "crypto",
     "status": "open",
     "entry_price": 45,
-    "stop_loss": 44.98,
+    "stop_loss": 64.98,
     "target": 750,
     "size_pct": null,
     "trade_date": null,
-    "holding_thesis": "Litecoin appears undervalued at $40\u201350 with strong technical setup and historical parallel to Ripple's pre-breakout price action.",
+    "holding_thesis": "Technical setup reminiscent of XRP before breakout; 15x potential upside.",
     "opened_at": "2026-05-28T14:06:52+00:00",
     "closed_at": null,
     "signals": [
@@ -145,6 +195,13 @@
         "timestamp": "2026-05-28T14:06:52+00:00",
         "confidence": "medium",
         "url": "https://x.com/CelalKucuker/status/2059999852147114131"
+      },
+      {
+        "tweet_id": "2062618562225709404",
+        "signal_type": "buy",
+        "timestamp": "2026-06-04T19:32:41+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/CelalKucuker/status/2062618562225709404"
       }
     ]
   },
@@ -278,10 +335,10 @@
     "status": "open",
     "entry_price": null,
     "stop_loss": null,
-    "target": 5.0,
+    "target": 17,
     "size_pct": null,
     "trade_date": null,
-    "holding_thesis": "Chart breakout above $1.74 resistance with Fibonacci extension target to $12 suggests strong upside momentum.",
+    "holding_thesis": "XRP positioned to challenge Ethereum's market ranking during bull run.",
     "opened_at": "2026-05-29T19:38:32+00:00",
     "closed_at": null,
     "signals": [
@@ -305,6 +362,13 @@
         "timestamp": "2026-06-03T20:31:51+00:00",
         "confidence": "medium",
         "url": "https://x.com/CelalKucuker/status/2062271062486753493"
+      },
+      {
+        "tweet_id": "2062631101361713467",
+        "signal_type": "buy",
+        "timestamp": "2026-06-04T20:22:31+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/CelalKucuker/status/2062631101361713467"
       }
     ]
   },
@@ -392,10 +456,10 @@
     "status": "open",
     "entry_price": null,
     "stop_loss": null,
-    "target": 28.0,
+    "target": 30,
     "size_pct": null,
     "trade_date": null,
-    "holding_thesis": null,
+    "holding_thesis": "Volatile chart with recurring entry opportunities; targeting $30.",
     "opened_at": "2026-06-01T16:58:12+00:00",
     "closed_at": null,
     "signals": [
@@ -405,6 +469,13 @@
         "timestamp": "2026-06-01T16:58:12+00:00",
         "confidence": "medium",
         "url": "https://x.com/IncomeSharks/status/2061492520987848884"
+      },
+      {
+        "tweet_id": "2062624406552404308",
+        "signal_type": "buy",
+        "timestamp": "2026-06-04T19:55:54+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/IncomeSharks/status/2062624406552404308"
       }
     ]
   },
@@ -665,6 +736,70 @@
         "timestamp": "2026-05-28T16:17:15+00:00",
         "confidence": "medium",
         "url": "https://x.com/IncomeSharks/status/2060032665366249762"
+      }
+    ]
+  },
+  {
+    "account": "IncomeSharks",
+    "source_type": "influencer",
+    "portfolio": null,
+    "ticker": "SMR",
+    "asset_type": "stock",
+    "status": "open",
+    "entry_price": null,
+    "stop_loss": null,
+    "target": null,
+    "size_pct": null,
+    "trade_date": null,
+    "holding_thesis": null,
+    "opened_at": "2026-06-04T22:23:28+00:00",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2062661541963628747",
+        "signal_type": "buy",
+        "timestamp": "2026-06-04T22:23:28+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/IncomeSharks/status/2062661541963628747"
+      }
+    ]
+  },
+  {
+    "account": "IncomeSharks",
+    "source_type": "influencer",
+    "portfolio": null,
+    "ticker": "TEM",
+    "asset_type": "stock",
+    "status": "open",
+    "entry_price": null,
+    "stop_loss": 46.0,
+    "target": 75.0,
+    "size_pct": null,
+    "trade_date": null,
+    "holding_thesis": "Positioned for biotech/healthcare sector rotation.",
+    "opened_at": "2026-06-04T16:10:03+00:00",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2062567566732820955",
+        "signal_type": "buy",
+        "timestamp": "2026-06-04T16:10:03+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/IncomeSharks/status/2062567566732820955"
+      },
+      {
+        "tweet_id": "2062569978877059199",
+        "signal_type": "buy",
+        "timestamp": "2026-06-04T16:19:38+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/IncomeSharks/status/2062569978877059199"
+      },
+      {
+        "tweet_id": "2062608823316357148",
+        "signal_type": "buy",
+        "timestamp": "2026-06-04T18:53:59+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/IncomeSharks/status/2062608823316357148"
       }
     ]
   },
@@ -1192,6 +1327,31 @@
         "timestamp": "2026-06-02T18:58:26+00:00",
         "confidence": "medium",
         "url": "https://x.com/PelosiTracker/status/2061885167711531361"
+      }
+    ]
+  },
+  {
+    "account": "PelosiTracker",
+    "source_type": "influencer",
+    "portfolio": null,
+    "ticker": "TEM",
+    "asset_type": "stock",
+    "status": "open",
+    "entry_price": null,
+    "stop_loss": null,
+    "target": null,
+    "size_pct": null,
+    "trade_date": "2025-01-20",
+    "holding_thesis": "FDA clearance catalyst for growth.",
+    "opened_at": "2026-06-04T16:34:40+00:00",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2062573760809496612",
+        "signal_type": "buy",
+        "timestamp": "2026-06-04T16:34:40+00:00",
+        "confidence": "high",
+        "url": "https://x.com/PelosiTracker/status/2062573760809496612"
       }
     ]
   },
@@ -1925,6 +2085,31 @@
     "account": "moninvestor",
     "source_type": "influencer",
     "portfolio": null,
+    "ticker": "???",
+    "asset_type": "unknown",
+    "status": "open",
+    "entry_price": null,
+    "stop_loss": null,
+    "target": 10000,
+    "size_pct": null,
+    "trade_date": null,
+    "holding_thesis": null,
+    "opened_at": "2026-06-04T12:50:57+00:00",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2062517461849608686",
+        "signal_type": "buy",
+        "timestamp": "2026-06-04T12:50:57+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/moninvestor/status/2062517461849608686"
+      }
+    ]
+  },
+  {
+    "account": "moninvestor",
+    "source_type": "influencer",
+    "portfolio": null,
     "ticker": "AAOI",
     "asset_type": "stock",
     "status": "open",
@@ -2072,7 +2257,7 @@
     "target": null,
     "size_pct": 70,
     "trade_date": "2025-04-05",
-    "holding_thesis": "Expansion of sites in Australia expected to drive growth.",
+    "holding_thesis": "Institutional ownership hit a new record, signaling strong institutional conviction and support.",
     "opened_at": "2026-05-28T13:30:32+00:00",
     "closed_at": null,
     "signals": [
@@ -2180,6 +2365,13 @@
         "timestamp": "2026-06-03T18:27:55+00:00",
         "confidence": "high",
         "url": "https://x.com/moninvestor/status/2062239877123494248"
+      },
+      {
+        "tweet_id": "2062546721154998574",
+        "signal_type": "position",
+        "timestamp": "2026-06-04T14:47:13+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/moninvestor/status/2062546721154998574"
       }
     ]
   },
@@ -2579,7 +2771,7 @@
     "target": null,
     "size_pct": null,
     "trade_date": "2026-04-07",
-    "holding_thesis": "Broadcom consistently beats its own guidance and is positioned to grow AI chip revenue significantly toward $100B by 2027.",
+    "holding_thesis": "AI silicon growing 143% year-over-year with strong multi-year AI revenue compounding trajectory.",
     "opened_at": "2026-05-31T14:12:51.000Z",
     "closed_at": null,
     "signals": [
@@ -2610,6 +2802,13 @@
         "timestamp": "2026-06-03T17:42:53+00:00",
         "confidence": "high",
         "url": "https://x.com/theaiportfolios/status/2062228540775641208"
+      },
+      {
+        "tweet_id": "2062425140152197299",
+        "signal_type": "position",
+        "timestamp": "2026-06-04T06:44:06+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/theaiportfolios/status/2062425140152197299"
       }
     ]
   },
@@ -2635,6 +2834,31 @@
         "timestamp": "2026-06-03T17:16:57+00:00",
         "confidence": "high",
         "url": "https://x.com/theaiportfolios/status/2062222015432642796"
+      }
+    ]
+  },
+  {
+    "account": "theaiportfolios",
+    "source_type": "portfolio",
+    "portfolio": "claude",
+    "ticker": "LLY",
+    "asset_type": "stock",
+    "status": "open",
+    "entry_price": null,
+    "stop_loss": null,
+    "target": 1215,
+    "size_pct": null,
+    "trade_date": null,
+    "holding_thesis": "Structural leader in obesity and diabetes drug boom with a powerful patient access distribution engine that can withstand price cuts while providing defensive ballast.",
+    "opened_at": "2026-06-04T15:49:01+00:00",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2062562276352168066",
+        "signal_type": "position",
+        "timestamp": "2026-06-04T15:49:01+00:00",
+        "confidence": "high",
+        "url": "https://x.com/theaiportfolios/status/2062562276352168066"
       }
     ]
   },
