@@ -245,7 +245,7 @@ SIGNAL_SCHEMA = {
             {"type": "string", "enum": ["full", "partial"]},
             {"type": "null"},
         ]},
-        "size_pct": {"type": ["number", "null"], "minimum": 0, "maximum": 100},
+        "size_pct": {"type": ["number", "null"]},
         "entry_price": {"type": ["number", "null"]},
         "stop_loss": {"type": ["number", "null"]},
         "target": {"type": ["number", "null"]},
