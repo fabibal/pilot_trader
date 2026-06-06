@@ -8,10 +8,10 @@
     "status": "open",
     "entry_price": 55000,
     "stop_loss": 50,
-    "target": 147,
+    "target": 250000,
     "size_pct": null,
     "trade_date": null,
-    "holding_thesis": "Bitcoin positioning and market structure; waiting for recovery above 72-74K after liquidity liquidation event.",
+    "holding_thesis": "Long-term bullish on Bitcoin due to institutional inflows via ETFs, falling interest rates, M2 expansion, and maturing market fundamentals.",
     "opened_at": "2026-05-29T15:25:30+00:00",
     "closed_at": null,
     "signals": [
@@ -70,6 +70,13 @@
         "timestamp": "2026-06-05T02:49:40+00:00",
         "confidence": "medium",
         "url": "https://x.com/CelalKucuker/status/2062728534443896879"
+      },
+      {
+        "tweet_id": "2062911179937259787",
+        "signal_type": "position",
+        "timestamp": "2026-06-05T14:55:26+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/CelalKucuker/status/2062911179937259787"
       }
     ]
   },
@@ -184,6 +191,31 @@
     "account": "CelalKucuker",
     "source_type": "influencer",
     "portfolio": null,
+    "ticker": "ETHUSD",
+    "asset_type": "unknown",
+    "status": "open",
+    "entry_price": null,
+    "stop_loss": 892.08,
+    "target": 1925.6,
+    "size_pct": null,
+    "trade_date": null,
+    "holding_thesis": null,
+    "opened_at": "2026-06-05T12:50:09+00:00",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2062879647516197154",
+        "signal_type": "buy",
+        "timestamp": "2026-06-05T12:50:09+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/CelalKucuker/status/2062879647516197154"
+      }
+    ]
+  },
+  {
+    "account": "CelalKucuker",
+    "source_type": "influencer",
+    "portfolio": null,
     "ticker": "LTC",
     "asset_type": "crypto",
     "status": "open",
@@ -278,7 +310,7 @@
     "status": "open",
     "entry_price": 0.8,
     "stop_loss": 0.8113,
-    "target": 10,
+    "target": 8.6251,
     "size_pct": null,
     "trade_date": null,
     "holding_thesis": "Chart setup suggests the bottom is in place with strong upside potential.",
@@ -305,6 +337,13 @@
         "timestamp": "2026-06-03T18:32:02+00:00",
         "confidence": "medium",
         "url": "https://x.com/CelalKucuker/status/2062240911535243662"
+      },
+      {
+        "tweet_id": "2062930320198910029",
+        "signal_type": "buy",
+        "timestamp": "2026-06-05T16:11:30+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/CelalKucuker/status/2062930320198910029"
       }
     ]
   },
@@ -341,8 +380,8 @@
     "asset_type": "crypto",
     "status": "open",
     "entry_price": null,
-    "stop_loss": null,
-    "target": 17,
+    "stop_loss": 0.9567,
+    "target": 3.6606,
     "size_pct": null,
     "trade_date": null,
     "holding_thesis": "XRP positioned to challenge Ethereum's market ranking during bull run.",
@@ -376,6 +415,13 @@
         "timestamp": "2026-06-04T20:22:31+00:00",
         "confidence": "medium",
         "url": "https://x.com/CelalKucuker/status/2062631101361713467"
+      },
+      {
+        "tweet_id": "2062894205727367405",
+        "signal_type": "buy",
+        "timestamp": "2026-06-05T13:48:00+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/CelalKucuker/status/2062894205727367405"
       }
     ]
   },
@@ -2139,7 +2185,7 @@
     "target": null,
     "size_pct": null,
     "trade_date": "2026-06-01",
-    "holding_thesis": "Recently added to position; long-term conviction hold.",
+    "holding_thesis": "Strong performer with solid fundamentals shared by other investors.",
     "opened_at": "2026-06-01T19:20:32+00:00",
     "closed_at": null,
     "signals": [
@@ -2156,6 +2202,13 @@
         "timestamp": "2026-06-04T16:35:42+00:00",
         "confidence": "medium",
         "url": "https://x.com/moninvestor/status/2062574024039817716"
+      },
+      {
+        "tweet_id": "2062843804382589134",
+        "signal_type": "position",
+        "timestamp": "2026-06-05T10:27:43+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/moninvestor/status/2062843804382589134"
       }
     ]
   },
@@ -2245,6 +2298,38 @@
     "account": "moninvestor",
     "source_type": "influencer",
     "portfolio": null,
+    "ticker": "HIMS",
+    "asset_type": "stock",
+    "status": "open",
+    "entry_price": null,
+    "stop_loss": null,
+    "target": null,
+    "size_pct": null,
+    "trade_date": null,
+    "holding_thesis": "Long-term conviction that the investment will appreciate.",
+    "opened_at": "2026-06-05T10:40:30+00:00",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2062847019794768121",
+        "signal_type": "position",
+        "timestamp": "2026-06-05T10:40:30+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/moninvestor/status/2062847019794768121"
+      },
+      {
+        "tweet_id": "2062848256720125956",
+        "signal_type": "position",
+        "timestamp": "2026-06-05T10:45:24+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/moninvestor/status/2062848256720125956"
+      }
+    ]
+  },
+  {
+    "account": "moninvestor",
+    "source_type": "influencer",
+    "portfolio": null,
     "ticker": "IBRX",
     "asset_type": "stock",
     "status": "open",
@@ -2253,7 +2338,7 @@
     "target": null,
     "size_pct": null,
     "trade_date": null,
-    "holding_thesis": "IBRX has an approved revenue-generating cancer product (ANKTIVA) with a platform approach to expand across multiple cancer types and international markets, led by an impressive founder with a genuine mission.",
+    "holding_thesis": "FDA-approved oncology product (ANKTIVA) already generating revenue with significant pipeline expansion potential across multiple cancer indications and international markets.",
     "opened_at": "2026-06-04T21:28:52+00:00",
     "closed_at": null,
     "signals": [
@@ -2263,6 +2348,13 @@
         "timestamp": "2026-06-04T21:28:52+00:00",
         "confidence": "medium",
         "url": "https://x.com/moninvestor/status/2062647800803057929"
+      },
+      {
+        "tweet_id": "2062822422068269120",
+        "signal_type": "buy",
+        "timestamp": "2026-06-05T09:02:45+00:00",
+        "confidence": "high",
+        "url": "https://x.com/moninvestor/status/2062822422068269120"
       }
     ]
   },
@@ -2941,7 +3033,7 @@
     "target": 1215,
     "size_pct": null,
     "trade_date": null,
-    "holding_thesis": "Structural leader in obesity and diabetes drug boom with a powerful patient access distribution engine that can withstand price cuts while providing defensive ballast.",
+    "holding_thesis": "Outperforming during market selloff; strong relative strength.",
     "opened_at": "2026-06-04T15:49:01+00:00",
     "closed_at": null,
     "signals": [
@@ -2951,6 +3043,13 @@
         "timestamp": "2026-06-04T15:49:01+00:00",
         "confidence": "high",
         "url": "https://x.com/theaiportfolios/status/2062562276352168066"
+      },
+      {
+        "tweet_id": "2062910551219397019",
+        "signal_type": "position",
+        "timestamp": "2026-06-05T14:52:57+00:00",
+        "confidence": "high",
+        "url": "https://x.com/theaiportfolios/status/2062910551219397019"
       }
     ]
   },
