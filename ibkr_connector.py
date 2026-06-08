@@ -430,20 +430,22 @@ def execute_order(order, ib=None):
             result["fill_price"] = round(float(avg), 4)
             _ledger("filled", fill_price=result["fill_price"],
                     filled_qty=filled, shares=shares,
-                    ib_order_id=trade.order.orderId, ib_status=st)
+                    ib_order_id=trade.order.orderId,
+                    ib_perm_id=trade.order.permId, ib_status=st)
         elif st in ("Cancelled", "ApiCancelled", "Inactive") or (
                 err and filled == 0):
             reason = (f"{err.message} (code {err.errorCode})" if err else st)
             result["status"] = "rejected"
             result["detail"] = f"ib_status={st}: {reason}"
             _ledger("rejected", reject_reason=result["detail"],
-                    ib_order_id=trade.order.orderId, ib_status=st)
+                    ib_order_id=trade.order.orderId,
+                    ib_perm_id=trade.order.permId, ib_status=st)
         else:
             # PreSubmitted / Submitted: accepted but not yet filled (held for the
             # open when market is closed, or still working). Keep ledger pending.
             result["status"] = "submitted"
             _ledger("pending", shares=shares, ib_order_id=trade.order.orderId,
-                    ib_status=st)
+                    ib_perm_id=trade.order.permId, ib_status=st)
         return result
     except IBKRError as e:
         # Order-level problem (e.g. unqualifiable ticker, no price) — reject it
@@ -470,9 +472,10 @@ def reconcile_open_orders(ib=None):
     Flips each to filled / cancelled in data/orders.json. Returns a summary.
 
     Matches on ib_order_id against the current session's trades (ib.trades()
-    covers open + done-this-session). Orders not visible (e.g. completed in a
-    prior session before a gateway restart) are left pending for the weekly
-    position reconcile to flag."""
+    covers open + done-this-session), falling back to permId when orderId is 0:
+    after a Gateway restart IB reports prior-session orders with orderId=0, so
+    permId is the only stable handle across the restart. Orders matching neither
+    are left pending for the weekly position reconcile to flag."""
     orders = om._load()
     pending = [o for o in orders
                if o.get("status") == "pending" and o.get("ib_order_id")]
@@ -485,9 +488,15 @@ def reconcile_open_orders(ib=None):
     try:
         ib.reqAllOpenOrders()
         ib.sleep(1.0)
-        trades_by_id = {t.order.orderId: t for t in ib.trades()}
+        trades = ib.trades()
+        # orderId first; permId fallback. Skip orderId 0 (ambiguous — every
+        # orphaned prior-session order reports 0, so it must not key the index).
+        by_oid = {t.order.orderId: t for t in trades if t.order.orderId}
+        by_perm = {t.order.permId: t for t in trades if t.order.permId}
         for o in pending:
-            t = trades_by_id.get(o.get("ib_order_id"))
+            t = by_oid.get(o.get("ib_order_id"))
+            if t is None and o.get("ib_perm_id"):
+                t = by_perm.get(o.get("ib_perm_id"))
             if t is None:
                 summary["unmatched"] += 1
                 continue
