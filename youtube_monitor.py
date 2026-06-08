@@ -67,6 +67,10 @@ MAX_TRANSCRIPT_CHARS = 60_000
 WHISPER_MODEL = "small"
 WHISPER_COMPUTE = "int8"
 AUDIO_DOWNLOAD_TIMEOUT_S = 600       # yt-dlp audio fetch hard cap
+# yt-dlp needs a JS runtime (deno) for YouTube extraction; without one it warns
+# and some formats degrade. deno is installed user-locally here, but cron's PATH
+# is minimal and won't include it — so we add this dir to the subprocess env.
+DENO_BIN_DIR = os.path.expanduser("~/.deno/bin")
 
 # --- LLM analysis ---------------------------------------------------------
 ANALYSIS_SYSTEM = (
@@ -171,10 +175,19 @@ def whisper_transcribe(video_id):
     try:
         url = WATCH_URL.format(vid=video_id)
         out = os.path.join(tmpdir, "%(id)s.%(ext)s")
+        # --remote-components ejs:github lets deno run yt-dlp's EJS challenge
+        # solver (fetched once from the yt-dlp/ejs GitHub release, then cached),
+        # which YouTube's "n challenge" now requires for full format coverage.
         cmd = [sys.executable, "-m", "yt_dlp", "-q", "--no-playlist",
+               "--remote-components", "ejs:github",
                "-f", "bestaudio/best", "-o", out, url]
+        # Put the deno JS runtime on PATH for yt-dlp even under cron's minimal env.
+        env = os.environ.copy()
+        if os.path.isdir(DENO_BIN_DIR) and DENO_BIN_DIR not in env.get("PATH", ""):
+            env["PATH"] = DENO_BIN_DIR + os.pathsep + env.get("PATH", "")
         try:
-            subprocess.run(cmd, check=True, timeout=AUDIO_DOWNLOAD_TIMEOUT_S)
+            subprocess.run(cmd, check=True, timeout=AUDIO_DOWNLOAD_TIMEOUT_S,
+                           env=env)
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired,
                 FileNotFoundError) as e:
             print(f"  [yt-dlp] audio download failed: {e}", file=sys.stderr)
