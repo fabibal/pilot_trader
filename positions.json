@@ -2971,6 +2971,31 @@
     "account": "moninvestor",
     "source_type": "influencer",
     "portfolio": null,
+    "ticker": "SATL",
+    "asset_type": "stock",
+    "status": "open",
+    "entry_price": null,
+    "stop_loss": null,
+    "target": null,
+    "size_pct": null,
+    "trade_date": null,
+    "holding_thesis": "Higher upside potential; inflection point expected later in 2026 when Merlin satellites launch.",
+    "opened_at": "2026-06-07T22:39:07+00:00",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2063752644041056698",
+        "signal_type": "position",
+        "timestamp": "2026-06-07T22:39:07+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/moninvestor/status/2063752644041056698"
+      }
+    ]
+  },
+  {
+    "account": "moninvestor",
+    "source_type": "influencer",
+    "portfolio": null,
     "ticker": "SIVE",
     "asset_type": "stock",
     "status": "open",
