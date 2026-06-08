@@ -555,22 +555,34 @@ def _sane_size_pct(v):
     return v if 0 < v <= 100 else None
 
 
-def _sane_crypto_level(level, entry_price, asset_type):
+def _crypto_ref(*vals):
+    """Largest positive numeric value among the magnitude-reference candidates
+    (entry_price, then the take-profit levels tp1/tp2), or None if none qualify.
+    Recap tweets usually carry no entry_price but DO carry chart tp1/tp2 in full
+    dollars, so those backstop the reference when entry is absent."""
+    nums = [v for v in vals
+            if isinstance(v, (int, float)) and not isinstance(v, bool) and v > 0]
+    return max(nums) if nums else None
+
+
+def _sane_crypto_level(level, ref, asset_type):
     """Backstop for $K-shorthand misparse on crypto price levels: a tweet that
     writes "54-50" or "144K" for $54K/$50K/$144K is sometimes extracted as the
-    bare 50 / 144. For crypto, if a stop_loss/target is below a tenth of the
-    entry price it is almost certainly a dropped-thousands error, so scale it
-    back up by 1000. No-op without a positive entry reference (the common case
-    for recap tweets — the prompt is the primary defense there) or when the
+    bare 50 / 144. For crypto, if a stop_loss/target is below a hundredth of the
+    reference magnitude (entry price, else a tp1/tp2 take-profit level) it is
+    almost certainly a dropped-thousands error, so scale it back up by 1000.
+    The threshold is ref/100, not ref/10: the error is always a factor of 1000
+    (so a bad value lands near ref/1000, well under ref/100), while a take-profit
+    can legitimately sit 10x+ above a stop — ref/10 would false-positive on a
+    cheap coin with a far target. No-op without a positive reference or when the
     value already looks sane. Independent of the LLM so it always holds."""
     if asset_type != "crypto":
         return level
     if not isinstance(level, (int, float)) or isinstance(level, bool) or level <= 0:
         return level
-    if (not isinstance(entry_price, (int, float)) or isinstance(entry_price, bool)
-            or entry_price <= 0):
+    if not isinstance(ref, (int, float)) or isinstance(ref, bool) or ref <= 0:
         return level
-    return level * 1000 if level < entry_price / 10 else level
+    return level * 1000 if level < ref / 100 else level
 
 
 def record_from_parsed(account, tw, parsed):
@@ -582,9 +594,10 @@ def record_from_parsed(account, tw, parsed):
         return None
     parsed["size_pct"] = _sane_size_pct(parsed.get("size_pct"))
     _asset = parsed.get("asset_type", "unknown")
-    _entry = parsed.get("entry_price")
-    _stop = _sane_crypto_level(parsed.get("stop_loss"), _entry, _asset)
-    _target = _sane_crypto_level(parsed.get("target"), _entry, _asset)
+    _ref = _crypto_ref(parsed.get("entry_price"),
+                       parsed.get("tp1"), parsed.get("tp2"))
+    _stop = _sane_crypto_level(parsed.get("stop_loss"), _ref, _asset)
+    _target = _sane_crypto_level(parsed.get("target"), _ref, _asset)
     return {
         "account": account,
         "source_type": SOURCE_TYPE.get(account, "portfolio"),
