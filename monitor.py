@@ -216,6 +216,10 @@ EXTRACTION_SYSTEM = (
     "- stop_loss: the stop-loss price in dollars as a number if stated. null if absent.\n"
     "- target: the price target / take-profit in dollars as a number if stated. "
     "null if absent.\n"
+    "- For crypto price levels, ALWAYS output full dollar values. If the tweet "
+    "uses shorthand like \"54-50\" or \"144K\", convert to full numbers (54000, "
+    "50000, 144000). NEVER output a stop_loss or target below 1000 for BTC, ETH, "
+    "or other major crypto.\n"
     "- trade_date: the actual date the trade was made, as ISO YYYY-MM-DD, if the "
     "tweet states or implies one (e.g. 'I bought it April 7' => 2026-04-07; "
     "'bought in early April' => 2026-04-05; 'since May 4th' => 2026-05-04). This "
@@ -551,6 +555,24 @@ def _sane_size_pct(v):
     return v if 0 < v <= 100 else None
 
 
+def _sane_crypto_level(level, entry_price, asset_type):
+    """Backstop for $K-shorthand misparse on crypto price levels: a tweet that
+    writes "54-50" or "144K" for $54K/$50K/$144K is sometimes extracted as the
+    bare 50 / 144. For crypto, if a stop_loss/target is below a tenth of the
+    entry price it is almost certainly a dropped-thousands error, so scale it
+    back up by 1000. No-op without a positive entry reference (the common case
+    for recap tweets — the prompt is the primary defense there) or when the
+    value already looks sane. Independent of the LLM so it always holds."""
+    if asset_type != "crypto":
+        return level
+    if not isinstance(level, (int, float)) or isinstance(level, bool) or level <= 0:
+        return level
+    if (not isinstance(entry_price, (int, float)) or isinstance(entry_price, bool)
+            or entry_price <= 0):
+        return level
+    return level * 1000 if level < entry_price / 10 else level
+
+
 def record_from_parsed(account, tw, parsed):
     """Build a trades.json signal record from a parsed LLM result, or None if
     it isn't an actionable signal. Shared by the real-time and batch paths."""
@@ -559,6 +581,10 @@ def record_from_parsed(account, tw, parsed):
     if parsed["action"] == "none" or not parsed.get("ticker"):
         return None
     parsed["size_pct"] = _sane_size_pct(parsed.get("size_pct"))
+    _asset = parsed.get("asset_type", "unknown")
+    _entry = parsed.get("entry_price")
+    _stop = _sane_crypto_level(parsed.get("stop_loss"), _entry, _asset)
+    _target = _sane_crypto_level(parsed.get("target"), _entry, _asset)
     return {
         "account": account,
         "source_type": SOURCE_TYPE.get(account, "portfolio"),
@@ -573,8 +599,8 @@ def record_from_parsed(account, tw, parsed):
         "asset_type": parsed.get("asset_type", "unknown"),
         "position_size_pct": parsed["size_pct"],
         "entry_price": parsed["entry_price"],
-        "stop_loss": parsed.get("stop_loss"),
-        "target": parsed.get("target"),
+        "stop_loss": _stop,
+        "target": _target,
         "trade_date": parsed.get("trade_date"),
         "holding_thesis": parsed.get("holding_thesis"),
         "reasoning": parsed["reasoning"],

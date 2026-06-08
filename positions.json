@@ -7,7 +7,7 @@
     "asset_type": "crypto",
     "status": "open",
     "entry_price": 55000,
-    "stop_loss": 50,
+    "stop_loss": 50000,
     "target": 250000,
     "size_pct": null,
     "trade_date": null,
