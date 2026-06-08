@@ -1648,6 +1648,86 @@ def leaderboard_table(kpis):
                   rows, empty="No open AI positions yet.")
 
 
+# --- YouTube (Benjamin Cowen) analysis ------------------------------------
+YT_SUMMARIES_FILE = os.path.join(DATA_DIR, "youtube_summaries.json")
+_YT_SENTIMENT = {"bullish": C["green"], "bearish": C["red"], "neutral": C["dim"]}
+
+
+def load_youtube_summaries():
+    """Benjamin Cowen video analyses (written by youtube_monitor.py). Missing or
+    corrupt file -> [] (the section just shows 'no data')."""
+    try:
+        with open(YT_SUMMARIES_FILE) as f:
+            data = json.load(f)
+        return data if isinstance(data, list) else []
+    except (OSError, json.JSONDecodeError):
+        return []
+
+
+def _yt_chip(text, color=None):
+    return html.Span(text, style={
+        "display": "inline-block", "background": C["bg"],
+        "border": f"1px solid {C['border']}", "borderRadius": "10px",
+        "padding": "1px 8px", "margin": "2px 4px 2px 0", "fontSize": "0.68rem",
+        "color": color or C["dim"]})
+
+
+def _yt_card(v):
+    sent = (v.get("overall_sentiment") or "neutral").lower()
+    color = _YT_SENTIMENT.get(sent, C["dim"])
+    date = (v.get("published") or "")[:10]
+    levels = v.get("key_price_levels") or []
+    themes = v.get("top_themes") or []
+    src_tag = "  ·  local whisper" if v.get("transcript_source") == "whisper" else ""
+    return html.Div(style={
+        "background": C["card"], "border": f"1px solid {C['border']}",
+        "borderLeft": f"3px solid {color}", "borderRadius": "8px",
+        "padding": "12px 16px", "marginTop": "10px"}, children=[
+        html.Div(style={"display": "flex", "justifyContent": "space-between",
+                        "alignItems": "flex-start", "gap": "12px"}, children=[
+            html.A(v.get("title") or v.get("video_id"), href=v.get("url"),
+                   target="_blank", rel="noopener noreferrer",
+                   style={"color": C["text"], "fontWeight": "bold",
+                          "fontSize": "0.9rem", "textDecoration": "none"}),
+            html.Span(sent.upper(), style={
+                "background": color, "color": C["bg"], "borderRadius": "10px",
+                "padding": "1px 10px", "fontSize": "0.66rem", "fontWeight": "bold",
+                "whiteSpace": "nowrap", "letterSpacing": "0.04em"}),
+        ]),
+        html.Div(f"{date}{src_tag}", style={"color": C["dim"],
+                                            "fontSize": "0.68rem",
+                                            "marginTop": "3px"}),
+        html.Div(v.get("summary") or "", style={"color": C["text"],
+                                                 "fontSize": "0.8rem",
+                                                 "marginTop": "8px",
+                                                 "lineHeight": "1.45"}),
+        html.Div([html.Span("BTC outlook: ", style={"color": C["dim"],
+                                                     "fontWeight": "bold"}),
+                  html.Span(v.get("btc_outlook") or "—")],
+                 style={"color": C["text"], "fontSize": "0.76rem",
+                        "marginTop": "8px", "lineHeight": "1.4"}),
+        (html.Div([html.Span("Levels: ", style={"color": C["dim"],
+                                                "fontSize": "0.7rem"})]
+                  + [_yt_chip(s, C["blue"]) for s in levels],
+                  style={"marginTop": "8px"}) if levels else html.Span()),
+        (html.Div([html.Span("Themes: ", style={"color": C["dim"],
+                                                "fontSize": "0.7rem"})]
+                  + [_yt_chip(t) for t in themes],
+                  style={"marginTop": "6px"}) if themes else html.Span()),
+    ])
+
+
+def youtube_section(summaries, limit=5):
+    """Render the most recent `limit` video analyses as cards (newest first)."""
+    if not summaries:
+        return [html.Div("No Benjamin Cowen videos analyzed yet.",
+                         style={"color": C["dim"], "fontSize": "0.8rem",
+                                "marginTop": "8px"})]
+    ordered = sorted(summaries, key=lambda r: r.get("published") or "",
+                     reverse=True)
+    return [_yt_card(v) for v in ordered[:limit]]
+
+
 def ibkr_exposure_card(orders, store):
     """Exposure gauge: open BUY notional vs the $10k cap, + cash/invested split."""
     open_buy = sum(o.get("quantity", 0) for o in orders
@@ -1865,6 +1945,19 @@ app.layout = html.Div(
             dcc.Graph(id="overview-chart", config={"displayModeBar": False}),
             html.Div("Leaderboard", style=_SECTION_H),
             html.Div(id="overview-leaderboard", style={"marginTop": "4px"}),
+
+            html.Div(["YouTube Analysis — Benjamin Cowen",
+                      html.A("→ channel",
+                             href="https://www.youtube.com/channel/UCRvqjQPSeaWn-uEx-w0XOIg/videos",
+                             target="_blank", rel="noopener noreferrer",
+                             style={"color": C["blue"], "marginLeft": "14px",
+                                    "textTransform": "none",
+                                    "letterSpacing": "normal",
+                                    "textDecoration": "none",
+                                    "fontWeight": "normal",
+                                    "fontSize": "0.8rem"})],
+                     style=_SECTION_H),
+            html.Div(id="youtube-summaries", style={"marginTop": "4px"}),
         ]),
 
         html.Div(id="ai-section", style={"display": "none"}, children=[
@@ -2147,6 +2240,7 @@ def refresh_status(_n, store):
 @app.callback(
     Output("overview-chart", "figure"),
     Output("overview-leaderboard", "children"),
+    Output("youtube-summaries", "children"),
     Input("interval", "n_intervals"),
     Input("main-tabs", "value"),
 )
@@ -2155,7 +2249,8 @@ def refresh_overview(_n, tab):
         raise PreventUpdate
     positions = ai_positions(load_positions())
     kpis, _ = portfolio_kpis(positions)
-    return overview_figure(positions), leaderboard_table(kpis)
+    return (overview_figure(positions), leaderboard_table(kpis),
+            youtube_section(load_youtube_summaries()))
 
 
 def _influencer_header(title, account):
