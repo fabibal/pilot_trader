@@ -7,7 +7,7 @@ Pipeline (mirrors monitor.py's "scrape -> LLM -> json" shape, but for video):
   YouTube RSS feed (free, no API key)            -> new video IDs + titles
    -> transcript via youtube-transcript-api (free, PRIMARY)
         fallback: faster-whisper small int8 on yt-dlp audio (LOCAL, rare)
-   -> Claude Haiku structured analysis (sentiment / BTC outlook / levels / themes)
+   -> Claude Sonnet structured analysis (sentiment / BTC outlook / levels / themes)
    -> data/youtube_summaries.json  (one record per video, newest-first)
 
 The summaries file is also the dedup ledger: a video_id already present is
@@ -53,11 +53,12 @@ HOME = "/home/fbazsa/pilot_trader"
 DATA_DIR = os.path.join(HOME, "data")
 SUMMARIES_FILE = os.path.join(DATA_DIR, "youtube_summaries.json")
 
-# Anthropic (same cheap text model the tweet pipeline uses).
-MODEL = "claude-haiku-4-5-20251001"
-HAIKU_INPUT_PER_1M = 1.00            # $ / 1M input tokens
-HAIKU_OUTPUT_PER_1M = 5.00           # $ / 1M output tokens
-# Cap transcript length sent to Haiku. Cowen videos run ~10-30k chars; a long
+# Anthropic. Sonnet 4.6 (NOT the tweet pipeline's Haiku): Cowen's content is
+# dense, multi-level technical analysis, and Sonnet reads it markedly better.
+MODEL = "claude-sonnet-4-6"
+INPUT_PER_1M = 3.00                  # $ / 1M input tokens (Sonnet 4.6)
+OUTPUT_PER_1M = 15.00                # $ / 1M output tokens (Sonnet 4.6)
+# Cap transcript length sent to the model. Cowen videos run ~10-30k chars; a long
 # stream could be far bigger. ~60k chars ~= 15k tokens, a safe per-video bound.
 MAX_TRANSCRIPT_CHARS = 60_000
 
@@ -208,8 +209,8 @@ def _parse_json(content_blocks):
 
 
 def analyze(client, title, transcript):
-    """Send the transcript to Haiku and return (analysis_dict, in_tok, out_tok).
-    analysis_dict is None on API/parse error."""
+    """Send the transcript to the model (Sonnet) and return
+    (analysis_dict, in_tok, out_tok). analysis_dict is None on API/parse error."""
     text = transcript
     if len(text) > MAX_TRANSCRIPT_CHARS:
         text = text[:MAX_TRANSCRIPT_CHARS] + "\n...[transcript truncated]"
@@ -313,10 +314,10 @@ def main():
     records, in_tok, out_tok = process(todo, client,
                                        allow_whisper=not args.no_whisper)
 
-    cost = in_tok / 1_000_000 * HAIKU_INPUT_PER_1M \
-        + out_tok / 1_000_000 * HAIKU_OUTPUT_PER_1M
+    cost = in_tok / 1_000_000 * INPUT_PER_1M \
+        + out_tok / 1_000_000 * OUTPUT_PER_1M
     print(f"\nAnalyzed {len(records)} video(s); "
-          f"Haiku tokens in={in_tok} out={out_tok} (${cost:.4f})")
+          f"Sonnet tokens in={in_tok} out={out_tok} (${cost:.4f})")
 
     if not records:
         return

@@ -1945,19 +1945,6 @@ app.layout = html.Div(
             dcc.Graph(id="overview-chart", config={"displayModeBar": False}),
             html.Div("Leaderboard", style=_SECTION_H),
             html.Div(id="overview-leaderboard", style={"marginTop": "4px"}),
-
-            html.Div(["YouTube Analysis — Benjamin Cowen",
-                      html.A("→ channel",
-                             href="https://www.youtube.com/channel/UCRvqjQPSeaWn-uEx-w0XOIg/videos",
-                             target="_blank", rel="noopener noreferrer",
-                             style={"color": C["blue"], "marginLeft": "14px",
-                                    "textTransform": "none",
-                                    "letterSpacing": "normal",
-                                    "textDecoration": "none",
-                                    "fontWeight": "normal",
-                                    "fontSize": "0.8rem"})],
-                     style=_SECTION_H),
-            html.Div(id="youtube-summaries", style={"marginTop": "4px"}),
         ]),
 
         html.Div(id="ai-section", style={"display": "none"}, children=[
@@ -2071,6 +2058,8 @@ app.layout = html.Div(
                                  style=_TAB_STYLE, selected_style=_TAB_SELECTED),
                          dcc.Tab(label="PelosiTracker", value="PelosiTracker",
                                  style=_TAB_STYLE, selected_style=_TAB_SELECTED),
+                         dcc.Tab(label="Ben Cowen", value="BenCowen",
+                                 style=_TAB_STYLE, selected_style=_TAB_SELECTED),
                      ]),
 
             # Per-influencer header card (handle · win-rate/holdings · open ·
@@ -2120,6 +2109,23 @@ app.layout = html.Div(
             html.Div(id="longterm-view", style={"display": "none"}, children=[
                 html.Div(id="longterm-header", style=_SECTION_H),
                 html.Div(id="longterm-holdings", style={"marginTop": "4px"}),
+            ]),
+
+            # Ben Cowen view: YouTube video analysis cards (analysis only — he is
+            # not a trader we mirror, so no positions/signals/win-rate here).
+            html.Div(id="youtube-view", style={"display": "none"}, children=[
+                html.Div(["YouTube Analysis — Benjamin Cowen",
+                          html.A("→ channel",
+                                 href="https://www.youtube.com/channel/UCRvqjQPSeaWn-uEx-w0XOIg/videos",
+                                 target="_blank", rel="noopener noreferrer",
+                                 style={"color": C["blue"], "marginLeft": "14px",
+                                        "textTransform": "none",
+                                        "letterSpacing": "normal",
+                                        "textDecoration": "none",
+                                        "fontWeight": "normal",
+                                        "fontSize": "0.8rem"})],
+                         style=_SECTION_H),
+                html.Div(id="youtube-summaries", style={"marginTop": "4px"}),
             ]),
         ]),
 
@@ -2240,7 +2246,6 @@ def refresh_status(_n, store):
 @app.callback(
     Output("overview-chart", "figure"),
     Output("overview-leaderboard", "children"),
-    Output("youtube-summaries", "children"),
     Input("interval", "n_intervals"),
     Input("main-tabs", "value"),
 )
@@ -2249,8 +2254,7 @@ def refresh_overview(_n, tab):
         raise PreventUpdate
     positions = ai_positions(load_positions())
     kpis, _ = portfolio_kpis(positions)
-    return (overview_figure(positions), leaderboard_table(kpis),
-            youtube_section(load_youtube_summaries()))
+    return overview_figure(positions), leaderboard_table(kpis)
 
 
 def _influencer_header(title, account):
@@ -2270,6 +2274,7 @@ def _influencer_header(title, account):
 @app.callback(
     Output("influencer-trade-view", "style"),
     Output("longterm-view", "style"),
+    Output("youtube-view", "style"),
     Output("influencer-pos-header", "children"),
     Output("influencer-sig-header", "children"),
     Output("longterm-header", "children"),
@@ -2277,10 +2282,12 @@ def _influencer_header(title, account):
 )
 def switch_influencer_subtab(account):
     show, hide = {"display": "block"}, {"display": "none"}
+    if account == "BenCowen":           # YouTube analysis view, not a trade view
+        return hide, hide, show, "", "", ""
     if account in LONGTERM_ACCOUNTS:
-        return (hide, show, "", "",
+        return (hide, show, hide, "", "",
                 _influencer_header(f"{account} — Long-term Holdings", account))
-    return (show, hide,
+    return (show, hide, hide,
             _influencer_header(f"{account} — Open Positions", account),
             _influencer_header(f"{account} — Signals", account),
             "")
@@ -2365,10 +2372,15 @@ def refresh_pie(_n, portfolio):
     Output("influencer-positions", "children"),
     Output("influencer-winrate", "children"),
     Output("longterm-holdings", "children"),
+    Output("youtube-summaries", "children"),
     Input("interval", "n_intervals"),
     Input("influencer-subtabs", "value"),
 )
 def refresh_influencers(_n, account):
+    # Ben Cowen is a YouTube analysis view, not a trader: no header card /
+    # positions / signals — just the video summary cards.
+    if account == "BenCowen":
+        return "", [], None, None, None, youtube_section(load_youtube_summaries())
     positions = load_positions()
     warm_prices({_yf_symbol(p["ticker"], p.get("asset_type", "stock"))
                  for p in influencer_positions(positions) + longterm_positions(positions)
@@ -2378,13 +2390,13 @@ def refresh_influencers(_n, account):
     if account in LONGTERM_ACCOUNTS:
         return (influencer_header_card(account, positions=positions),
                 [], None, None,
-                longterm_holdings_table(positions, account=account))
+                longterm_holdings_table(positions, account=account), [])
     resolutions = influencer_resolutions(positions, account=account)
     return (influencer_header_card(account, resolutions=resolutions),
             influencer_signals_data(load_trades(), account=account),
             influencer_positions_table(resolutions),
             influencer_winrate_card(resolutions),
-            None)
+            None, [])
 
 
 if __name__ == "__main__":
