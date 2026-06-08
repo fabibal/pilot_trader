@@ -135,7 +135,8 @@ def risk_check(ticker, action, quantity, path=ORDERS_FILE):
 
     - stocks only (rejects crypto-looking tickers)
     - max 1 order per ticker per UTC day
-    - BUY only: per-position cap and total-exposure cap
+    - BUY only: ONE active position per ticker (lifetime), per-position cap,
+      and total-exposure cap
     """
     orders = _load(path)
 
@@ -150,6 +151,14 @@ def risk_check(ticker, action, quantity, path=ORDERS_FILE):
                        f"({MAX_ORDERS_PER_TICKER_PER_DAY}/day, spec §5)")
 
     if action == "BUY":
+        # One active position per ticker (lifetime): block if the ticker still
+        # has open exposure -- a pending order OR a filled position not yet
+        # closed by a sell. _net_notional counts OPEN_STATUSES (pending+filled)
+        # and nets out sells, so it is >0 in exactly those cases. Closes the
+        # across-day stacking gap the 1/ticker/UTC-day cap missed.
+        if _net_notional(ticker, orders) > 0:
+            return False, (f"{ticker}: already has an active position "
+                           f"(one per ticker, spec §5)")
         if quantity > MAX_POSITION_USD + 1e-9:
             return False, (f"${quantity:,.2f} exceeds per-position cap "
                            f"${MAX_POSITION_USD:,.2f} (spec §5)")
