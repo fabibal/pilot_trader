@@ -7,11 +7,11 @@
     "asset_type": "crypto",
     "status": "open",
     "entry_price": 55000,
-    "stop_loss": 50000,
-    "target": 250000,
+    "stop_loss": 60000,
+    "target": 144000,
     "size_pct": null,
     "trade_date": null,
-    "holding_thesis": "Long-term bullish on Bitcoin due to institutional inflows via ETFs, falling interest rates, M2 expansion, and maturing market fundamentals.",
+    "holding_thesis": "Bitcoin has a clean chart with strong support levels and upside to ATH.",
     "opened_at": "2026-05-29T15:25:30+00:00",
     "closed_at": null,
     "signals": [
@@ -84,6 +84,13 @@
         "timestamp": "2026-06-06T05:04:46+00:00",
         "confidence": "medium",
         "url": "https://x.com/CelalKucuker/status/2063124920930889734"
+      },
+      {
+        "tweet_id": "2063997071435186248",
+        "signal_type": "position",
+        "timestamp": "2026-06-08T14:50:23+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/CelalKucuker/status/2063997071435186248"
       }
     ]
   },
@@ -223,6 +230,31 @@
     "account": "CelalKucuker",
     "source_type": "influencer",
     "portfolio": null,
+    "ticker": "HYPE",
+    "asset_type": "crypto",
+    "status": "open",
+    "entry_price": null,
+    "stop_loss": 45.23,
+    "target": 1000,
+    "size_pct": null,
+    "trade_date": null,
+    "holding_thesis": "Hyperliquid has significant short-term and long-term upside potential.",
+    "opened_at": "2026-06-08T14:28:40+00:00",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2063991606823289280",
+        "signal_type": "buy",
+        "timestamp": "2026-06-08T14:28:40+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/CelalKucuker/status/2063991606823289280"
+      }
+    ]
+  },
+  {
+    "account": "CelalKucuker",
+    "source_type": "influencer",
+    "portfolio": null,
     "ticker": "LTC",
     "asset_type": "crypto",
     "status": "open",
@@ -248,6 +280,31 @@
         "timestamp": "2026-06-04T19:32:41+00:00",
         "confidence": "medium",
         "url": "https://x.com/CelalKucuker/status/2062618562225709404"
+      }
+    ]
+  },
+  {
+    "account": "CelalKucuker",
+    "source_type": "influencer",
+    "portfolio": null,
+    "ticker": "ONDO",
+    "asset_type": "crypto",
+    "status": "open",
+    "entry_price": null,
+    "stop_loss": null,
+    "target": 3.0,
+    "size_pct": null,
+    "trade_date": null,
+    "holding_thesis": "Serious short-term potential with upside to 90 cents and long-term possibility of $3.",
+    "opened_at": "2026-06-08T17:08:11+00:00",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2064031750007750983",
+        "signal_type": "buy",
+        "timestamp": "2026-06-08T17:08:11+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/CelalKucuker/status/2064031750007750983"
       }
     ]
   },
@@ -426,11 +483,11 @@
     "asset_type": "crypto",
     "status": "open",
     "entry_price": null,
-    "stop_loss": 0.6781,
-    "target": 9.04277,
+    "stop_loss": 1.1175,
+    "target": 12,
     "size_pct": null,
     "trade_date": null,
-    "holding_thesis": "XRP positioned to challenge Ethereum's market ranking during bull run.",
+    "holding_thesis": "Cup and handle formation with Fibonacci retracement setup suggests upside to $12.",
     "opened_at": "2026-05-29T19:38:32+00:00",
     "closed_at": null,
     "signals": [
@@ -475,6 +532,13 @@
         "timestamp": "2026-06-06T14:49:57+00:00",
         "confidence": "medium",
         "url": "https://x.com/CelalKucuker/status/2063272185360167265"
+      },
+      {
+        "tweet_id": "2064053761090204074",
+        "signal_type": "buy",
+        "timestamp": "2026-06-08T18:35:39+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/CelalKucuker/status/2064053761090204074"
       }
     ]
   },
@@ -1198,8 +1262,8 @@
     "stop_loss": null,
     "target": null,
     "size_pct": null,
-    "trade_date": null,
-    "holding_thesis": null,
+    "trade_date": "2025-08-22",
+    "holding_thesis": "Trump administration bought 433M shares, implying institutional confidence in Intel.",
     "opened_at": "2026-04-29T22:29:56+00:00",
     "closed_at": null,
     "signals": [
@@ -1216,6 +1280,38 @@
         "timestamp": "2026-05-08T17:23:19+00:00",
         "confidence": "medium",
         "url": "https://x.com/PelosiTracker/status/2052801531695575368"
+      },
+      {
+        "tweet_id": "2063987138870255634",
+        "signal_type": "buy",
+        "timestamp": "2026-06-08T14:10:55+00:00",
+        "confidence": "high",
+        "url": "https://x.com/PelosiTracker/status/2063987138870255634"
+      }
+    ]
+  },
+  {
+    "account": "PelosiTracker",
+    "source_type": "influencer",
+    "portfolio": null,
+    "ticker": "LITE",
+    "asset_type": "stock",
+    "status": "open",
+    "entry_price": null,
+    "stop_loss": null,
+    "target": null,
+    "size_pct": null,
+    "trade_date": "2026-04-14",
+    "holding_thesis": "Two Congressional members with relevant committee positions bought LITE; Lumentum sells military lasers and is subject to AI chip export controls these lawmakers influence.",
+    "opened_at": "2026-06-08T18:52:06+00:00",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2064057901157581239",
+        "signal_type": "buy",
+        "timestamp": "2026-06-08T18:52:06+00:00",
+        "confidence": "high",
+        "url": "https://x.com/PelosiTracker/status/2064057901157581239"
       }
     ]
   },
@@ -1255,6 +1351,13 @@
         "timestamp": "2026-06-02T13:55:05+00:00",
         "confidence": "high",
         "url": "https://x.com/PelosiTracker/status/2061808825733189722"
+      },
+      {
+        "tweet_id": "2063997173121884504",
+        "signal_type": "buy",
+        "timestamp": "2026-06-08T14:50:47+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/PelosiTracker/status/2063997173121884504"
       }
     ]
   },
@@ -1508,6 +1611,31 @@
         "timestamp": "2026-05-13T17:06:05+00:00",
         "confidence": "high",
         "url": "https://x.com/PelosiTracker/status/2054609137216962704"
+      }
+    ]
+  },
+  {
+    "account": "PelosiTracker",
+    "source_type": "influencer",
+    "portfolio": null,
+    "ticker": "XOM",
+    "asset_type": "unknown",
+    "status": "open",
+    "entry_price": null,
+    "stop_loss": null,
+    "target": null,
+    "size_pct": null,
+    "trade_date": null,
+    "holding_thesis": null,
+    "opened_at": "2026-06-08T13:52:09+00:00",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2063982415383564652",
+        "signal_type": "buy",
+        "timestamp": "2026-06-08T13:52:09+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/PelosiTracker/status/2063982415383564652"
       }
     ]
   },
@@ -2529,11 +2657,11 @@
     "asset_type": "stock",
     "status": "open",
     "entry_price": null,
-    "stop_loss": null,
+    "stop_loss": 38.74,
     "target": null,
     "size_pct": 70,
     "trade_date": "2025-04-05",
-    "holding_thesis": "The account holds a position and is expressing confidence in the holding by comparing portfolio performance to the asset's 1-year chart.",
+    "holding_thesis": "Best opportunity in the market; pullback setting up next move higher within a rising channel toward ATH.",
     "opened_at": "2026-05-28T13:30:32+00:00",
     "closed_at": null,
     "signals": [
@@ -2662,6 +2790,20 @@
         "timestamp": "2026-06-07T06:10:57+00:00",
         "confidence": "medium",
         "url": "https://x.com/moninvestor/status/2063503963484274825"
+      },
+      {
+        "tweet_id": "2063888377431138793",
+        "signal_type": "position",
+        "timestamp": "2026-06-08T07:38:29+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/moninvestor/status/2063888377431138793"
+      },
+      {
+        "tweet_id": "2063943292769763691",
+        "signal_type": "buy",
+        "timestamp": "2026-06-08T11:16:41+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/moninvestor/status/2063943292769763691"
       }
     ]
   },
@@ -2701,6 +2843,13 @@
         "timestamp": "2026-06-01T15:56:51+00:00",
         "confidence": "medium",
         "url": "https://x.com/moninvestor/status/2061477084363382796"
+      },
+      {
+        "tweet_id": "2064005138176512212",
+        "signal_type": "buy",
+        "timestamp": "2026-06-08T15:22:26+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/moninvestor/status/2064005138176512212"
       }
     ]
   },
@@ -3213,6 +3362,13 @@
         "timestamp": "2026-06-05T14:52:57+00:00",
         "confidence": "high",
         "url": "https://x.com/theaiportfolios/status/2062910551219397019"
+      },
+      {
+        "tweet_id": "2063992257938608605",
+        "signal_type": "position",
+        "timestamp": "2026-06-08T14:31:16+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/theaiportfolios/status/2063992257938608605"
       }
     ]
   },
