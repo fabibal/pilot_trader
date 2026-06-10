@@ -255,6 +255,31 @@
     "account": "CelalKucuker",
     "source_type": "influencer",
     "portfolio": null,
+    "ticker": "IREN",
+    "asset_type": "stock",
+    "status": "open",
+    "entry_price": null,
+    "stop_loss": null,
+    "target": 67.5,
+    "size_pct": null,
+    "trade_date": null,
+    "holding_thesis": null,
+    "opened_at": "2026-06-09T18:11:05+00:00",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2064409967935795663",
+        "signal_type": "buy",
+        "timestamp": "2026-06-09T18:11:05+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/CelalKucuker/status/2064409967935795663"
+      }
+    ]
+  },
+  {
+    "account": "CelalKucuker",
+    "source_type": "influencer",
+    "portfolio": null,
     "ticker": "LTC",
     "asset_type": "crypto",
     "status": "open",
@@ -589,6 +614,31 @@
         "timestamp": "2026-06-01T21:30:00+00:00",
         "confidence": "medium",
         "url": "https://x.com/IncomeSharks/status/2061560921231880493"
+      }
+    ]
+  },
+  {
+    "account": "IncomeSharks",
+    "source_type": "influencer",
+    "portfolio": null,
+    "ticker": "CMPS",
+    "asset_type": "stock",
+    "status": "open",
+    "entry_price": null,
+    "stop_loss": 8,
+    "target": 30,
+    "size_pct": null,
+    "trade_date": null,
+    "holding_thesis": null,
+    "opened_at": "2026-06-09T21:19:22+00:00",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2064457350669652421",
+        "signal_type": "buy",
+        "timestamp": "2026-06-09T21:19:22+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/IncomeSharks/status/2064457350669652421"
       }
     ]
   },
@@ -1002,6 +1052,31 @@
     "account": "IncomeSharks",
     "source_type": "influencer",
     "portfolio": null,
+    "ticker": "USAR",
+    "asset_type": "stock",
+    "status": "open",
+    "entry_price": null,
+    "stop_loss": null,
+    "target": null,
+    "size_pct": null,
+    "trade_date": null,
+    "holding_thesis": null,
+    "opened_at": "2026-06-09T21:59:44+00:00",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2064467506300100668",
+        "signal_type": "buy",
+        "timestamp": "2026-06-09T21:59:44+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/IncomeSharks/status/2064467506300100668"
+      }
+    ]
+  },
+  {
+    "account": "IncomeSharks",
+    "source_type": "influencer",
+    "portfolio": null,
     "ticker": "USAS",
     "asset_type": "stock",
     "status": "open",
@@ -1255,6 +1330,31 @@
     "account": "PelosiTracker",
     "source_type": "influencer",
     "portfolio": null,
+    "ticker": "ICHR",
+    "asset_type": "stock",
+    "status": "open",
+    "entry_price": null,
+    "stop_loss": null,
+    "target": null,
+    "size_pct": null,
+    "trade_date": "2025-08-07",
+    "holding_thesis": "First politician to buy the stock in 8 years; positioned for growth from a 500M market cap base.",
+    "opened_at": "2026-06-09T15:22:48+00:00",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2064367616441852197",
+        "signal_type": "buy",
+        "timestamp": "2026-06-09T15:22:48+00:00",
+        "confidence": "high",
+        "url": "https://x.com/PelosiTracker/status/2064367616441852197"
+      }
+    ]
+  },
+  {
+    "account": "PelosiTracker",
+    "source_type": "influencer",
+    "portfolio": null,
     "ticker": "INTC",
     "asset_type": "stock",
     "status": "open",
@@ -1495,15 +1595,15 @@
     "portfolio": null,
     "ticker": "QCOM",
     "asset_type": "stock",
-    "status": "closed",
+    "status": "open",
     "entry_price": null,
     "stop_loss": null,
     "target": null,
     "size_pct": null,
-    "trade_date": null,
+    "trade_date": "2026-05-13",
     "holding_thesis": null,
-    "opened_at": null,
-    "closed_at": "2026-05-21T16:16:47+00:00",
+    "opened_at": "2026-06-09T18:47:15+00:00",
+    "closed_at": null,
     "signals": [
       {
         "tweet_id": "2057495830840418529",
@@ -1511,6 +1611,13 @@
         "timestamp": "2026-05-21T16:16:47+00:00",
         "confidence": "high",
         "url": "https://x.com/PelosiTracker/status/2057495830840418529"
+      },
+      {
+        "tweet_id": "2064419069789692180",
+        "signal_type": "buy",
+        "timestamp": "2026-06-09T18:47:15+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/PelosiTracker/status/2064419069789692180"
       }
     ]
   },
@@ -2658,10 +2765,10 @@
     "status": "open",
     "entry_price": null,
     "stop_loss": 38.74,
-    "target": null,
+    "target": 100,
     "size_pct": 70,
     "trade_date": "2025-04-05",
-    "holding_thesis": "Best opportunity in the market; pullback setting up next move higher within a rising channel toward ATH.",
+    "holding_thesis": "Bernstein maintains bullish PT at $100; conviction in upside within current channel.",
     "opened_at": "2026-05-28T13:30:32+00:00",
     "closed_at": null,
     "signals": [
@@ -2804,6 +2911,13 @@
         "timestamp": "2026-06-08T11:16:41+00:00",
         "confidence": "medium",
         "url": "https://x.com/moninvestor/status/2063943292769763691"
+      },
+      {
+        "tweet_id": "2064271729136898134",
+        "signal_type": "position",
+        "timestamp": "2026-06-09T09:01:47+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/moninvestor/status/2064271729136898134"
       }
     ]
   },
@@ -2816,7 +2930,7 @@
     "status": "open",
     "entry_price": null,
     "stop_loss": null,
-    "target": null,
+    "target": 10,
     "size_pct": null,
     "trade_date": "2026-05-29",
     "holding_thesis": "CEO is confident about getting 3 leases signed this year.",
@@ -2850,6 +2964,13 @@
         "timestamp": "2026-06-08T15:22:26+00:00",
         "confidence": "medium",
         "url": "https://x.com/moninvestor/status/2064005138176512212"
+      },
+      {
+        "tweet_id": "2064340878051667969",
+        "signal_type": "position",
+        "timestamp": "2026-06-09T13:36:33+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/moninvestor/status/2064340878051667969"
       }
     ]
   },
@@ -2954,7 +3075,7 @@
     "target": null,
     "size_pct": null,
     "trade_date": null,
-    "holding_thesis": "Hyperscalers and neoclouds are tapping into the company's property to generate their own electricity, providing a competitive advantage in power supply.",
+    "holding_thesis": "Strong conviction long-term hold representing significant portfolio weight.",
     "opened_at": "2026-06-01T16:57:25+00:00",
     "closed_at": null,
     "signals": [
@@ -2985,6 +3106,13 @@
         "timestamp": "2026-06-03T21:19:38+00:00",
         "confidence": "high",
         "url": "https://x.com/moninvestor/status/2062283087887659347"
+      },
+      {
+        "tweet_id": "2064093268309139577",
+        "signal_type": "position",
+        "timestamp": "2026-06-08T21:12:38+00:00",
+        "confidence": "high",
+        "url": "https://x.com/moninvestor/status/2064093268309139577"
       }
     ]
   },
@@ -3546,6 +3674,31 @@
     "account": "theaiportfolios",
     "source_type": "portfolio",
     "portfolio": "claude",
+    "ticker": "PLMR",
+    "asset_type": "stock",
+    "status": "open",
+    "entry_price": 107.0,
+    "stop_loss": null,
+    "target": 138.0,
+    "size_pct": 5.0,
+    "trade_date": "2026-06-09",
+    "holding_thesis": "Specialty P&C insurer with strong unit economics (76% combined ratio) benefits from NOAA's below-normal hurricane season forecast and recent guidance raise plus $200M buyback authorization; low beta (0.44) provides portfolio diversification.",
+    "opened_at": "2026-06-09T14:19:29+00:00",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2064351683228901648",
+        "signal_type": "buy",
+        "timestamp": "2026-06-09T14:19:29+00:00",
+        "confidence": "high",
+        "url": "https://x.com/theaiportfolios/status/2064351683228901648"
+      }
+    ]
+  },
+  {
+    "account": "theaiportfolios",
+    "source_type": "portfolio",
+    "portfolio": "claude",
     "ticker": "ZETA",
     "asset_type": "stock",
     "status": "open",
@@ -3592,6 +3745,31 @@
         "timestamp": "2026-06-01T18:26:56+00:00",
         "confidence": "medium",
         "url": "https://x.com/theaiportfolios/status/2061514853031010517"
+      }
+    ]
+  },
+  {
+    "account": "traderstewie",
+    "source_type": "influencer",
+    "portfolio": null,
+    "ticker": "$COMPQ",
+    "asset_type": "unknown",
+    "status": "open",
+    "entry_price": null,
+    "stop_loss": null,
+    "target": null,
+    "size_pct": null,
+    "trade_date": null,
+    "holding_thesis": null,
+    "opened_at": "2026-06-09T22:46:06+00:00",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2064479174421815525",
+        "signal_type": "buy",
+        "timestamp": "2026-06-09T22:46:06+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/traderstewie/status/2064479174421815525"
       }
     ]
   },
