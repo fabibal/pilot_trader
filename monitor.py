@@ -31,6 +31,7 @@ import argparse
 import base64
 import json
 import os
+import re
 import sys
 import time
 import traceback
@@ -47,22 +48,11 @@ from reconcile import reconcile, write_json_atomic
 
 # --- config ---------------------------------------------------------------
 # X bearer token is loaded from .env (X_BEARER_TOKEN) — never hardcoded.
-# Portfolio-bot accounts. @aifinancelabs is where the DeepSeek portfolio
-# experiment is published (no standalone DeepSeek handle exists).
-ACCOUNTS = ["grkportfolio", "theaiportfolios", "aifinancelabs", "IncomeSharks",
-            "moninvestor", "CelalKucuker", "traderstewie", "PelosiTracker"]
-# Account kind. "portfolio" = AI-run portfolio bot (its own trades / holdings).
-# "influencer" = a human trader/influencer posting frequent trade calls on
-# stocks AND crypto (e.g. @IncomeSharks). Influencer accounts bypass the
-# reply-skip gate (every tweet+reply is sent to the LLM).
-SOURCE_TYPE = {"IncomeSharks": "influencer", "moninvestor": "influencer",
-               "CelalKucuker": "influencer", "traderstewie": "influencer",
-               "PelosiTracker": "influencer"}
-# Posting style hint passed to the LLM. "conviction_long" = @moninvestor /
-# @PelosiTracker: slow long-term holders (buys to hold, no TP/stop), and phrases
-# like "buying more"/"adding"/"keeping" are holding updates, not new buys.
-ACCOUNT_STYLE = {"moninvestor": "conviction_long",
-                 "PelosiTracker": "conviction_long"}
+# Account identity/classification config is shared across the pipeline and
+# lives in accounts.py (single source of truth). @aifinancelabs is where the
+# DeepSeek portfolio experiment is published (no standalone DeepSeek handle).
+from accounts import (ACCOUNTS, SOURCE_TYPE, ACCOUNT_STYLE,  # noqa: F401
+                      POSTS_ONLY_ACCOUNTS)
 # Slow accounts: fetch only if the last fetch was more than N hours ago (instead
 # of an exact-hour cron match, which fails entirely if that one cron run fails).
 # Absent => polled on every run. moninvestor/PelosiTracker (long-term holders)
@@ -79,8 +69,6 @@ ACCOUNT_STYLE = {"moninvestor": "conviction_long",
 POLL_MIN_INTERVAL_H = {"moninvestor": 10, "PelosiTracker": 11,
                        "grkportfolio": 11, "theaiportfolios": 11,
                        "aifinancelabs": 11}
-# Accounts fetched from the POSTS-ONLY endpoint (no @-replies in the thread).
-POSTS_ONLY_ACCOUNTS = {"traderstewie", "PelosiTracker"}
 HOME = "/home/fbazsa/pilot_trader"
 DATA_DIR = os.path.join(HOME, "data")
 COST_LOG_FILE = os.path.join(DATA_DIR, "cost_log.json")
@@ -437,12 +425,33 @@ class Interpreter:
                 + self.batch_output_tokens / 1_000_000 * HAIKU_OUTPUT_PER_1M) * 0.5
 
 
-SELL_VERBS = ("sold", "dumped", "exited", "trimmed", "closed", "out of",
-              "selling")
+# Exit-phrasing detector for the reply gate. Word-boundary regex, not bare
+# substrings: "cut" as a substring matched "exeCUTe"/"hairCUT". Generous on
+# purpose — this gate protects the SELL side of the IBKR mirror, and a false
+# positive only costs one Haiku call.
+SELL_PATTERN = re.compile(
+    r"\b(sold|selling|sell|dumped|dumping|exited|exiting|exit|"
+    r"trimmed|trimming|closed|closing|liquidated|liquidating|"
+    r"out of|cut|stopped out|scaled out|scaling out|reduced|reducing|"
+    r"took (?:some )?profits?|taking (?:some )?profits?|take profits?)\b",
+    re.IGNORECASE)
 
 
 def is_reply(text):
     return text.lstrip().startswith("@")
+
+
+def tweet_is_reply(tw):
+    """True if the tweet is a reply. Prefers the source's explicit is_reply
+    flag (GetXAPI sets it via _normalize_getxapi); falls back to the text
+    heuristic for the official API / old snapshots. The heuristic alone
+    misfired both ways: a fresh tweet that merely BEGINS with a mention
+    ("@NVIDIA is a buy") was dropped as a reply, and replies whose text
+    doesn't start with "@" bypassed the gate."""
+    ir = tw.get("is_reply")
+    if isinstance(ir, bool):
+        return ir
+    return is_reply(tw.get("text", ""))
 
 
 def foreign_author(account, tw):
@@ -458,8 +467,7 @@ def foreign_author(account, tw):
 
 def reply_has_sell_verb(text):
     """A reply worth keeping: it mentions a sell so we don't miss exits."""
-    low = text.lower()
-    return any(v in low for v in SELL_VERBS)
+    return bool(SELL_PATTERN.search(text or ""))
 
 
 def slow_fetch_skip(account, state, now):
@@ -648,11 +656,11 @@ def build_signal(account, tw, interp):
     return record_from_parsed(account, tw, parsed)
 
 
-def should_send_to_llm(text):
+def should_send_to_llm(tw):
     """The pre-LLM gate: keep non-replies, and replies only if they mention a
     sell. Returns True if this tweet should be interpreted."""
-    if is_reply(text):
-        return reply_has_sell_verb(text)
+    if tweet_is_reply(tw):
+        return reply_has_sell_verb(tw.get("text", ""))
     return True
 
 
@@ -825,12 +833,13 @@ def _poll_batch(interp, batch_id, max_wait_s=None):
 
 def _collect_batch(interp, batch_id, lookup):
     """Stream a completed batch's results. Returns (parsed, errored) where parsed
-    is a list of (account, tw, parsed_dict). Accumulates batch token usage on
-    interp (billed at 50%). Records are TEXT-only; callers add the vision pass."""
-    parsed, errored = [], 0
+    is a list of (account, tw, parsed_dict) and errored is the list of custom_ids
+    whose requests did not succeed. Accumulates batch token usage on interp
+    (billed at 50%). Records are TEXT-only; callers add the vision pass."""
+    parsed, errored = [], []
     for result in interp.client.messages.batches.results(batch_id):
         if result.result.type != "succeeded":
-            errored += 1
+            errored.append(result.custom_id)
             continue
         msg = result.result.message
         u = msg.usage
@@ -874,14 +883,25 @@ def collect_live_batch(interp, candidates):
                         f"{BATCH_MAX_WAIT_S // 60}min; deferring to next run")
         return None
     parsed, errored = _collect_batch(interp, batch.id, lookup)
+    # Errored requests would otherwise be LOST FOREVER: newest_id has already
+    # advanced past these tweets, so they are never refetched. Retry each one
+    # real-time (full Haiku price; the errored set is normally tiny). A retry
+    # that still fails matches the non-batch live path's exposure (extract()
+    # returning None) — accepted there too.
+    if errored:
+        print(f"  batch: {len(errored)} request(s) errored; retrying "
+              f"real-time.", file=sys.stderr)
+        for cid in errored:
+            account, tw = lookup[cid]
+            p = interp.extract(tw.get("text", ""), account,
+                               (tw.get("created_at") or "")[:10])
+            parsed.append((account, tw, p))
     records = []
     for account, tw, p in parsed:
         _vision_enrich(interp, account, tw, p)
         rec = record_from_parsed(account, tw, p)
         if rec:
             records.append(rec)
-    if errored:
-        print(f"  batch: {errored} requests errored (skipped).", file=sys.stderr)
     return records
 
 
@@ -899,7 +919,7 @@ def backfill_batch(interp):
             if account in POSTS_ONLY_ACCOUNTS and tw.get("is_reply"):
                 skipped += 1
                 continue
-            if not influencer and not should_send_to_llm(tw.get("text", "")):
+            if not influencer and not should_send_to_llm(tw):
                 skipped += 1
                 continue
             candidates.append((f"{account}__{tw['id']}", account, tw))
@@ -933,7 +953,7 @@ def backfill_batch(interp):
         key = (s["account"], s["signal_type"])
         by[key] = by.get(key, 0) + 1
     print(f"\nBatch complete: {len(signals)} signals "
-          f"({len(candidates)} requests, {errored} errored).")
+          f"({len(candidates)} requests, {len(errored)} errored).")
     for (acct, st), c in sorted(by.items()):
         print(f"  {acct:16} {st:9} {c}")
     print(f"\nTokens: input {interp.batch_input_tokens}, "
@@ -1082,7 +1102,7 @@ def main():
             text = tw.get("text", "")
             # Influencer accounts (e.g. @IncomeSharks) bypass the reply gate —
             # every tweet AND reply is sent to the LLM.
-            if is_reply(text) and SOURCE_TYPE.get(account) != "influencer":
+            if tweet_is_reply(tw) and SOURCE_TYPE.get(account) != "influencer":
                 # Replies are skipped UNLESS they mention a sell — those we keep
                 # so we don't miss exits disclosed in @-reply threads.
                 if reply_has_sell_verb(text):

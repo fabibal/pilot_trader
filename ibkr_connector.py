@@ -327,6 +327,8 @@ def execute_order(order, ib=None):
                   still working); ledger stays 'pending'
       rejected  — IB rejected the order; ledger -> 'rejected'
       cancelled — no-op (e.g. SELL with no live position); ledger -> 'cancelled'
+      deferred  — SELL with no live shares but a pending BUY in the ledger;
+                  ledger stays 'pending' so auto_trader retries next run
       failed    — exception before/around submission; ledger -> 'failed'
 
     SELL share sizing reads the ACTUAL IB position (full=100%, partial=50% of
@@ -371,6 +373,18 @@ def execute_order(order, ib=None):
             # full -> 100% of held shares, partial -> 50%. Never oversell.
             held = _held_shares(ib, ticker)
             if held <= 0:
+                # No live shares, but the ledger still has a PENDING BUY for
+                # this ticker (e.g. an MOO resting for the open): the position
+                # just hasn't filled yet. Cancelling here would spend the sell
+                # signal forever (idempotency) and orphan the position once the
+                # buy fills. Leave the ledger 'pending' (no ib_order_id), so
+                # auto_trader's unsubmitted-order retry re-executes it after
+                # the buy is reconciled.
+                if om.has_pending_buy(ticker):
+                    result["detail"] = (f"no live {ticker} shares yet but a "
+                                        f"BUY is still pending — deferring sell")
+                    result["status"] = "deferred"
+                    return result
                 result["detail"] = f"no live {ticker} position to sell (no-op)"
                 _ledger("cancelled", reject_reason=result["detail"])
                 result["status"] = "cancelled"
@@ -384,7 +398,17 @@ def execute_order(order, ib=None):
             result["detail"] = f"selling {shares}/{int(held)} held ({sell_kind})"
         else:  # BUY: USD notional -> whole shares at the live ask
             price = _price(ib, contract)
-            shares = max(1, round(notional / price))
+            # Floor, never round: round() could exceed the per-position cap by
+            # up to ~50% (e.g. $1000/$650 -> 2 shares = $1300), and max(1, ...)
+            # forced 1 share of a >$1k stock (5x+ the cap). If even one share
+            # doesn't fit the notional, reject — the cap can never admit it.
+            shares = int(notional // price)
+            if shares < 1:
+                result["detail"] = (f"one share at ${price:,.2f} exceeds the "
+                                    f"${notional:,.2f} position notional")
+                _ledger("rejected", reject_reason=result["detail"])
+                result["status"] = "rejected"
+                return result
             result["shares"] = shares
             # Total-exposure guard (spec §5): long stock MV + this order's
             # notional must stay under the book cap.
@@ -432,8 +456,12 @@ def execute_order(order, ib=None):
                     filled_qty=filled, shares=shares,
                     ib_order_id=trade.order.orderId,
                     ib_perm_id=trade.order.permId, ib_status=st)
-        elif st in ("Cancelled", "ApiCancelled", "Inactive") or (
-                err and filled == 0):
+        elif (st in ("Cancelled", "ApiCancelled", "Inactive") and filled == 0) \
+                or (err and filled == 0):
+            # filled == 0 guard: a cancel AFTER a partial fill must not be
+            # recorded as 'rejected' — shares WERE traded. It falls through to
+            # the 'submitted' branch (ledger pending + ib ids) and the next
+            # reconcile_open_orders pass settles its true fate.
             reason = (f"{err.message} (code {err.errorCode})" if err else st)
             result["status"] = "rejected"
             result["detail"] = f"ib_status={st}: {reason}"
@@ -493,6 +521,19 @@ def reconcile_open_orders(ib=None):
         # orphaned prior-session order reports 0, so it must not key the index).
         by_oid = {t.order.orderId: t for t in trades if t.order.orderId}
         by_perm = {t.order.permId: t for t in trades if t.order.permId}
+        # Orders that REACHED A TERMINAL STATE before a Gateway restart are in
+        # neither open orders nor this session's trades — an MOO that filled at
+        # the open and was then orphaned by the watchdog cycling the Gateway
+        # stayed 'pending' forever. The completed-orders snapshot still reports
+        # them; key by permId (orderId is 0 across restarts). Session trades
+        # win on key collision (they carry live orderStatus).
+        try:
+            for t in ib.reqCompletedOrders(apiOnly=False):
+                pid = t.order.permId
+                if pid and pid not in by_perm:
+                    by_perm[pid] = t
+        except Exception:        # noqa: BLE001 - older gateways; non-fatal
+            pass
         for o in pending:
             t = by_oid.get(o.get("ib_order_id"))
             if t is None and o.get("ib_perm_id"):
@@ -502,6 +543,13 @@ def reconcile_open_orders(ib=None):
                 continue
             st = t.orderStatus.status
             filled = t.orderStatus.filled or 0
+            if not filled:
+                # Completed-order snapshots may carry the fill on the order
+                # itself (filledQuantity) rather than orderStatus. Guard
+                # against IB's UNSET_DECIMAL sentinel / NaN.
+                fq = getattr(t.order, "filledQuantity", None)
+                if isinstance(fq, (int, float)) and fq == fq and 0 < fq < 1e9:
+                    filled = fq
             avg = t.orderStatus.avgFillPrice or 0.0
             if st == "Filled" and filled > 0:
                 om.update_order_status(o["order_id"], "filled",
@@ -509,10 +557,23 @@ def reconcile_open_orders(ib=None):
                                        filled_qty=filled, ib_status=st)
                 summary["filled"] += 1
             elif st in ("Cancelled", "ApiCancelled", "Inactive"):
-                om.update_order_status(o["order_id"], "cancelled",
-                                       ib_status=st,
-                                       reject_reason=f"reconcile: {st}")
-                summary["cancelled"] += 1
+                if filled > 0:
+                    # Cancelled AFTER a partial fill: shares WERE traded.
+                    # Marking it 'cancelled' would zero its ledger exposure
+                    # and let a re-buy double the real position. Record it as
+                    # filled (conservative: full quantity stays in exposure);
+                    # the weekly position reconcile cross-checks share counts.
+                    om.update_order_status(o["order_id"], "filled",
+                                           fill_price=round(float(avg), 4),
+                                           filled_qty=filled, ib_status=st,
+                                           reject_reason=f"reconcile: partial "
+                                                         f"fill then {st}")
+                    summary["filled"] += 1
+                else:
+                    om.update_order_status(o["order_id"], "cancelled",
+                                           ib_status=st,
+                                           reject_reason=f"reconcile: {st}")
+                    summary["cancelled"] += 1
             else:
                 summary["still_pending"] += 1
         return summary

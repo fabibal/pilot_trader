@@ -149,19 +149,12 @@ def get_getxapi_credits():
 
 PORTFOLIO_LABELS = {"grok": "Grok", "claude": "Claude",
                     "deepseek": "DeepSeek", "chatgpt": "ChatGPT"}
-# Merge null/"unknown" portfolio into the most likely one based on the posting
-# account (grkportfolio->grok, theaiportfolios->claude, aifinancelabs->deepseek).
-ACCOUNT_DEFAULT_PF = {"grkportfolio": "grok", "theaiportfolios": "claude",
-                      "aifinancelabs": "deepseek"}
-# Human trader / influencer accounts. Kept entirely separate from the AI
-# portfolio views (own tab); excluded from the portfolio cards/charts.
-INFLUENCER_ACCOUNTS = {"IncomeSharks", "CelalKucuker", "traderstewie"}
-# Long-term conviction accounts (@moninvestor, @PelosiTracker): live in the
-# Influencers tab in their own "Long-term Holdings" sub-tab, but are NOT mixed
-# into the trade-call tables.
-LONGTERM_ACCOUNTS = {"moninvestor", "PelosiTracker"}
-# Everything that is not an AI portfolio bot (excluded from AI cards/charts).
-NON_AI_ACCOUNTS = INFLUENCER_ACCOUNTS | LONGTERM_ACCOUNTS
+# Account classification + null-portfolio fallback are shared with monitor/
+# reconcile/auto_trader via accounts.py (single source of truth). Influencer
+# accounts are kept entirely separate from the AI portfolio views (own tab);
+# long-term conviction accounts get the holdings sub-tab.
+from accounts import (ACCOUNT_DEFAULT_PF, INFLUENCER_ACCOUNTS,
+                      LONGTERM_ACCOUNTS, NON_AI_ACCOUNTS)
 
 
 def is_influencer(account):
@@ -736,16 +729,22 @@ def influencer_signals_data(df, account=None):
 
 _STATUS_LABEL = {resolver.HIT_TARGET: ("target hit", "green"),
                  resolver.STOPPED_OUT: ("stopped out", "red"),
-                 resolver.EXPIRED: ("expired", "dim")}
+                 resolver.EXPIRED: ("expired", "dim"),
+                 resolver.CLOSED_WIN: ("closed (win)", "green"),
+                 resolver.CLOSED_LOSS: ("closed (loss)", "red")}
 
 
 def influencer_resolutions(positions, account=None):
-    """List of (position, resolution|None) for every open influencer call,
-    resolved against its realized price path. If `account` is given, restrict
-    to that one handle."""
+    """List of (position, resolution|None) for influencer calls, resolved
+    against the realized price path. Includes calls the influencer EXPLICITLY
+    closed (sell tweet): a target/stop hit inside the holding window counts as
+    usual, otherwise the call is classified by realized return — excluding
+    closed calls computed the win rate only over calls they hadn't talked
+    about since. If `account` is given, restrict to that one handle."""
     out = []
     for p in influencer_positions(positions):
-        if p.get("status") != "open":
+        status = p.get("status")
+        if status not in ("open", "closed"):
             continue
         if account and p.get("account") != account:
             continue
@@ -753,7 +752,19 @@ def influencer_resolutions(positions, account=None):
         sym = _yf_symbol(p["ticker"], atype)
         tdate = p.get("trade_date") or (p.get("opened_at") or "")[:10] or None
         ohlc = get_ohlc(sym, tdate) if tdate else None
-        out.append((p, resolver.resolve_position(p, ohlc)))
+        if status == "open":
+            out.append((p, resolver.resolve_position(p, ohlc)))
+            continue
+        cdate = (p.get("closed_at") or "")[:10] or None
+        res = resolver.resolve_position(p, ohlc, until=cdate)
+        if res is None and cdate:
+            entry, _ = estimate_entry(p["ticker"], p.get("entry_price"),
+                                      p.get("trade_date"),
+                                      (p.get("opened_at") or "")[:10], atype)
+            res = resolver.resolve_closed(p, entry,
+                                          get_hist_close(sym, cdate), cdate)
+        if res is not None:    # unpriceable closed calls are excluded entirely
+            out.append((p, res))
     return out
 
 
@@ -769,7 +780,8 @@ def influencer_winrate_card(resolutions):
         html.Span(wr, style={"color": wr_color, "fontWeight": "bold",
                              "fontSize": "1.1rem"}),
         html.Span(f" win rate  ({s['decided']} calls resolved: "
-                  f"{s['hit']} target / {s['stopped']} stopped) · "
+                  f"{s['hit']} target / {s['stopped']} stopped / "
+                  f"{s['closed_win'] + s['closed_loss']} closed) · "
                   f"{s['expired']} expired · {s['live']} live",
                   style={"color": C["dim"], "fontSize": "0.8rem"}),
     ])
@@ -813,6 +825,8 @@ def _influencer_returns(account, resolutions, positions, is_lt):
                        if (entry and cur) else None))
     else:
         for p, _res in (resolutions or []):
+            if p.get("status") != "open":   # resolutions include closed calls
+                continue
             atype = p.get("asset_type") or "unknown"
             sym = _yf_symbol(p["ticker"], atype)
             entry = p.get("entry_price")
@@ -870,9 +884,12 @@ def influencer_header_card(account, resolutions=None, positions=None):
 
 
 def influencer_positions_table(resolutions):
-    """Influencer calls (stocks AND crypto) with their resolution status."""
+    """OPEN influencer calls (stocks AND crypto) with their resolution status.
+    Closed calls feed the win-rate stats but are not listed here."""
     rows = []
     for p, res in resolutions:
+        if p.get("status") != "open":
+            continue
         atype = p.get("asset_type") or "unknown"
         sym = _yf_symbol(p["ticker"], atype)
         entry = p.get("entry_price")
@@ -1044,36 +1061,47 @@ def _norm_date(val):
 def _perf_rows(positions):
     """Build cumulative equal-weight return % rows per portfolio + S&P 500 (list
     of {date, portfolio, return}). Shared by the AI-tab chart and the Overview
-    chart. Returns (rows, start_date)."""
-    entries = []   # (portfolio_label, yf_symbol, entry, open_date)
+    chart. Returns (rows, start_date).
+
+    CLOSED positions are included, with their return frozen at the exit-date
+    price from the close date onward. Open-only made the chart survivorship-
+    biased: every sold winner/loser vanished, retroactively rewriting the
+    curve each time a portfolio exited something."""
+    entries = []   # (portfolio_label, yf_symbol, entry, open_date, close_date|None)
     for p in positions:
-        if p.get("status") != "open":
+        status = p.get("status")
+        if status not in ("open", "closed"):
             continue
         atype = p.get("asset_type", "stock")
         entry, _ = estimate_entry(p["ticker"], p.get("entry_price"),
                                   p.get("trade_date"),
                                   (p.get("opened_at") or "")[:10], atype)
         od = _norm_date(p.get("trade_date")) or _norm_date((p.get("opened_at") or "")[:10])
+        cd = _norm_date((p.get("closed_at") or "")[:10]) \
+            if status == "closed" else None
         if entry and od:
             entries.append((PORTFOLIO_LABELS.get(pf_of(p), pf_of(p).title()),
-                            _yf_symbol(p["ticker"], atype), entry, od))
+                            _yf_symbol(p["ticker"], atype), entry, od, cd))
     if not entries:
         return [], None
 
     start = min(e[3] for e in entries)
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     idx = [d.strftime("%Y-%m-%d") for d in pd.bdate_range(start=start, end=today)]
-    series = {t: get_price_series(t, start) for _, t, _, _ in entries}
+    series = {t: get_price_series(t, start) for _, t, _, _, _ in entries}
 
     rows = []
     for pf in sorted({e[0] for e in entries}):
         pf_entries = [e for e in entries if e[0] == pf]
         for d in idx:
             rets = []
-            for _, t, entry, od in pf_entries:
+            for _, t, entry, od, cd in pf_entries:
                 if d < od:
                     continue
-                px_d = _price_asof(series.get(t), d)
+                # Closed positions freeze at their exit-date price: the
+                # realized return keeps contributing instead of vanishing.
+                px_d = _price_asof(series.get(t),
+                                   cd if (cd and d > cd) else d)
                 if px_d:
                     rets.append((px_d - entry) / entry * 100)
             if rets:
@@ -1729,10 +1757,17 @@ def youtube_section(summaries, limit=5):
 
 
 def ibkr_exposure_card(orders, store):
-    """Exposure gauge: open BUY notional vs the $10k cap, + cash/invested split."""
-    open_buy = sum(o.get("quantity", 0) for o in orders
-                   if o.get("action") == "BUY"
-                   and o.get("status") in ("pending", "filled"))
+    """Exposure gauge: open BUY notional vs the $10k cap, + cash/invested split.
+    Exposure is NET per ticker (buys minus sells, floored at 0) — mirrors
+    order_manager._open_buy_notional, so closed positions don't count forever."""
+    net = {}
+    for o in orders:
+        if o.get("status") not in ("pending", "filled"):
+            continue
+        q = o.get("quantity", 0) or 0
+        t = o.get("ticker")
+        net[t] = net.get(t, 0.0) + (q if o.get("action") == "BUY" else -q)
+    open_buy = sum(v for v in net.values() if v > 0)
     cap = 10_000.0
     pct = min(open_buy / cap, 1.0) if cap else 0.0
     bar_color = C["green"] if pct < 0.8 else C["yellow"] if pct < 1.0 else C["red"]

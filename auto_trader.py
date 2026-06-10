@@ -47,16 +47,10 @@ TRADES_FILE = monitor.TRADES_FILE
 # starts from an empty ledger; we do NOT buy into the pre-existing book).
 SINCE_DATE = "2026-06-02"
 
-# Account -> default portfolio when the LLM left portfolio null (mirrors
-# pf_of() in dashboard.py). aifinancelabs posts carry the portfolio explicitly
-# from the tweet text (grok/claude/deepseek/chatgpt), so they resolve regardless
-# of this fallback.
-ACCOUNT_DEFAULT_PF = {"grkportfolio": "grok", "theaiportfolios": "claude",
-                      "aifinancelabs": "deepseek"}
-
-# AI portfolios we mirror to the paper account. ChatGPT is intentionally excluded
-# (no standalone handle; only surfaces via @aifinancelabs text).
-MIRROR_PORTFOLIOS = {"grok", "claude", "deepseek"}
+# Account-identity config is shared via accounts.py (single source of truth).
+# aifinancelabs posts carry the portfolio explicitly from the tweet text
+# (grok/claude/deepseek/chatgpt), so they resolve regardless of the fallback.
+from accounts import ACCOUNT_DEFAULT_PF, MIRROR_PORTFOLIOS  # noqa: E402
 
 # --- circuit breaker (issue 4) ---------------------------------------------
 DATA_DIR = os.path.join(HOME, "data")
@@ -81,9 +75,13 @@ def _save_breaker(state):
 
 
 def _orders_today_count():
-    """Order attempts recorded in the ledger today (all tickers, UTC day)."""
+    """Orders recorded in the ledger today (all tickers, UTC day) that are
+    live or executed. Cancelled no-ops / IB rejects / skips no longer consume
+    the day's budget — a noisy day of no-ops used to block real trades."""
     today = _utc_today()
-    return sum(1 for o in om._load() if (o.get("timestamp") or "")[:10] == today)
+    return sum(1 for o in om._load()
+               if o.get("status") in om.OPEN_STATUSES
+               and (o.get("timestamp") or "")[:10] == today)
 
 
 # --- logging ----------------------------------------------------------------
@@ -140,11 +138,26 @@ def _qualifies(sig):
         return False
     if sig.get("asset_type") != "stock":                 # stocks only
         return False
-    if st == "buy" and sig.get("confidence") not in om.BUY_CONFIDENCE:
+    # medium+ confidence for buys AND sells: a low/none-confidence (possibly
+    # hallucinated) sell must not liquidate a real position. Gated sells are
+    # alerted via Telegram (see _gated_sell handling in _run_locked) so a real
+    # exit hiding in one is reviewed by a human, not silently dropped.
+    if sig.get("confidence") not in om.BUY_CONFIDENCE:
         return False
     if (sig.get("timestamp") or "")[:10] < SINCE_DATE:   # spec §8 cutoff
         return False
     return True
+
+
+def _gated_sell(sig):
+    """A sell that fails ONLY _qualifies' confidence gate: dangerous to act on
+    (least-trusted extraction, real liquidation), but dangerous to drop
+    silently (it may be a real exit). These are skipped + Telegram-alerted."""
+    return (sig.get("signal_type") == "sell"
+            and sig.get("confidence") not in om.BUY_CONFIDENCE
+            and _effective_pf(sig) in MIRROR_PORTFOLIOS
+            and sig.get("asset_type") == "stock"
+            and (sig.get("timestamp") or "")[:10] >= SINCE_DATE)
 
 
 def _telegram(text):
@@ -206,10 +219,26 @@ def _run_locked(no_trade=False, trades_path=None):
     summary = {"candidates": len(candidates), "queued": 0, "filled": 0,
                "submitted": 0, "rejected": 0, "cancelled": 0, "failed": 0}
 
-    # Pending orders (e.g. MOO orders resting for the open) must be reconciled
-    # even on a run with no new signals, so don't bail out while any exist.
-    pending_exists = any(o.get("status") == "pending" and o.get("ib_order_id")
-                         for o in om._load())
+    # Low/none-confidence sells: skip (record_skip dedups via the ledger so
+    # this fires ONCE per signal) and page the human to review the tweet.
+    for s in signals:
+        sid = s.get("tweet_id") or s.get("signal_id")
+        if _gated_sell(s) and not om.check_already_actioned(sid):
+            tkr = (s.get("tickers") or ["?"])[0]
+            om.record_skip(s, f"sell gated: confidence "
+                              f"{s.get('confidence')!r} below medium")
+            _log(f"GATED [{_effective_pf(s)}] SELL {tkr} "
+                 f"confidence={s.get('confidence')} — NOT executed; "
+                 f"review manually signal={sid}")
+            monitor.notify_telegram(
+                f"low-confidence SELL {tkr} ({_effective_pf(s)}) NOT executed "
+                f"— review: {s.get('url')}")
+            summary["gated_sells"] = summary.get("gated_sells", 0) + 1
+
+    # Pending orders must be handled even on a run with no new signals: orders
+    # WITH an ib_order_id (e.g. MOO resting for the open) need reconciling, and
+    # orders WITHOUT one (deferred sells, --no-trade queues) need (re)submitting.
+    pending_exists = any(o.get("status") == "pending" for o in om._load())
     if not candidates and not pending_exists:
         _log("no actionable new signals and no pending orders to reconcile")
         return summary
@@ -275,6 +304,24 @@ def _run_locked(no_trade=False, trades_path=None):
             ibh.disconnect()
         return summary
 
+    # (Re)submit ledger orders that were queued but never reached IB: sells
+    # deferred while their BUY was still resting (status stayed 'pending' with
+    # no ib_order_id), and anything queued during a --no-trade run. Without
+    # this they sat 'pending' forever — reconcile only matches orders that
+    # HAVE an ib_order_id. Runs after reconcile_open_orders, so a deferred
+    # sell executes as soon as its buy is reconciled to 'filled'.
+    if not no_trade and ibh is not None:
+        for o in om._load():
+            if o.get("status") != "pending" or o.get("ib_order_id"):
+                continue
+            try:
+                res = ibk.execute_order(o, ib=ibh)
+                _log(f"retried unsubmitted {o['action']} {o['ticker']} "
+                     f"order={o['order_id']}: {res['status']} ({res['detail']})")
+                summary["retried"] = summary.get("retried", 0) + 1
+            except Exception as e:    # retry must never block new signals
+                _log(f"retry of {o.get('order_id')} failed (non-fatal): {e!r}")
+
     daily_cap_alerted = False
     try:
         for sig in candidates:
@@ -333,6 +380,11 @@ def _run_locked(no_trade=False, trades_path=None):
             elif status == "cancelled":
                 _log(f"CANCELLED (no-op) [{pf}] {res['action']} {tkr}: "
                      f"{res['detail']} order={order_id} signal={sid}")
+            elif status == "deferred":
+                # SELL whose BUY is still resting: ledger stays pending; the
+                # unsubmitted-order retry re-executes it after the buy fills.
+                _log(f"DEFERRED [{pf}] {res['action']} {tkr}: {res['detail']} "
+                     f"order={order_id} signal={sid}")
             elif status == "rejected":
                 _log(f"REJECTED-BY-IB {res['action']} {tkr}: {res['detail']} "
                      f"order={order_id} signal={sid}")

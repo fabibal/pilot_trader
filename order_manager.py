@@ -85,9 +85,12 @@ def _net_notional(ticker, orders):
 
 
 def _open_buy_notional(orders):
-    """Total open BUY notional across the book (toward MAX_TOTAL_EXPOSURE)."""
-    return sum(o["quantity"] for o in orders
-               if o["action"] == "BUY" and o["status"] in OPEN_STATUSES)
+    """Total OPEN notional across the book (toward MAX_TOTAL_EXPOSURE): sum of
+    per-ticker net exposure (buys minus sells). Summing raw BUY rows would count
+    closed positions forever — once lifetime buys passed the cap, every new buy
+    would be rejected even with zero open positions."""
+    tickers = {o["ticker"] for o in orders if o["status"] in OPEN_STATUSES}
+    return sum(_net_notional(t, orders) for t in tickers)
 
 
 def _n_open_positions(orders):
@@ -102,6 +105,33 @@ def check_already_actioned(signal_id, path=ORDERS_FILE):
     if signal_id is None:
         return False
     return any(o.get("signal_id") == signal_id for o in _load(path))
+
+
+def has_pending_buy(ticker, path=ORDERS_FILE):
+    """True if a BUY for `ticker` is queued/submitted but not yet filled (e.g.
+    an MOO order resting for the open). Used by the connector to DEFER a sell
+    instead of cancelling it as a no-op while its buy hasn't filled yet."""
+    return any(o.get("ticker") == ticker and o.get("action") == "BUY"
+               and o.get("status") == "pending" for o in _load(path))
+
+
+def record_skip(signal, reason, path=ORDERS_FILE):
+    """Append a non-order 'skipped' row for a signal we deliberately do NOT
+    act on (e.g. a low-confidence sell). Reuses check_already_actioned's
+    idempotency so the signal is alerted/considered exactly once. 'skipped'
+    is not in OPEN_STATUSES, so it never counts toward exposure or caps."""
+    orders = _load(path)
+    orders.append({
+        "order_id": "skp_" + uuid.uuid4().hex[:12],
+        "signal_id": signal.get("tweet_id") or signal.get("signal_id"),
+        "ticker": (signal.get("tickers") or ["?"])[0],
+        "action": "SELL" if signal.get("signal_type") == "sell" else "BUY",
+        "quantity": 0.0,
+        "status": "skipped",
+        "reject_reason": reason,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    })
+    _save(orders, path)
 
 
 def get_order(order_id, path=ORDERS_FILE):
@@ -134,23 +164,26 @@ def risk_check(ticker, action, quantity, path=ORDERS_FILE):
     """Enforce IBKR_SPEC.md §5/§6 caps. Returns (approved, reason).
 
     - stocks only (rejects crypto-looking tickers)
-    - max 1 order per ticker per UTC day
-    - BUY only: ONE active position per ticker (lifetime), per-position cap,
-      and total-exposure cap
+    - BUY only: max 1 order per ticker per UTC day, ONE active position per
+      ticker (lifetime), per-position cap, and total-exposure cap. The daily
+      cap is anti-churn, so it does not delay a risk-REDUCING sell (a same-day
+      bot reversal previously had its exit pushed to the next UTC day), and it
+      counts only orders that are live/executed — cancelled no-ops and IB
+      rejects no longer burn the day's slot.
     """
     orders = _load(path)
 
     if _looks_like_crypto(ticker):
         return False, f"{ticker} is crypto; stocks only (spec §6)"
 
-    today = _today()
-    todays = sum(1 for o in orders if o["ticker"] == ticker
-                 and (o.get("timestamp") or "")[:10] == today)
-    if todays >= MAX_ORDERS_PER_TICKER_PER_DAY:
-        return False, (f"{ticker}: daily order limit reached "
-                       f"({MAX_ORDERS_PER_TICKER_PER_DAY}/day, spec §5)")
-
     if action == "BUY":
+        today = _today()
+        todays = sum(1 for o in orders if o["ticker"] == ticker
+                     and o["status"] in OPEN_STATUSES
+                     and (o.get("timestamp") or "")[:10] == today)
+        if todays >= MAX_ORDERS_PER_TICKER_PER_DAY:
+            return False, (f"{ticker}: daily order limit reached "
+                           f"({MAX_ORDERS_PER_TICKER_PER_DAY}/day, spec §5)")
         # One active position per ticker (lifetime): block if the ticker still
         # has open exposure -- a pending order OR a filled position not yet
         # closed by a sell. _net_notional counts OPEN_STATUSES (pending+filled)
@@ -199,6 +232,13 @@ def queue_order(signal, path=ORDERS_FILE):
         n_open = _n_open_positions(orders) + 1                   # incl. this one
         quantity = round(min(MAX_TOTAL_EXPOSURE / n_open, MAX_POSITION_USD), 2)
     elif st == "sell":
+        # Sells need medium+ confidence too: a low/none-confidence (possibly
+        # hallucinated) extraction must not liquidate a real position. Matches
+        # reconcile.py's GATED_CONFIDENCE, which already keeps such signals
+        # from moving paper-tracking state. auto_trader pages Telegram for
+        # gated sells so a real exit hiding in one isn't silently dropped.
+        if signal.get("confidence") not in BUY_CONFIDENCE:
+            return None
         held = _net_notional(ticker, orders)
         if held <= 0:                                            # §4 no-op
             return None

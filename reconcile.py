@@ -23,19 +23,17 @@ import json
 import os
 import tempfile
 
-HOME = "/home/fbazsa/pilot_trader"
-TRADES_FILE = os.path.join(HOME, "trades.json")
-POSITIONS_FILE = os.path.join(HOME, "positions.json")
-
 # Account-to-portfolio fallback, applied at STORAGE time so the position key
 # matches what the dashboard shows (avoids a null-portfolio record and a
 # resolved-portfolio record for the same holding being counted twice).
-# Mirrors ACCOUNT_DEFAULT_PF / pf_of() in dashboard.py.
-ACCOUNT_DEFAULT_PF = {"grkportfolio": "grok", "theaiportfolios": "claude",
-                      "aifinancelabs": "deepseek"}
-# Influencer accounts have no portfolio (portfolio stays null by design).
-# Includes the long-term conviction account @moninvestor.
-INFLUENCER_ACCOUNTS = {"IncomeSharks", "moninvestor"}
+# NON_AI_ACCOUNTS (all influencers + long-term accounts) never key a
+# portfolio — this previously used a local, INCOMPLETE influencer set that
+# disagreed with dashboard.py.
+from accounts import ACCOUNT_DEFAULT_PF, NON_AI_ACCOUNTS
+
+HOME = "/home/fbazsa/pilot_trader"
+TRADES_FILE = os.path.join(HOME, "trades.json")
+POSITIONS_FILE = os.path.join(HOME, "positions.json")
 # Signals at this confidence are logged to trades.json but must NOT move
 # position state (see confidence gate).
 GATED_CONFIDENCE = {"low", "none"}
@@ -68,7 +66,7 @@ def is_junk_ticker(ticker):
 
 def pf_of(account, portfolio):
     """Resolve the effective portfolio for keying. Influencers keep null."""
-    if account in INFLUENCER_ACCOUNTS:
+    if account in NON_AI_ACCOUNTS:
         return None
     return portfolio or ACCOUNT_DEFAULT_PF.get(account)
 
@@ -159,6 +157,16 @@ def reconcile(trades_file=TRADES_FILE, positions_file=POSITIONS_FILE):
         st = e.get("signal_type")
         if st == "buy":
             if pos["status"] != "open":
+                # A buy that RE-opens a previously closed position starts a
+                # fresh trade cycle: the prior cycle's entry/stop/target/size
+                # must not leak into it (they made re-entry returns compute
+                # off the OLD entry price).
+                if pos["status"] == "closed":
+                    pos["entry_price"] = None
+                    pos["trade_date"] = None
+                    pos["stop_loss"] = None
+                    pos["target"] = None
+                    pos["size_pct"] = None
                 pos["status"] = "open"
                 pos["opened_at"] = e.get("timestamp")
                 pos["closed_at"] = None        # re-opened after a prior close
