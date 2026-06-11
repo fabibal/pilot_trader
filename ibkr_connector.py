@@ -466,12 +466,15 @@ def execute_order(order, ib=None):
                     filled_qty=filled, shares=shares,
                     ib_order_id=trade.order.orderId,
                     ib_perm_id=trade.order.permId, ib_status=st)
-        elif (st in ("Cancelled", "ApiCancelled", "Inactive") and filled == 0) \
-                or (err and filled == 0):
-            # filled == 0 guard: a cancel AFTER a partial fill must not be
-            # recorded as 'rejected' — shares WERE traded. It falls through to
-            # the 'submitted' branch (ledger pending + ib ids) and the next
-            # reconcile_open_orders pass settles its true fate.
+        elif st in ("Cancelled", "ApiCancelled", "Inactive") and filled == 0:
+            # Rejected = IB put the order in a terminal cancelled state with
+            # nothing traded. Two deliberate exclusions fall through to the
+            # 'submitted' branch (ledger pending + ib ids) so the next
+            # reconcile_open_orders pass settles their true fate:
+            #   - a cancel AFTER a partial fill (shares WERE traded), and
+            #   - an error-log entry on a NON-terminal order — IB attaches
+            #     benign warnings to resting orders, and 'rejected' is terminal
+            #     under idempotency (the signal would never be retried).
             reason = (f"{err.message} (code {err.errorCode})" if err else st)
             result["status"] = "rejected"
             result["detail"] = f"ib_status={st}: {reason}"
@@ -482,6 +485,9 @@ def execute_order(order, ib=None):
             # PreSubmitted / Submitted: accepted but not yet filled (held for the
             # open when market is closed, or still working). Keep ledger pending.
             result["status"] = "submitted"
+            if err:    # surface any warning attached to the resting order
+                result["detail"] += (f" [warn: {err.message} "
+                                     f"(code {err.errorCode})]")
             _ledger("pending", shares=shares, ib_order_id=trade.order.orderId,
                     ib_perm_id=trade.order.permId, ib_status=st)
         return result

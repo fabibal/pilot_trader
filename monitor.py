@@ -877,10 +877,17 @@ def collect_live_batch(interp, candidates):
     print(f"Submitted batch {batch.id}: {len(candidates)} requests. "
           f"Polling (max {BATCH_MAX_WAIT_S // 60} min)...")
     if not _poll_batch(interp, batch.id, BATCH_MAX_WAIT_S):
+        # Cancel the abandoned batch: the next run re-fetches these tweets and
+        # submits a FRESH batch, so letting the old one run to completion would
+        # bill the same tokens twice (its results are never collected).
+        try:
+            interp.client.messages.batches.cancel(batch.id)
+        except Exception as e:                      # noqa: BLE001 - best-effort
+            print(f"  (cancel of abandoned batch failed: {e})", file=sys.stderr)
         print(f"Batch {batch.id} did not finish within {BATCH_MAX_WAIT_S // 60} "
               f"min - deferring signals to the next run.", file=sys.stderr)
         notify_telegram(f"batch {batch.id} exceeded "
-                        f"{BATCH_MAX_WAIT_S // 60}min; deferring to next run")
+                        f"{BATCH_MAX_WAIT_S // 60}min; cancelled + deferred to next run")
         return None
     parsed, errored = _collect_batch(interp, batch.id, lookup)
     # Errored requests would otherwise be LOST FOREVER: newest_id has already

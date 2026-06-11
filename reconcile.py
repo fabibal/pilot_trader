@@ -12,8 +12,10 @@ record per (account, portfolio, ticker):
 Rules:
   - buy            -> opens the position (sets opened_at / entry / trade_date)
   - sell           -> closes it (sets closed_at)
-  - position       -> updates size (and opens it if not already open, since a
-                      current-holding disclosure implies the position is held)
+  - position       -> updates size (and opens it if it was NEVER opened, since a
+                      current-holding disclosure implies the position is held).
+                      It does NOT reopen a closed position -- disclosures are
+                      often recaps of old holdings, so only a buy re-opens.
 
 Run standalone:  python reconcile.py
 Or import reconcile() from monitor.py after each fetch.
@@ -195,6 +197,8 @@ def reconcile(trades_file=TRADES_FILE, positions_file=POSITIONS_FILE):
                 pos["status"] = "closed"
                 pos["closed_at"] = e.get("timestamp")
         elif st == "position":
+            # Only a never-seen ticker opens here; a CLOSED position stays
+            # closed (disclosures recap old holdings — only a buy re-opens).
             if pos["status"] is None:           # disclosure implies it's held
                 pos["status"] = "open"
                 pos["opened_at"] = e.get("timestamp")
