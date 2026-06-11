@@ -655,19 +655,24 @@ if __name__ == "__main__":
     _ap.add_argument("--reconcile-positions", action="store_true",
                      help="compare ledger filled positions vs IB; log divergence")
     _args = _ap.parse_args()
-    if _args.reconcile_orders:
-        print("reconcile_open_orders:", reconcile_open_orders())
-        raise SystemExit(0)
-    if _args.reconcile_positions:
-        div = reconcile_positions()
-        print("divergences:", div if div else "none")
-        raise SystemExit(0)
-    # Default smoke test: print account + portfolio.
-    _ib = connect()
+    # Own clientId for CLI runs: the default (7) is auto_trader's, and the
+    # weekly Sunday 20:00 UTC reconcile cron coincides with a monitor cron
+    # slot — a same-id connect while auto_trader is connected is rejected
+    # by the Gateway. 12 is unused (7 auto_trader, 20 dashboard, 8-11/21-26
+    # tests).
+    CLI_CLIENT_ID = 12
+    _ib = connect(client_id=CLI_CLIENT_ID)
     try:
-        import json
-        print("market_open:", is_market_open())
-        print("account:", json.dumps(get_account_value(_ib), indent=2))
-        print("portfolio:", json.dumps(get_portfolio(_ib), indent=2))
+        if _args.reconcile_orders:
+            print("reconcile_open_orders:", reconcile_open_orders(_ib))
+        elif _args.reconcile_positions:
+            div = reconcile_positions(_ib)
+            print("divergences:", div if div else "none")
+        else:
+            # Default smoke test: print account + portfolio.
+            import json
+            print("market_open:", is_market_open())
+            print("account:", json.dumps(get_account_value(_ib), indent=2))
+            print("portfolio:", json.dumps(get_portfolio(_ib), indent=2))
     finally:
         _ib.disconnect()

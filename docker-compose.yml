@@ -24,16 +24,17 @@ services:
       # Bind-mount the host project so trades.json / monitor.py / dashboard.py
       # are live inside the container at the path the app expects.
       - .:/home/fbazsa/pilot_trader
-      # Docker socket for the system-status bar: per-container CPU/RAM stats +
-      # the Restart button (POST /containers/.../restart).
-      # ⚠️ SECURITY: this grants the container full Docker-daemon control,
-      # which is root-equivalent on the host (any process in the container
-      # could start a privileged container). A `:ro` mount would NOT mitigate
-      # it (connecting to a unix socket needs write permission, so :ro just
-      # breaks stats AND restart) and a socket proxy is overkill here.
+      # Docker socket for the system-status bar: per-container CPU/RAM stats.
+      # The dashboard only ever issues GET requests against it (no restart
+      # button here — that's ~/paper_trader's dashboard).
+      # ⚠️ SECURITY: the mount still grants full Docker-daemon control, which
+      # is root-equivalent on the host (any process in the container could
+      # start a privileged container). A `:ro` mount would NOT mitigate it
+      # (connecting to a unix socket needs write permission, so :ro just
+      # breaks the stats too) and a socket proxy is overkill here.
       # Accepted because: dashboard is LAN-only (no port forwarding), paper
       # account only, and the container runs only our own code (bind-mounted
-      # repo). Same pattern as ~/paper_trader. Revisit before any WAN exposure.
+      # repo). Revisit before any WAN exposure.
       - /var/run/docker.sock:/var/run/docker.sock
 
     deploy:
