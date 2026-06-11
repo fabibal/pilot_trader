@@ -8,7 +8,7 @@
     "status": "open",
     "entry_price": 55000,
     "stop_loss": 60000,
-    "target": 144000,
+    "target": 65299.98,
     "size_pct": null,
     "trade_date": null,
     "holding_thesis": "Bitcoin has a clean chart with strong support levels and upside to ATH.",
@@ -91,6 +91,13 @@
         "timestamp": "2026-06-08T14:50:23+00:00",
         "confidence": "medium",
         "url": "https://x.com/CelalKucuker/status/2063997071435186248"
+      },
+      {
+        "tweet_id": "2064704549764390928",
+        "signal_type": "buy",
+        "timestamp": "2026-06-10T13:41:39+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/CelalKucuker/status/2064704549764390928"
       }
     ]
   },
@@ -337,6 +344,31 @@
     "account": "CelalKucuker",
     "source_type": "influencer",
     "portfolio": null,
+    "ticker": "OP",
+    "asset_type": "crypto",
+    "status": "open",
+    "entry_price": 0.06,
+    "stop_loss": null,
+    "target": 0.6,
+    "size_pct": null,
+    "trade_date": null,
+    "holding_thesis": "10x potential identified at higher price level.",
+    "opened_at": "2026-06-10T13:49:18+00:00",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2064706474136175013",
+        "signal_type": "buy",
+        "timestamp": "2026-06-10T13:49:18+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/CelalKucuker/status/2064706474136175013"
+      }
+    ]
+  },
+  {
+    "account": "CelalKucuker",
+    "source_type": "influencer",
+    "portfolio": null,
     "ticker": "SIVE",
     "asset_type": "stock",
     "status": "open",
@@ -366,8 +398,8 @@
     "asset_type": "crypto",
     "status": "open",
     "entry_price": null,
-    "stop_loss": null,
-    "target": 600,
+    "stop_loss": 50000,
+    "target": 600000,
     "size_pct": null,
     "trade_date": null,
     "holding_thesis": "Sitting on long-term trend support with attractive risk/reward profile.",
@@ -387,6 +419,13 @@
         "timestamp": "2026-06-03T18:50:02+00:00",
         "confidence": "medium",
         "url": "https://x.com/CelalKucuker/status/2062245439181615503"
+      },
+      {
+        "tweet_id": "2064808524731801999",
+        "signal_type": "position",
+        "timestamp": "2026-06-10T20:34:49+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/CelalKucuker/status/2064808524731801999"
       }
     ]
   },
@@ -398,11 +437,11 @@
     "asset_type": "crypto",
     "status": "open",
     "entry_price": 0.8,
-    "stop_loss": 0.8113,
-    "target": 8.425,
+    "stop_loss": 0.55,
+    "target": 9.0,
     "size_pct": 100,
     "trade_date": null,
-    "holding_thesis": "Strong support zone and accumulation area suggest potential bottom.",
+    "holding_thesis": "Historical price levels suggest potential for significant upside to 8-9 by 2027.",
     "opened_at": "2026-05-28T14:48:19+00:00",
     "closed_at": null,
     "signals": [
@@ -447,6 +486,20 @@
         "timestamp": "2026-06-06T16:08:41+00:00",
         "confidence": "medium",
         "url": "https://x.com/CelalKucuker/status/2063291998807654501"
+      },
+      {
+        "tweet_id": "2064702777687781566",
+        "signal_type": "buy",
+        "timestamp": "2026-06-10T13:34:37+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/CelalKucuker/status/2064702777687781566"
+      },
+      {
+        "tweet_id": "2064711096519303300",
+        "signal_type": "position",
+        "timestamp": "2026-06-10T14:07:40+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/CelalKucuker/status/2064711096519303300"
       }
     ]
   },
@@ -483,11 +536,11 @@
     "asset_type": "crypto",
     "status": "open",
     "entry_price": 0.17,
-    "stop_loss": 0.1702,
-    "target": 0.2,
+    "stop_loss": 0.1329,
+    "target": 1,
     "size_pct": null,
     "trade_date": null,
-    "holding_thesis": "XLM will reach a new ATH before the end of the year",
+    "holding_thesis": "XLM approaching $1 ATH represents significant upside potential.",
     "opened_at": "2026-06-02T12:44:02+00:00",
     "closed_at": null,
     "signals": [
@@ -497,6 +550,13 @@
         "timestamp": "2026-06-02T12:44:02+00:00",
         "confidence": "medium",
         "url": "https://x.com/CelalKucuker/status/2061790947084521538"
+      },
+      {
+        "tweet_id": "2064815520184967244",
+        "signal_type": "buy",
+        "timestamp": "2026-06-10T21:02:37+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/CelalKucuker/status/2064815520184967244"
       }
     ]
   },
@@ -509,7 +569,7 @@
     "status": "open",
     "entry_price": null,
     "stop_loss": 1.1175,
-    "target": 12,
+    "target": 5.34527,
     "size_pct": null,
     "trade_date": null,
     "holding_thesis": "Cup and handle formation with Fibonacci retracement setup suggests upside to $12.",
@@ -564,6 +624,13 @@
         "timestamp": "2026-06-08T18:35:39+00:00",
         "confidence": "medium",
         "url": "https://x.com/CelalKucuker/status/2064053761090204074"
+      },
+      {
+        "tweet_id": "2064765801391894805",
+        "signal_type": "buy",
+        "timestamp": "2026-06-10T17:45:03+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/CelalKucuker/status/2064765801391894805"
       }
     ]
   },
@@ -1193,7 +1260,7 @@
     "portfolio": null,
     "ticker": "AVGO",
     "asset_type": "stock",
-    "status": "open",
+    "status": "closed",
     "entry_price": null,
     "stop_loss": null,
     "target": null,
@@ -1201,7 +1268,7 @@
     "trade_date": "2026-03-30",
     "holding_thesis": null,
     "opened_at": "2026-05-01T14:22:35+00:00",
-    "closed_at": null,
+    "closed_at": "2026-06-10T16:54:37+00:00",
     "signals": [
       {
         "tweet_id": "2050219336162238828",
@@ -1209,6 +1276,13 @@
         "timestamp": "2026-05-01T14:22:35+00:00",
         "confidence": "high",
         "url": "https://x.com/PelosiTracker/status/2050219336162238828"
+      },
+      {
+        "tweet_id": "2064753112242438379",
+        "signal_type": "sell",
+        "timestamp": "2026-06-10T16:54:37+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/PelosiTracker/status/2064753112242438379"
       }
     ]
   },
@@ -2650,6 +2724,31 @@
     "account": "moninvestor",
     "source_type": "influencer",
     "portfolio": null,
+    "ticker": "ENHA",
+    "asset_type": "stock",
+    "status": "open",
+    "entry_price": null,
+    "stop_loss": null,
+    "target": null,
+    "size_pct": null,
+    "trade_date": "2026-06-09",
+    "holding_thesis": "Early entry on a company before it becomes widely known.",
+    "opened_at": "2026-06-10T13:44:41+00:00",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2064705311747825745",
+        "signal_type": "buy",
+        "timestamp": "2026-06-10T13:44:41+00:00",
+        "confidence": "high",
+        "url": "https://x.com/moninvestor/status/2064705311747825745"
+      }
+    ]
+  },
+  {
+    "account": "moninvestor",
+    "source_type": "influencer",
+    "portfolio": null,
     "ticker": "HIMS",
     "asset_type": "stock",
     "status": "open",
@@ -3320,6 +3419,31 @@
     ]
   },
   {
+    "account": "moninvestor",
+    "source_type": "influencer",
+    "portfolio": null,
+    "ticker": "SOFI",
+    "asset_type": "stock",
+    "status": "open",
+    "entry_price": null,
+    "stop_loss": null,
+    "target": null,
+    "size_pct": null,
+    "trade_date": null,
+    "holding_thesis": "SOFI is viewed as a great long-term buy opportunity at current levels.",
+    "opened_at": "2026-06-09T18:59:03+00:00",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2064422036420567341",
+        "signal_type": "buy",
+        "timestamp": "2026-06-09T18:59:03+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/moninvestor/status/2064422036420567341"
+      }
+    ]
+  },
+  {
     "account": "theaiportfolios",
     "source_type": "portfolio",
     "portfolio": "claude",
@@ -3370,7 +3494,7 @@
     "target": null,
     "size_pct": null,
     "trade_date": "2026-04-07",
-    "holding_thesis": "AI silicon growing 143% year-over-year with strong multi-year AI revenue compounding trajectory.",
+    "holding_thesis": "Long-term AI-chip position.",
     "opened_at": "2026-05-31T14:12:51.000Z",
     "closed_at": null,
     "signals": [
@@ -3408,6 +3532,13 @@
         "timestamp": "2026-06-04T06:44:06+00:00",
         "confidence": "medium",
         "url": "https://x.com/theaiportfolios/status/2062425140152197299"
+      },
+      {
+        "tweet_id": "2064396614631088370",
+        "signal_type": "position",
+        "timestamp": "2026-06-09T17:18:02+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/theaiportfolios/status/2064396614631088370"
       }
     ]
   },
@@ -3470,10 +3601,10 @@
     "status": "open",
     "entry_price": null,
     "stop_loss": null,
-    "target": 1215,
-    "size_pct": null,
+    "target": 1400,
+    "size_pct": 9.3,
     "trade_date": null,
-    "holding_thesis": "Outperforming during market selloff; strong relative strength.",
+    "holding_thesis": "Lilly owns the best metabolic franchise in the industry with Retatrutide showing 28.3% average weight loss (70 pounds) in Phase 3 obesity trial, the highest any drug has produced, and Foundayo already FDA-approved and beating oral semaglutide on blood-sugar control.",
     "opened_at": "2026-06-04T15:49:01+00:00",
     "closed_at": null,
     "signals": [
@@ -3497,6 +3628,13 @@
         "timestamp": "2026-06-08T14:31:16+00:00",
         "confidence": "medium",
         "url": "https://x.com/theaiportfolios/status/2063992257938608605"
+      },
+      {
+        "tweet_id": "2064724160786452793",
+        "signal_type": "position",
+        "timestamp": "2026-06-10T14:59:35+00:00",
+        "confidence": "high",
+        "url": "https://x.com/theaiportfolios/status/2064724160786452793"
       }
     ]
   },
@@ -3537,7 +3675,7 @@
     "target": null,
     "size_pct": 15,
     "trade_date": "2026-04-01",
-    "holding_thesis": "Enterprise AI doesn't do much until it can execute inside a company's workflows, and ServiceNow owns that layer.",
+    "holding_thesis": "AI is an enormous tailwind for software companies.",
     "opened_at": "2026-05-28T21:59:10.000Z",
     "closed_at": null,
     "signals": [
@@ -3617,6 +3755,20 @@
         "timestamp": "2026-06-05T17:22:26+00:00",
         "confidence": "high",
         "url": "https://x.com/theaiportfolios/status/2062948173518360715"
+      },
+      {
+        "tweet_id": "2064380688233791491",
+        "signal_type": "position",
+        "timestamp": "2026-06-09T16:14:45+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/theaiportfolios/status/2064380688233791491"
+      },
+      {
+        "tweet_id": "2064509377713782938",
+        "signal_type": "position",
+        "timestamp": "2026-06-10T00:46:07+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/theaiportfolios/status/2064509377713782938"
       }
     ]
   },
@@ -3679,10 +3831,10 @@
     "status": "open",
     "entry_price": 107.0,
     "stop_loss": null,
-    "target": 138.0,
+    "target": 165,
     "size_pct": 5.0,
     "trade_date": "2026-06-09",
-    "holding_thesis": "Specialty P&C insurer with strong unit economics (76% combined ratio) benefits from NOAA's below-normal hurricane season forecast and recent guidance raise plus $200M buyback authorization; low beta (0.44) provides portfolio diversification.",
+    "holding_thesis": "Fast-growing specialty insurer with strong fundamentals (42% premium growth, 23% EPS growth, 14 consecutive earnings beats) trading near 52-week low at 10x earnings; hurricane season fear is overdone given below-normal NOAA forecast.",
     "opened_at": "2026-06-09T14:19:29+00:00",
     "closed_at": null,
     "signals": [
@@ -3692,6 +3844,20 @@
         "timestamp": "2026-06-09T14:19:29+00:00",
         "confidence": "high",
         "url": "https://x.com/theaiportfolios/status/2064351683228901648"
+      },
+      {
+        "tweet_id": "2064383045239493117",
+        "signal_type": "position",
+        "timestamp": "2026-06-09T16:24:07+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/theaiportfolios/status/2064383045239493117"
+      },
+      {
+        "tweet_id": "2064790300627784058",
+        "signal_type": "buy",
+        "timestamp": "2026-06-10T19:22:24+00:00",
+        "confidence": "high",
+        "url": "https://x.com/theaiportfolios/status/2064790300627784058"
       }
     ]
   },

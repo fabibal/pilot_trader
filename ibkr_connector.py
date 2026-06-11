@@ -93,12 +93,22 @@ NYSE_HOLIDAYS_2026 = {
 
 
 # --- market hours -----------------------------------------------------------
+_HOLIDAY_YEARS = {int(d[:4]) for d in NYSE_HOLIDAYS_2026}
+_stale_holidays_warned = False
+
+
 def is_market_open(now=None):
     """US regular session check: Mon-Fri 09:30-16:00 America/New_York, excluding
     NYSE holidays (NYSE_HOLIDAYS_2026). Early-close half-days are not modelled
     here; an order placed after a half-day close is rejected by IB (10349) and
     execute_order resubmits it as Market-On-Open."""
+    global _stale_holidays_warned
     now = (now or datetime.now(tz=_NY)).astimezone(_NY)
+    if now.year not in _HOLIDAY_YEARS and not _stale_holidays_warned:
+        _stale_holidays_warned = True   # once per process, not per call
+        print(f"WARNING: NYSE holiday table only covers {sorted(_HOLIDAY_YEARS)}; "
+              f"it's now {now.year} — holidays will be treated as open days. "
+              "Update NYSE_HOLIDAYS in ibkr_connector.py.")
     if now.weekday() >= 5:                      # Sat/Sun
         return False
     if now.strftime("%Y-%m-%d") in NYSE_HOLIDAYS_2026:

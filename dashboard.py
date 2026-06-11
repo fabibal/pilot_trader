@@ -35,7 +35,7 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import yfinance as yf
-from dash import Dash, dash_table, dcc, html, Input, Output
+from dash import Dash, dash_table, dcc, html, Input, Output, State
 from dash.exceptions import PreventUpdate
 
 import resolver
@@ -1202,6 +1202,13 @@ _TAB_SELECTED = {"backgroundColor": C["card"], "color": C["text"],
                  "padding": "6px 14px"}
 
 
+def portfolio_tab_children(pfs):
+    """dcc.Tab list for the AI Holdings sub-tabs (shared by layout + refresh)."""
+    return [dcc.Tab(label=PORTFOLIO_LABELS.get(pf, pf.title()),
+                    value=pf, style=_TAB_STYLE, selected_style=_TAB_SELECTED)
+            for pf in pfs]
+
+
 # --- IBKR paper portfolio (live from IB Gateway) ----------------------------
 def load_orders():
     """Read the order ledger (data/orders.json); [] if missing/unreadable."""
@@ -1652,7 +1659,7 @@ def hero_strip(store, kpis, overall_spy):
                (f"S&P {_fmt_pct(k['spy'])}" if k["spy"] is not None else None))
         tiles.append(_kpi_tile(k["label"], _fmt_pct(v), _color(v), sub))
     tiles.append(_kpi_tile("S&P 500", _fmt_pct(overall_spy), _color(overall_spy),
-                           "vs year start (2026)"))
+                           f"vs year start ({datetime.now(timezone.utc).year})"))
     return html.Div(tiles, style={
         "display": "flex", "flexWrap": "wrap", "gap": "10px",
         "marginTop": "10px"})
@@ -1992,10 +1999,7 @@ app.layout = html.Div(
         # (Performance chart lives on the Overview tab — not duplicated here.)
         html.Div("Holdings", style=_SECTION_H),
         dcc.Tabs(id="portfolio-tabs", value=_portfolios[0],
-                 children=[dcc.Tab(label=PORTFOLIO_LABELS.get(pf, pf.title()),
-                                   value=pf, style=_TAB_STYLE,
-                                   selected_style=_TAB_SELECTED)
-                           for pf in _portfolios]),
+                 children=portfolio_tab_children(_portfolios)),
         # Pie (40%, fixed) + position detail table (flexible) side by side in one
         # row. No flex-wrap, so they never stack vertically; minWidth:0 lets the
         # table shrink/overflow within its column instead of forcing a wrap.
@@ -2262,9 +2266,10 @@ def refresh_topbar(_n, store):
     warm_prices({_yf_symbol(p["ticker"], p.get("asset_type", "stock"))
                  for p in positions} | {"SPY"})
     kpis, _ = portfolio_kpis(positions)
-    # S&P tile is YEAR-TO-DATE (since 2026-01-01), labelled accordingly; the
-    # per-portfolio 'vs S&P' deltas stay window-matched to each open date.
-    ytd_spy = spy_return_since("2026-01-01")
+    # S&P tile is YEAR-TO-DATE (since Jan 1 of the current year), labelled
+    # accordingly; per-portfolio 'vs S&P' deltas stay window-matched to each
+    # open date.
+    ytd_spy = spy_return_since(f"{datetime.now(timezone.utc).year}-01-01")
     return hero_strip(store, kpis, ytd_spy)
 
 
@@ -2326,6 +2331,26 @@ def switch_influencer_subtab(account):
             _influencer_header(f"{account} — Open Positions", account),
             _influencer_header(f"{account} — Signals", account),
             "")
+
+
+@app.callback(
+    Output("portfolio-tabs", "children"),
+    Output("portfolio-tabs", "value"),
+    Input("interval", "n_intervals"),
+    State("portfolio-tabs", "children"),
+    State("portfolio-tabs", "value"),
+)
+def refresh_portfolio_tabs(_n, children, current):
+    """Rebuild the Holdings sub-tabs from positions.json so a new portfolio
+    (e.g. chatgpt) appears without a container restart. Compares against the
+    tabs THIS client is showing (not server state, which would go stale across
+    page loads) and no-ops while unchanged, so the selected tab isn't
+    disturbed."""
+    pfs = portfolios_in(ai_positions(load_positions()))
+    shown = [(c.get("props") or {}).get("value") for c in (children or [])]
+    if pfs == shown:
+        raise PreventUpdate
+    return portfolio_tab_children(pfs), (current if current in pfs else pfs[0])
 
 
 @app.callback(

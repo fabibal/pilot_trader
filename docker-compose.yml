@@ -25,9 +25,15 @@ services:
       # are live inside the container at the path the app expects.
       - .:/home/fbazsa/pilot_trader
       # Docker socket for the system-status bar: per-container CPU/RAM stats +
-      # the Restart button (POST /containers/.../restart). ⚠️ grants the
-      # container full Docker-daemon control — accepted for this LAN-only paper
-      # dashboard (same pattern as ~/paper_trader). Read-write (restart needs it).
+      # the Restart button (POST /containers/.../restart).
+      # ⚠️ SECURITY: this grants the container full Docker-daemon control,
+      # which is root-equivalent on the host (any process in the container
+      # could start a privileged container). A `:ro` mount would NOT mitigate
+      # it (connecting to a unix socket needs write permission, so :ro just
+      # breaks stats AND restart) and a socket proxy is overkill here.
+      # Accepted because: dashboard is LAN-only (no port forwarding), paper
+      # account only, and the container runs only our own code (bind-mounted
+      # repo). Same pattern as ~/paper_trader. Revisit before any WAN exposure.
       - /var/run/docker.sock:/var/run/docker.sock
 
     deploy:
