@@ -1,5 +1,34 @@
 [
   {
+    "account": "moninvestor",
+    "source_type": "influencer",
+    "portfolio": null,
+    "tweet_id": "2064843023956013318",
+    "timestamp": "2026-06-10T22:51:54+00:00",
+    "signal_type": "position",
+    "sell_kind": null,
+    "confidence": "medium",
+    "actionable": true,
+    "tickers": [
+      "UAMY"
+    ],
+    "asset_type": "stock",
+    "position_size_pct": null,
+    "entry_price": null,
+    "stop_loss": null,
+    "target": null,
+    "trade_date": null,
+    "holding_thesis": "Favorite rare earth stock in the sector.",
+    "reasoning": "@moninvestor confirms UAMY remains a favored holding and indicates intent to add back later, expressing long-term conviction in the rare earth sector play.",
+    "tp1": null,
+    "tp2": null,
+    "chart_trend": null,
+    "chart_notes": null,
+    "has_chart": false,
+    "url": "https://x.com/moninvestor/status/2064843023956013318",
+    "text": "@nmalkonen Yes, you're right. UAMY is still my favorite rare earth stock.\n\nI had over 100 stocks on my watchlist, and I wanted to narrow it down based on the sector I'm currently focused on. I'll probably add it back later."
+  },
+  {
     "account": "CelalKucuker",
     "source_type": "influencer",
     "portfolio": null,
