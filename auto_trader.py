@@ -47,6 +47,16 @@ TRADES_FILE = monitor.TRADES_FILE
 # starts from an empty ledger; we do NOT buy into the pre-existing book).
 SINCE_DATE = "2026-06-02"
 
+# Stale-BUY guard: a rejected buy is never marked actioned, so it retries every
+# run — e.g. a re-buy of a ticker we already hold is rejected daily by the
+# one-active-position rule, and the moment a sell closes that position the
+# weeks-old signal would fire a re-buy the source portfolio never intended.
+# Legitimate deferrals (daily cap, gateway down, ticker-validation retry) all
+# resolve within ~a day, so a buy older than this is dead, not deferred.
+# SELLS are exempt: a late sell reads the ACTUAL IB position and no-ops if
+# it's already closed, while skipping it could strand a real exit.
+MAX_BUY_AGE_DAYS = 3
+
 # Account-identity config is shared via accounts.py (single source of truth).
 # aifinancelabs posts carry the portfolio explicitly from the tweet text
 # (grok/claude/deepseek/chatgpt), so they resolve regardless of the fallback.
@@ -144,8 +154,17 @@ def _qualifies(sig):
     # exit hiding in one is reviewed by a human, not silently dropped.
     if sig.get("confidence") not in om.BUY_CONFIDENCE:
         return False
-    if (sig.get("timestamp") or "")[:10] < SINCE_DATE:   # spec §8 cutoff
+    ts = sig.get("timestamp") or ""
+    if ts[:10] < SINCE_DATE:                             # spec §8 cutoff
         return False
+    if st == "buy":                                      # stale-buy guard
+        try:
+            age_d = (datetime.now(timezone.utc)
+                     - datetime.fromisoformat(ts)).days
+        except (ValueError, TypeError):
+            return False
+        if age_d >= MAX_BUY_AGE_DAYS:
+            return False
     return True
 
 

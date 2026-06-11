@@ -1202,10 +1202,13 @@ def main():
                              or interp.batch_input_tokens):
         log_cost(interp)
 
-    # Automatic execution: on a live run that produced new signals, hand off to
-    # auto_trader (Grok mirror -> IBKR paper). Never on dry-run/backfill. A
-    # failure here must NOT fail the monitor run, so it is isolated.
-    if not args.dry_run and not args.backfill and all_new:
+    # Automatic execution: hand off to auto_trader (AI mirror -> IBKR paper) on
+    # every live run — NOT only when this run produced new signals: auto_trader
+    # also reconciles resting MOO orders and retries deferred sells/unsubmitted
+    # orders, which must not wait for the next run that happens to find a new
+    # signal. It returns cheaply (no IB connect) when there is nothing to do.
+    # Never on dry-run/backfill. A failure here must NOT fail the monitor run.
+    if not args.dry_run and not args.backfill:
         try:
             import auto_trader
             auto_trader.run(no_trade=args.no_trade)
