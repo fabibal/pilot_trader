@@ -7,11 +7,11 @@
     "asset_type": "crypto",
     "status": "open",
     "entry_price": 55000,
-    "stop_loss": 60000,
-    "target": 65000,
+    "stop_loss": 54217.98,
+    "target": 144000,
     "size_pct": null,
     "trade_date": null,
-    "holding_thesis": "Bitcoin has a clean chart with strong support levels and upside to ATH.",
+    "holding_thesis": "Cleanest chart with strong technical setup from current wick level to target.",
     "opened_at": "2026-05-29T15:25:30+00:00",
     "closed_at": null,
     "signals": [
@@ -105,6 +105,13 @@
         "timestamp": "2026-06-11T22:41:17+00:00",
         "confidence": "medium",
         "url": "https://x.com/CelalKucuker/status/2065202740918165832"
+      },
+      {
+        "tweet_id": "2065432533408317653",
+        "signal_type": "buy",
+        "timestamp": "2026-06-12T13:54:24+00:00",
+        "confidence": "high",
+        "url": "https://x.com/CelalKucuker/status/2065432533408317653"
       }
     ]
   },
@@ -579,7 +586,7 @@
     "target": 5.34527,
     "size_pct": null,
     "trade_date": null,
-    "holding_thesis": "Cup and handle formation with Fibonacci retracement setup suggests upside to $12.",
+    "holding_thesis": "Long-term conviction that XRP price will rise significantly as circulating supply diminishes through Ripple buybacks, burns, and institutional lockups while demand remains stable or grows.",
     "opened_at": "2026-05-29T19:38:32+00:00",
     "closed_at": null,
     "signals": [
@@ -638,6 +645,20 @@
         "timestamp": "2026-06-10T17:45:03+00:00",
         "confidence": "medium",
         "url": "https://x.com/CelalKucuker/status/2064765801391894805"
+      },
+      {
+        "tweet_id": "2065458459739406836",
+        "signal_type": "buy",
+        "timestamp": "2026-06-12T15:37:25+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/CelalKucuker/status/2065458459739406836"
+      },
+      {
+        "tweet_id": "2065477740300546550",
+        "signal_type": "position",
+        "timestamp": "2026-06-12T16:54:02+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/CelalKucuker/status/2065477740300546550"
       }
     ]
   },
@@ -807,10 +828,10 @@
     "status": "open",
     "entry_price": null,
     "stop_loss": 70.0,
-    "target": 100.0,
+    "target": 100,
     "size_pct": null,
     "trade_date": null,
-    "holding_thesis": null,
+    "holding_thesis": "Insider buying accumulation and SpaceX IPO catalyst expected to drive stock higher.",
     "opened_at": "2026-05-28T16:07:07+00:00",
     "closed_at": null,
     "signals": [
@@ -834,6 +855,13 @@
         "timestamp": "2026-05-29T19:28:15+00:00",
         "confidence": "medium",
         "url": "https://x.com/IncomeSharks/status/2060443121469837645"
+      },
+      {
+        "tweet_id": "2065508573493469188",
+        "signal_type": "buy",
+        "timestamp": "2026-06-12T18:56:33+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/IncomeSharks/status/2065508573493469188"
       }
     ]
   },
@@ -1379,6 +1407,31 @@
         "timestamp": "2026-06-10T16:54:37+00:00",
         "confidence": "medium",
         "url": "https://x.com/PelosiTracker/status/2064753112242438379"
+      }
+    ]
+  },
+  {
+    "account": "PelosiTracker",
+    "source_type": "influencer",
+    "portfolio": null,
+    "ticker": "BMY",
+    "asset_type": "stock",
+    "status": "closed",
+    "entry_price": null,
+    "stop_loss": null,
+    "target": null,
+    "size_pct": null,
+    "trade_date": null,
+    "holding_thesis": null,
+    "opened_at": null,
+    "closed_at": "2026-06-12T14:13:00+00:00",
+    "signals": [
+      {
+        "tweet_id": "2065437214033445267",
+        "signal_type": "sell",
+        "timestamp": "2026-06-12T14:13:00+00:00",
+        "confidence": "high",
+        "url": "https://x.com/PelosiTracker/status/2065437214033445267"
       }
     ]
   },
@@ -2877,6 +2930,31 @@
     "account": "moninvestor",
     "source_type": "influencer",
     "portfolio": null,
+    "ticker": "GOOGL",
+    "asset_type": "stock",
+    "status": "open",
+    "entry_price": null,
+    "stop_loss": null,
+    "target": null,
+    "size_pct": null,
+    "trade_date": null,
+    "holding_thesis": "Google provides exposure to high-growth private companies including SpaceX, Anthropic, Waymo, and others as a lower-risk entry point.",
+    "opened_at": "2026-06-12T05:33:48+00:00",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2065306552077013492",
+        "signal_type": "buy",
+        "timestamp": "2026-06-12T05:33:48+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/moninvestor/status/2065306552077013492"
+      }
+    ]
+  },
+  {
+    "account": "moninvestor",
+    "source_type": "influencer",
+    "portfolio": null,
     "ticker": "HIMS",
     "asset_type": "stock",
     "status": "open",
@@ -2995,7 +3073,7 @@
     "target": 60.0,
     "size_pct": 70,
     "trade_date": "2025-04-05",
-    "holding_thesis": "Stock is respecting technical channel boundaries, bouncing off support and showing disciplined price action.",
+    "holding_thesis": "2027 capacity negotiations represent a major inflection point for growth.",
     "opened_at": "2026-05-28T13:30:32+00:00",
     "closed_at": null,
     "signals": [
@@ -3152,6 +3230,13 @@
         "timestamp": "2026-06-11T14:11:10+00:00",
         "confidence": "medium",
         "url": "https://x.com/moninvestor/status/2065074365775876263"
+      },
+      {
+        "tweet_id": "2065348934210290115",
+        "signal_type": "position",
+        "timestamp": "2026-06-12T08:22:12+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/moninvestor/status/2065348934210290115"
       }
     ]
   },
@@ -3832,10 +3917,10 @@
     "status": "open",
     "entry_price": null,
     "stop_loss": null,
-    "target": null,
+    "target": 200,
     "size_pct": 15,
     "trade_date": "2026-04-01",
-    "holding_thesis": "AI is an enormous tailwind for software companies.",
+    "holding_thesis": "ServiceNow sells software that benefits when companies deploy AI to work; the selloff is mechanical (tied to semiconductor fears) while fundamentals remain solid with 20%+ subscription growth.",
     "opened_at": "2026-05-28T21:59:10.000Z",
     "closed_at": null,
     "signals": [
@@ -3929,6 +4014,20 @@
         "timestamp": "2026-06-10T00:46:07+00:00",
         "confidence": "medium",
         "url": "https://x.com/theaiportfolios/status/2064509377713782938"
+      },
+      {
+        "tweet_id": "2065189234273640478",
+        "signal_type": "position",
+        "timestamp": "2026-06-11T21:47:37+00:00",
+        "confidence": "high",
+        "url": "https://x.com/theaiportfolios/status/2065189234273640478"
+      },
+      {
+        "tweet_id": "2065194496640319854",
+        "signal_type": "position",
+        "timestamp": "2026-06-11T22:08:32+00:00",
+        "confidence": "high",
+        "url": "https://x.com/theaiportfolios/status/2065194496640319854"
       }
     ]
   },
