@@ -7,8 +7,8 @@
     "asset_type": "crypto",
     "status": "open",
     "entry_price": 55000,
-    "stop_loss": 54217.98,
-    "target": 144000,
+    "stop_loss": 65399.98,
+    "target": 137000.0,
     "size_pct": null,
     "trade_date": null,
     "holding_thesis": "Cleanest chart with strong technical setup from current wick level to target.",
@@ -112,6 +112,13 @@
         "timestamp": "2026-06-12T13:54:24+00:00",
         "confidence": "high",
         "url": "https://x.com/CelalKucuker/status/2065432533408317653"
+      },
+      {
+        "tweet_id": "2065889139753374144",
+        "signal_type": "buy",
+        "timestamp": "2026-06-13T20:08:47+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/CelalKucuker/status/2065889139753374144"
       }
     ]
   },
@@ -219,6 +226,31 @@
         "timestamp": "2026-06-03T14:12:29+00:00",
         "confidence": "medium",
         "url": "https://x.com/CelalKucuker/status/2062175595476169181"
+      }
+    ]
+  },
+  {
+    "account": "CelalKucuker",
+    "source_type": "influencer",
+    "portfolio": null,
+    "ticker": "ETH/SOL/XRP/DOGE/SUI",
+    "asset_type": "unknown",
+    "status": "open",
+    "entry_price": null,
+    "stop_loss": null,
+    "target": null,
+    "size_pct": null,
+    "trade_date": null,
+    "holding_thesis": null,
+    "opened_at": "2026-06-13T14:08:38+00:00",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2065798504459489362",
+        "signal_type": "buy",
+        "timestamp": "2026-06-13T14:08:38+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/CelalKucuker/status/2065798504459489362"
       }
     ]
   },
@@ -539,6 +571,31 @@
         "timestamp": "2026-06-06T17:39:08+00:00",
         "confidence": "medium",
         "url": "https://x.com/CelalKucuker/status/2063314762956484684"
+      }
+    ]
+  },
+  {
+    "account": "CelalKucuker",
+    "source_type": "influencer",
+    "portfolio": null,
+    "ticker": "WLD",
+    "asset_type": "crypto",
+    "status": "open",
+    "entry_price": null,
+    "stop_loss": 0.2182,
+    "target": 1.442,
+    "size_pct": null,
+    "trade_date": null,
+    "holding_thesis": null,
+    "opened_at": "2026-06-13T15:02:36+00:00",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2065812085984960898",
+        "signal_type": "buy",
+        "timestamp": "2026-06-13T15:02:36+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/CelalKucuker/status/2065812085984960898"
       }
     ]
   },
@@ -1140,6 +1197,31 @@
         "timestamp": "2026-06-04T22:23:28+00:00",
         "confidence": "medium",
         "url": "https://x.com/IncomeSharks/status/2062661541963628747"
+      }
+    ]
+  },
+  {
+    "account": "IncomeSharks",
+    "source_type": "influencer",
+    "portfolio": null,
+    "ticker": "SPCX",
+    "asset_type": "stock",
+    "status": "open",
+    "entry_price": null,
+    "stop_loss": null,
+    "target": null,
+    "size_pct": null,
+    "trade_date": null,
+    "holding_thesis": "Early entry into a company valued at 1.75 trillion.",
+    "opened_at": "2026-06-13T16:53:36+00:00",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2065840016438538505",
+        "signal_type": "buy",
+        "timestamp": "2026-06-13T16:53:36+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/IncomeSharks/status/2065840016438538505"
       }
     ]
   },
