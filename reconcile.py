@@ -28,7 +28,7 @@ import tempfile
 # Account-to-portfolio fallback, applied at STORAGE time so the position key
 # matches what the dashboard shows (avoids a null-portfolio record and a
 # resolved-portfolio record for the same holding being counted twice).
-# NON_AI_ACCOUNTS (all influencers + long-term accounts) never key a
+# NON_AI_ACCOUNTS (all influencer accounts) never key a
 # portfolio — this previously used a local, INCOMPLETE influencer set that
 # disagreed with dashboard.py.
 from accounts import ACCOUNT_DEFAULT_PF, NON_AI_ACCOUNTS

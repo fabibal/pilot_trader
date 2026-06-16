@@ -23,41 +23,42 @@ def _state(account, hours_ago):
 
 
 def test_non_slow_account_never_skipped():
-    skip, age = monitor.slow_fetch_skip("grkportfolio", _state("grkportfolio", 0), NOW)
+    """IncomeSharks has no POLL_MIN_INTERVAL_H entry -> polled on every run."""
+    skip, age = monitor.slow_fetch_skip("IncomeSharks", _state("IncomeSharks", 0), NOW)
     assert skip is False and age is None
 
 
 def test_never_fetched_is_not_skipped():
     """No last_fetch (e.g. just added) -> fetch now and seed it."""
-    skip, age = monitor.slow_fetch_skip("moninvestor", {}, NOW)
+    skip, age = monitor.slow_fetch_skip("grkportfolio", {}, NOW)
     assert skip is False and age is None
 
 
 def test_recent_fetch_is_skipped():
-    skip, age = monitor.slow_fetch_skip("moninvestor", _state("moninvestor", 4), NOW)
+    skip, age = monitor.slow_fetch_skip("grkportfolio", _state("grkportfolio", 4), NOW)
     assert skip is True
     assert round(age, 1) == 4.0
 
 
 def test_old_fetch_is_due():
-    """>10h ago -> fetch, even though it is not an exact 00/12 hour."""
-    skip, age = monitor.slow_fetch_skip("moninvestor", _state("moninvestor", 11), NOW)
+    """>11h ago -> fetch, even though it is not an exact 00/12 hour."""
+    skip, age = monitor.slow_fetch_skip("grkportfolio", _state("grkportfolio", 12), NOW)
     assert skip is False
-    assert round(age, 1) == 11.0
+    assert round(age, 1) == 12.0
 
 
 def test_boundary_just_under_interval_skips():
-    skip, _ = monitor.slow_fetch_skip("moninvestor", _state("moninvestor", 9.99), NOW)
+    skip, _ = monitor.slow_fetch_skip("grkportfolio", _state("grkportfolio", 10.99), NOW)
     assert skip is True
 
 
 def test_boundary_just_over_interval_fetches():
-    skip, _ = monitor.slow_fetch_skip("moninvestor", _state("moninvestor", 10.01), NOW)
+    skip, _ = monitor.slow_fetch_skip("grkportfolio", _state("grkportfolio", 11.01), NOW)
     assert skip is False
 
 
 def test_corrupt_timestamp_fails_open():
     """An unparseable last_fetch must not strand the account."""
     skip, age = monitor.slow_fetch_skip(
-        "moninvestor", {"moninvestor": {"last_fetch": "not-a-date"}}, NOW)
+        "grkportfolio", {"grkportfolio": {"last_fetch": "not-a-date"}}, NOW)
     assert skip is False and age is None

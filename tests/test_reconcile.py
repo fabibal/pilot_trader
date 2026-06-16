@@ -202,18 +202,18 @@ def test_duplicate_tweet_id_ignored():
     assert len(p["signals"]) == 2        # dup not appended
 
 
-def test_moninvestor_adding_is_position_update():
-    """@moninvestor 'adding'/'keeping' maps (by the LLM) to a position signal;
-    reconcile must treat it as a size update on the SAME held position, not a
-    second position. Influencer portfolio stays null."""
+def test_influencer_position_update_holds_same_position():
+    """An influencer 'adding'/'keeping' tweet maps (by the LLM) to a position
+    signal; reconcile must treat it as a size update on the SAME held position,
+    not a second position. Influencer portfolio stays null."""
     pos = _run([
-        _event("moninvestor", "SOFI", "buy", "2026-04-01T00:00:00Z",
+        _event("traderstewie", "SOFI", "buy", "2026-04-01T00:00:00Z",
                source_type="influencer", portfolio=None, entry=10, size=3),
-        _event("moninvestor", "SOFI", "position", "2026-04-20T00:00:00Z",
+        _event("traderstewie", "SOFI", "position", "2026-04-20T00:00:00Z",
                source_type="influencer", portfolio=None, size=5),
     ])
     assert len(pos) == 1
-    p = pos[("moninvestor", None, "SOFI")]
+    p = pos[("traderstewie", None, "SOFI")]
     assert p["status"] == "open"
     assert p["size_pct"] == 5
     assert p["entry_price"] == 10

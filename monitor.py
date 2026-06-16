@@ -51,13 +51,11 @@ from reconcile import reconcile, write_json_atomic
 # Account identity/classification config is shared across the pipeline and
 # lives in accounts.py (single source of truth). @aifinancelabs is where the
 # DeepSeek portfolio experiment is published (no standalone DeepSeek handle).
-from accounts import (ACCOUNTS, SOURCE_TYPE, ACCOUNT_STYLE,  # noqa: F401
-                      POSTS_ONLY_ACCOUNTS)
+from accounts import ACCOUNTS, SOURCE_TYPE, POSTS_ONLY_ACCOUNTS
 # Slow accounts: fetch only if the last fetch was more than N hours ago (instead
 # of an exact-hour cron match, which fails entirely if that one cron run fails).
-# Absent => polled on every run. moninvestor/PelosiTracker (long-term holders)
-# and the 3 AI portfolios (grok/claude/deepseek — they rebalance ~monthly, so 4h
-# polling is wasteful) are ~twice a day.
+# Absent => polled on every run. The 3 AI portfolios (grok/claude/deepseek —
+# they rebalance ~monthly, so 4h polling is wasteful) are ~twice a day.
 # ⚠️ Use 11h, NOT 12h: a real fetch records last_fetch a few seconds AFTER the
 # cron slot (GetXAPI latency), so a 16:00->04:00 gap measures ~11h59m58s. With a
 # 12h threshold that is `< 12` => the 04:00 run SKIPS and the phase drifts. 11h
@@ -66,8 +64,7 @@ from accounts import (ACCOUNTS, SOURCE_TYPE, ACCOUNT_STYLE,  # noqa: F401
 # .monitor_state.json; the AI portfolios are seeded to the 04:00/16:00 UTC slots
 # so fresh data is guaranteed by the 04:00 run (finishes ~05:00 UTC = 07:00
 # Budapest, before the 08:00 Budapest target).
-POLL_MIN_INTERVAL_H = {"moninvestor": 10, "PelosiTracker": 11,
-                       "grkportfolio": 11, "theaiportfolios": 11,
+POLL_MIN_INTERVAL_H = {"grkportfolio": 11, "theaiportfolios": 11,
                        "aifinancelabs": 11}
 HOME = "/home/fbazsa/pilot_trader"
 DATA_DIR = os.path.join(HOME, "data")
@@ -90,10 +87,8 @@ RAW_FILES = {  # used by --backfill; accounts without a snapshot are skipped
     "theaiportfolios": os.path.join(HOME, "tweets_theaiportfolios.json"),
     "aifinancelabs": os.path.join(HOME, "tweets_aifinancelabs.json"),
     "IncomeSharks": os.path.join(HOME, "tweets_incomesharks.json"),
-    "moninvestor": os.path.join(HOME, "tweets_moninvestor.json"),
     "CelalKucuker": os.path.join(HOME, "tweets_CelalKucuker.json"),
     "traderstewie": os.path.join(HOME, "tweets_traderstewie.json"),
-    "PelosiTracker": os.path.join(HOME, "tweets_PelosiTracker.json"),
 }
 MAX_FETCH = 100
 API_BASE = "https://api.twitter.com/2"
@@ -156,21 +151,6 @@ EXTRACTION_SYSTEM = (
     "another user's forecast), that is NOT the account's own signal: set "
     "action = \"none\". A price someone else predicted is never a target or "
     "stop for the account.\n"
-    "(C) LONG-TERM CONVICTION INVESTOR — @moninvestor and @PelosiTracker. They "
-    "represent high-conviction long-term BUYS meant to be held for the long run; "
-    "they rarely state stop losses or price targets (leave those null unless "
-    "explicitly given). A first-time initiation of a new name is action = "
-    "\"buy\". Phrases like \"buying more\", \"adding\", \"added to\", "
-    "\"keeping\", \"still holding\", \"holding\" on a name already owned are a "
-    "POSITION UPDATE, so use action = \"position\" (NOT a fresh buy). "
-    "@moninvestor posts its OWN convictions. @PelosiTracker is a TRACKER that "
-    "reports the publicly-disclosed stock trades of US politician Nancy Pelosi "
-    "(and her household): treat each reported transaction AS the signal — a "
-    "newly-reported purchase = action \"buy\", a reported sale = action "
-    "\"sell\". These reported trades ARE the signal even though the underlying "
-    "trader is a third party; do NOT set action = \"none\" for them (the "
-    "OWN-VIEW rule in (B) does not apply to this tracker). Always set "
-    "portfolio = null for both.\n"
     "Rules:\n"
     "- action: \"buy\" if the account bought/initiated/added OR (for an "
     "influencer) is calling a long entry / saying it is buying or holding long; "
@@ -221,8 +201,7 @@ EXTRACTION_SYSTEM = (
     "for an influencer.\n"
     "- holding_thesis: for a buy or position, ONE short sentence stating WHY "
     "the account likes/holds the asset (the bull case / conviction reason), if "
-    "stated or clearly implied. Mainly populated for long-term conviction "
-    "accounts (@moninvestor). null if none is given.\n"
+    "stated or clearly implied. null if none is given.\n"
     "- reasoning: one short sentence explaining the call.\n"
     "Return ONLY valid JSON matching the schema. No markdown, no preamble."
 )

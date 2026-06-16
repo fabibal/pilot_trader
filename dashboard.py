@@ -151,18 +151,12 @@ PORTFOLIO_LABELS = {"grok": "Grok", "claude": "Claude",
                     "deepseek": "DeepSeek", "chatgpt": "ChatGPT"}
 # Account classification + null-portfolio fallback are shared with monitor/
 # reconcile/auto_trader via accounts.py (single source of truth). Influencer
-# accounts are kept entirely separate from the AI portfolio views (own tab);
-# long-term conviction accounts get the holdings sub-tab.
-from accounts import (ACCOUNT_DEFAULT_PF, INFLUENCER_ACCOUNTS,
-                      LONGTERM_ACCOUNTS, NON_AI_ACCOUNTS)
+# accounts are kept entirely separate from the AI portfolio views (own tab).
+from accounts import ACCOUNT_DEFAULT_PF, INFLUENCER_ACCOUNTS, NON_AI_ACCOUNTS
 
 
 def is_influencer(account):
     return account in INFLUENCER_ACCOUNTS
-
-
-def is_longterm(account):
-    return account in LONGTERM_ACCOUNTS
 
 
 def ai_positions(positions):
@@ -171,10 +165,6 @@ def ai_positions(positions):
 
 def influencer_positions(positions):
     return [p for p in positions if is_influencer(p.get("account"))]
-
-
-def longterm_positions(positions):
-    return [p for p in positions if is_longterm(p.get("account"))]
 
 
 def _yf_symbol(ticker, asset_type):
@@ -792,8 +782,6 @@ INFLUENCER_META = {
     "IncomeSharks": ("Stocks + crypto trade calls", C["blue"]),
     "CelalKucuker": ("Crypto-heavy trade calls", C["yellow"]),
     "traderstewie": ("US equity swing setups", C["green"]),
-    "moninvestor":  ("Long-term conviction holds", C["purple"]),
-    "PelosiTracker": ("Pelosi disclosed trades", C["orange"]),
 }
 
 
@@ -809,58 +797,42 @@ def _hdr_metric(label, value, color, sub=None):
     ])
 
 
-def _influencer_returns(account, resolutions, positions, is_lt):
-    """(ticker, return%) for each open call/holding of `account`."""
+def _influencer_returns(account, resolutions):
+    """(ticker, return%) for each open call of `account`."""
     rr = []
-    if is_lt:
-        for p in longterm_positions(positions or []):
-            if p.get("status") != "open" or p.get("account") != account:
-                continue
-            atype = p.get("asset_type", "stock") or "stock"
-            entry, _ = estimate_entry(p["ticker"], p.get("entry_price"),
-                                      p.get("trade_date"),
-                                      (p.get("opened_at") or "")[:10], atype)
-            cur = get_price(_yf_symbol(p["ticker"], atype))
-            rr.append((p["ticker"], round((cur - entry) / entry * 100, 1)
-                       if (entry and cur) else None))
-    else:
-        for p, _res in (resolutions or []):
-            if p.get("status") != "open":   # resolutions include closed calls
-                continue
-            atype = p.get("asset_type") or "unknown"
-            sym = _yf_symbol(p["ticker"], atype)
-            entry = p.get("entry_price")
-            if not entry:
-                tdate = p.get("trade_date") or (p.get("opened_at") or "")[:10] or None
-                entry = get_hist_close(sym, tdate) if tdate else None
-            cur = get_price(sym)
-            rr.append((p["ticker"], round((cur - entry) / entry * 100, 1)
-                       if (entry and cur) else None))
+    for p, _res in (resolutions or []):
+        if p.get("status") != "open":   # resolutions include closed calls
+            continue
+        atype = p.get("asset_type") or "unknown"
+        sym = _yf_symbol(p["ticker"], atype)
+        entry = p.get("entry_price")
+        if not entry:
+            tdate = p.get("trade_date") or (p.get("opened_at") or "")[:10] or None
+            entry = get_hist_close(sym, tdate) if tdate else None
+        cur = get_price(sym)
+        rr.append((p["ticker"], round((cur - entry) / entry * 100, 1)
+                   if (entry and cur) else None))
     return rr
 
 
-def influencer_header_card(account, resolutions=None, positions=None):
-    """Per-influencer header card: @handle + descriptor + win rate (trade-call)
-    or holdings count (long-term) + open count + best performer. A left accent
-    border in the handle's color makes each visually distinct."""
+def influencer_header_card(account, resolutions=None):
+    """Per-influencer header card: @handle + descriptor + win rate + open call
+    count + best performer. A left accent border in the handle's color makes
+    each visually distinct."""
     desc, accent = INFLUENCER_META.get(account, ("", C["blue"]))
-    is_lt = account in LONGTERM_ACCOUNTS
-    rr = _influencer_returns(account, resolutions, positions, is_lt)
+    rr = _influencer_returns(account, resolutions)
     valid = [(t, r) for t, r in rr if r is not None]
     best = max(valid, key=lambda x: x[1]) if valid else None
 
     metrics = []
-    if not is_lt:
-        st = resolver.win_stats([r for _, r in (resolutions or [])])
-        wr = st["win_rate"]
-        wr_txt = "n/a" if wr is None else f"{wr:.0f}%"
-        wr_color = C["dim"] if wr is None else (
-            C["green"] if wr >= 50 else C["red"])
-        metrics.append(_hdr_metric("win rate", wr_txt, wr_color,
-                                   f"{st['decided']} resolved"))
-        metrics.append(_hdr_metric("open calls", str(len(rr)), C["text"]))
-    else:
-        metrics.append(_hdr_metric("holdings", str(len(rr)), C["text"]))
+    st = resolver.win_stats([r for _, r in (resolutions or [])])
+    wr = st["win_rate"]
+    wr_txt = "n/a" if wr is None else f"{wr:.0f}%"
+    wr_color = C["dim"] if wr is None else (
+        C["green"] if wr >= 50 else C["red"])
+    metrics.append(_hdr_metric("win rate", wr_txt, wr_color,
+                               f"{st['decided']} resolved"))
+    metrics.append(_hdr_metric("open calls", str(len(rr)), C["text"]))
     metrics.append(_hdr_metric("best", best[0] if best else "—",
                                _color(best[1] if best else None),
                                _fmt_pct(best[1]) if best else None))
@@ -922,53 +894,6 @@ def influencer_positions_table(resolutions):
     return _table(["Ticker", "Asset", "Trade Date", "Entry", "Current",
                    "Return %", "Stop", "Target", "Status"], rows,
                   empty="No open influencer positions")
-
-
-def longterm_holdings_table(positions, account=None):
-    """Long-term conviction holdings (no TP/stop columns; shows the one-line
-    thesis, sorted by Held Since desc — newest additions first). If `account`
-    is given, restrict to that one handle; else all long-term accounts."""
-    rows = []
-    for p in longterm_positions(positions):
-        if p.get("status") != "open":
-            continue
-        if account and p.get("account") != account:
-            continue
-        atype = p.get("asset_type", "stock") or "stock"
-        sym = _yf_symbol(p["ticker"], atype)
-        # "Held since" date: the stated actual trade_date when known (most
-        # accurate for a long-term hold), else the first-disclosure date
-        # (opened_at, in Budapest), flagged with * to mark it as estimated.
-        # Days Held derives from the SAME value so the two columns agree.
-        td = p.get("trade_date")
-        since_date = td or _local_date(p.get("opened_at"))
-        since_cell = (since_date + "*") if (since_date and not td) else \
-            (since_date or "—")
-        entry, est = estimate_entry(p["ticker"], p.get("entry_price"),
-                                    p.get("trade_date"),
-                                    (p.get("opened_at") or "")[:10], atype)
-        cur = get_price(sym)
-        ret = round((cur - entry) / entry * 100, 1) if (entry and cur) else None
-        days = _days_held(since_date)
-        rows.append((
-            (
-                (p["ticker"], C["blue"]),
-                _money(entry) + ("*" if est and entry else ""),
-                _money(cur),
-                (_fmt_pct(ret), _color(ret)),
-                since_cell,
-                str(days) if days is not None else "—",
-                p.get("holding_thesis") or "—",
-            ),
-            since_date or "",   # sort key: ISO date sorts chronologically
-        ))
-    # Newest entries first (ISO YYYY-MM-DD sorts lexicographically = by date);
-    # rows missing a date ("") sink to the bottom.
-    rows.sort(key=lambda r: r[1], reverse=True)
-    label = f"@{account}" if account else "long-term"
-    return _table(["Ticker", "Entry $", "Current $", "Return %", "Held Since",
-                   "Days Held", "Thesis"], [r[0] for r in rows],
-                  empty=f"No open {label} holdings")
 
 
 def holdings_figure(positions, portfolio):
@@ -2081,10 +2006,8 @@ app.layout = html.Div(
 
         # --- Influencers tab -- hidden until selected ------------------------
         html.Div(id="influencer-section", style={"display": "none"}, children=[
-            # One sub-tab per influencer handle. Trade-call accounts
-            # (IncomeSharks/CelalKucuker/traderstewie) use the trade-call view
-            # (winrate + positions + signals); conviction_long accounts
-            # (moninvestor/PelosiTracker) use the long-term holdings view.
+            # One sub-tab per influencer handle (IncomeSharks / CelalKucuker /
+            # traderstewie): trade-call view with winrate + positions + signals.
             dcc.Tabs(id="influencer-subtabs", value="IncomeSharks",
                      children=[
                          dcc.Tab(label="IncomeSharks", value="IncomeSharks",
@@ -2092,10 +2015,6 @@ app.layout = html.Div(
                          dcc.Tab(label="CelalKucuker", value="CelalKucuker",
                                  style=_TAB_STYLE, selected_style=_TAB_SELECTED),
                          dcc.Tab(label="traderstewie", value="traderstewie",
-                                 style=_TAB_STYLE, selected_style=_TAB_SELECTED),
-                         dcc.Tab(label="moninvestor", value="moninvestor",
-                                 style=_TAB_STYLE, selected_style=_TAB_SELECTED),
-                         dcc.Tab(label="PelosiTracker", value="PelosiTracker",
                                  style=_TAB_STYLE, selected_style=_TAB_SELECTED),
                          dcc.Tab(label="Ben Cowen", value="BenCowen",
                                  style=_TAB_STYLE, selected_style=_TAB_SELECTED),
@@ -2143,12 +2062,6 @@ app.layout = html.Div(
                 ],
             ),
             ]),   # end influencer-trade-view
-
-            # Long-term holdings view (moninvestor). No TP/stop columns.
-            html.Div(id="longterm-view", style={"display": "none"}, children=[
-                html.Div(id="longterm-header", style=_SECTION_H),
-                html.Div(id="longterm-holdings", style={"marginTop": "4px"}),
-            ]),
 
             # Ben Cowen view: YouTube video analysis cards (analysis only — he is
             # not a trader we mirror, so no positions/signals/win-rate here).
@@ -2313,24 +2226,18 @@ def _influencer_header(title, account):
 
 @app.callback(
     Output("influencer-trade-view", "style"),
-    Output("longterm-view", "style"),
     Output("youtube-view", "style"),
     Output("influencer-pos-header", "children"),
     Output("influencer-sig-header", "children"),
-    Output("longterm-header", "children"),
     Input("influencer-subtabs", "value"),
 )
 def switch_influencer_subtab(account):
     show, hide = {"display": "block"}, {"display": "none"}
     if account == "BenCowen":           # YouTube analysis view, not a trade view
-        return hide, hide, show, "", "", ""
-    if account in LONGTERM_ACCOUNTS:
-        return (hide, show, hide, "", "",
-                _influencer_header(f"{account} — Long-term Holdings", account))
-    return (show, hide, hide,
+        return hide, show, "", ""
+    return (show, hide,
             _influencer_header(f"{account} — Open Positions", account),
-            _influencer_header(f"{account} — Signals", account),
-            "")
+            _influencer_header(f"{account} — Signals", account))
 
 
 @app.callback(
@@ -2431,7 +2338,6 @@ def refresh_pie(_n, portfolio):
     Output("influencer-signals", "data"),
     Output("influencer-positions", "children"),
     Output("influencer-winrate", "children"),
-    Output("longterm-holdings", "children"),
     Output("youtube-summaries", "children"),
     Input("interval", "n_intervals"),
     Input("influencer-subtabs", "value"),
@@ -2440,23 +2346,17 @@ def refresh_influencers(_n, account):
     # Ben Cowen is a YouTube analysis view, not a trader: no header card /
     # positions / signals — just the video summary cards.
     if account == "BenCowen":
-        return "", [], None, None, None, youtube_section(load_youtube_summaries())
+        return "", [], None, None, youtube_section(load_youtube_summaries())
     positions = load_positions()
     warm_prices({_yf_symbol(p["ticker"], p.get("asset_type", "stock"))
-                 for p in influencer_positions(positions) + longterm_positions(positions)
+                 for p in influencer_positions(positions)
                  if p.get("status") == "open"})
-    # Long-term accounts (moninvestor/PelosiTracker) show only the holdings
-    # view; the trade-call outputs are hidden.
-    if account in LONGTERM_ACCOUNTS:
-        return (influencer_header_card(account, positions=positions),
-                [], None, None,
-                longterm_holdings_table(positions, account=account), [])
     resolutions = influencer_resolutions(positions, account=account)
     return (influencer_header_card(account, resolutions=resolutions),
             influencer_signals_data(load_trades(), account=account),
             influencer_positions_table(resolutions),
             influencer_winrate_card(resolutions),
-            None, [])
+            [])
 
 
 if __name__ == "__main__":
