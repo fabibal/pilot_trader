@@ -32,9 +32,9 @@ HOME = "/home/fbazsa/pilot_trader"
 ORDERS_FILE = os.path.join(HOME, "data", "orders.json")
 
 # --- spec constants (mirror IBKR_SPEC.md) ----------------------------------
-MAX_TOTAL_EXPOSURE = 10_000.0          # §5 total book cap (USD)
-MAX_POSITION_PCT = 0.10                # §2 max 10% per position
-MAX_POSITION_USD = MAX_TOTAL_EXPOSURE * MAX_POSITION_PCT   # $1,000
+MAX_TOTAL_EXPOSURE = 120.0             # §5 total book cap (USD) -- live small acct
+MAX_POSITION_PCT = 40.0 / 120.0        # §2 ~33% per position (live small acct)
+MAX_POSITION_USD = MAX_TOTAL_EXPOSURE * MAX_POSITION_PCT   # $40
 MAX_ORDERS_PER_TICKER_PER_DAY = 1      # §5
 ALLOWED_ASSET_TYPES = {"stock"}        # §6 stocks only
 BUY_CONFIDENCE = {"high", "medium"}    # §3 thresholds

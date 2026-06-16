@@ -3040,6 +3040,31 @@
     "account": "moninvestor",
     "source_type": "influencer",
     "portfolio": null,
+    "ticker": "DRAM",
+    "asset_type": "stock",
+    "status": "open",
+    "entry_price": null,
+    "stop_loss": null,
+    "target": null,
+    "size_pct": null,
+    "trade_date": null,
+    "holding_thesis": "Exposure to memory stocks with strong recent performance (up 134% in two months)",
+    "opened_at": "2026-06-14T20:38:30+00:00",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2066259005039644952",
+        "signal_type": "buy",
+        "timestamp": "2026-06-14T20:38:30+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/moninvestor/status/2066259005039644952"
+      }
+    ]
+  },
+  {
+    "account": "moninvestor",
+    "source_type": "influencer",
+    "portfolio": null,
     "ticker": "ENHA",
     "asset_type": "stock",
     "status": "open",
@@ -3048,7 +3073,7 @@
     "target": null,
     "size_pct": null,
     "trade_date": "2026-06-09",
-    "holding_thesis": "Early entry on a company before it becomes widely known.",
+    "holding_thesis": "Enhanced is a quality company with a compelling long-term investment thesis.",
     "opened_at": "2026-06-10T13:44:41+00:00",
     "closed_at": null,
     "signals": [
@@ -3058,6 +3083,20 @@
         "timestamp": "2026-06-10T13:44:41+00:00",
         "confidence": "high",
         "url": "https://x.com/moninvestor/status/2064705311747825745"
+      },
+      {
+        "tweet_id": "2066286501391176038",
+        "signal_type": "buy",
+        "timestamp": "2026-06-14T22:27:46+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/moninvestor/status/2066286501391176038"
+      },
+      {
+        "tweet_id": "2066286678126305627",
+        "signal_type": "position",
+        "timestamp": "2026-06-14T22:28:28+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/moninvestor/status/2066286678126305627"
       }
     ]
   },
@@ -3834,6 +3873,31 @@
     "account": "moninvestor",
     "source_type": "influencer",
     "portfolio": null,
+    "ticker": "SPCX",
+    "asset_type": "stock",
+    "status": "open",
+    "entry_price": null,
+    "stop_loss": null,
+    "target": null,
+    "size_pct": null,
+    "trade_date": null,
+    "holding_thesis": null,
+    "opened_at": "2026-06-15T07:05:28+00:00",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2066416786371752227",
+        "signal_type": "buy",
+        "timestamp": "2026-06-15T07:05:28+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/moninvestor/status/2066416786371752227"
+      }
+    ]
+  },
+  {
+    "account": "moninvestor",
+    "source_type": "influencer",
+    "portfolio": null,
     "ticker": "UAMY",
     "asset_type": "stock",
     "status": "open",
@@ -4087,7 +4151,7 @@
     "target": 200,
     "size_pct": 15,
     "trade_date": "2026-04-01",
-    "holding_thesis": "ServiceNow sells software that benefits when companies deploy AI to work; the selloff is mechanical (tied to semiconductor fears) while fundamentals remain solid with 20%+ subscription growth.",
+    "holding_thesis": "Model-agnostic enterprise automation platform positioned above underlying AI models; subscription growth above 20% and $1.5B AI assistant opportunity.",
     "opened_at": "2026-05-28T21:59:10.000Z",
     "closed_at": null,
     "signals": [
@@ -4195,6 +4259,13 @@
         "timestamp": "2026-06-11T22:08:32+00:00",
         "confidence": "high",
         "url": "https://x.com/theaiportfolios/status/2065194496640319854"
+      },
+      {
+        "tweet_id": "2066307900105253353",
+        "signal_type": "position",
+        "timestamp": "2026-06-14T23:52:48+00:00",
+        "confidence": "high",
+        "url": "https://x.com/theaiportfolios/status/2066307900105253353"
       }
     ]
   },

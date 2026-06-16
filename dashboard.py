@@ -1285,7 +1285,7 @@ def _pnl_span(v, pct=False):
     return html.Span(txt, style={"color": _color(v), "fontWeight": "bold"})
 
 
-def ibkr_offline(detail="IB Gateway not reachable on 127.0.0.1:4002"):
+def ibkr_offline(detail="IB Gateway not reachable on 127.0.0.1:4001"):
     return html.Div([
         html.Span("● ", style={"color": C["red"], "fontWeight": "bold"}),
         html.Span("Gateway offline", style={"color": C["red"],
@@ -2169,7 +2169,7 @@ app.layout = html.Div(
         ]),
 
         # --- My Paper Account tab -- hidden until selected -------------------
-        # Live reads from IB Gateway (127.0.0.1:4002) via the shared ibkr-store;
+        # Live reads from IB Gateway (127.0.0.1:4001) via the shared ibkr-store;
         # degrades to "Gateway offline" (ledger-backed tables still render).
         html.Div(id="ibkr-section", style={"display": "none"}, children=[
             html.Div(id="ibkr-halt"),

@@ -2,7 +2,7 @@
 
 Status: **DESIGN / logic-only.** No IBKR connection exists yet. This document is
 the contract that `order_manager.py` (the idempotent order layer) implements and
-tests against. Live execution (IB Gateway on port 4002) is a later, separate step.
+tests against. Live execution (IB Gateway on port 4001) is a later, separate step.
 
 Grounded in `positions.json` / `trades.json` as of 2026-06-02.
 
@@ -21,10 +21,10 @@ Grounded in `positions.json` / `trades.json` as of 2026-06-02.
 
 ## 2. Position sizing
 - **Equal-weight across open mirrored positions**, hard-capped per name.
-- **Max 10% per position** (`MAX_POSITION_PCT = 0.10`).
+- **Max $40 per position** (`MAX_POSITION_USD = 40`, ~33% of the $120 book).
 - Target notional per buy = `min(MAX_TOTAL_EXPOSURE / n_open_positions,
   MAX_TOTAL_EXPOSURE * MAX_POSITION_PCT)` where `n_open_positions` counts the
-  position being opened. At <=10 names the 10% cap binds ($1,000); above 10 the
+  position being opened. At <=3 names the $40 cap binds; above 3 the
   equal-weight slice binds.
 - **Quantity in the logic layer is USD notional**, not shares. Share conversion
   (notional / live ask) happens at the IBKR-connection layer, not here.
@@ -45,9 +45,9 @@ Grounded in `positions.json` / `trades.json` as of 2026-06-02.
 - A sell for a ticker we do not currently hold in the ledger is a no-op.
 
 ## 5. Risk caps
-- **Max total exposure: $10,000** (`MAX_TOTAL_EXPOSURE`). Sum of open (pending +
+- **Max total exposure: $120** (`MAX_TOTAL_EXPOSURE`). Sum of open (pending +
   filled) BUY notional may not exceed this.
-- **Max position: $1,000** (10% of total).
+- **Max position: $40** (~33% of total).
 - **Max 1 order per ticker per UTC day** (`MAX_ORDERS_PER_TICKER_PER_DAY = 1`).
 - All caps enforced in `risk_check()` before an order is queued.
 
