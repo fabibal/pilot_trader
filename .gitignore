@@ -5,6 +5,7 @@
 data/
 *.log
 .monitor_state.json
+.seen_reddit_ids.json
 
 # Tweet snapshots (large, regenerable; can contain bulk scraped content)
 tweets_*.json
