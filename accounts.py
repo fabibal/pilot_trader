@@ -30,6 +30,6 @@ INFLUENCER_ACCOUNTS = {"IncomeSharks", "CelalKucuker", "traderstewie"}
 # portfolio in positions.json (portfolio stays null by design).
 NON_AI_ACCOUNTS = set(INFLUENCER_ACCOUNTS)
 
-# AI portfolios mirrored to the IBKR paper account. ChatGPT is intentionally
-# excluded (no standalone handle; only surfaces via @aifinancelabs text).
-MIRROR_PORTFOLIOS = {"grok", "claude", "deepseek"}
+# AI portfolios mirrored to the IBKR paper account. Grok only; claude/deepseek
+# and ChatGPT are intentionally excluded (chatgpt has no standalone handle).
+MIRROR_PORTFOLIOS = {"grok"}

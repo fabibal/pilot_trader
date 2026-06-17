@@ -8,7 +8,7 @@ layer (order_manager) into the IBKR paper account (ibkr_connector). Every
 decision is logged to auto_trader.log; every executed trade pings Telegram.
 
 Qualifying signal (IBKR_SPEC.md):
-  - effective portfolio in {grok, claude, deepseek}   (MIRROR_PORTFOLIOS)
+  - effective portfolio in MIRROR_PORTFOLIOS   (currently: grok only)
   - signal_type in {buy, sell}        (position recaps are state, not orders)
   - asset_type == stock               (no crypto)
   - buys: confidence in {high, medium}
