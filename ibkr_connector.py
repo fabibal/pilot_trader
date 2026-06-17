@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """IBKR connection layer for the pilot_trader Grok mirror.
 
-Talks to IB Gateway (live) on 127.0.0.1:4001 via ib_insync. Reads a *pending*
+Talks to IB Gateway (paper) on 127.0.0.1:4002 via ib_insync. Reads a *pending*
 order produced by order_manager.queue_order() (USD notional), converts it to a
 whole-share MarketOrder, submits it, waits for a fill, and flips the ledger
 status via order_manager. Also exposes paper portfolio + account readers.
 
-Per IBKR_SPEC.md: STOCKS ONLY, max $120 total exposure, max $40/position.
+Per IBKR_SPEC.md: STOCKS ONLY, max $10,000 total exposure, max $1,000/position.
 order_manager already enforces these at queue time; the guards here are
 defense-in-depth at the point of execution.
 
@@ -29,12 +29,7 @@ from zoneinfo import ZoneInfo
 import order_manager as om
 
 HOST = "127.0.0.1"
-PORT = 4001
-# This live login exposes two managed accounts: the funded INDIVIDUAL account
-# (U15910916) and an empty IRA (U23284716). Pin every order placement and every
-# account/position query to the individual account so nothing is ambiguous or
-# routed to the wrong account.
-LIVE_ACCOUNT = "U15910916"
+PORT = 4002
 DEFAULT_CLIENT_ID = 7
 FILL_TIMEOUT_S = 30          # how long to wait for a fill (spec: 30s)
 STARTING_CAPITAL = 1_000_000.0   # fallback baseline if the file is unavailable
@@ -43,8 +38,8 @@ BASELINE_FILE = os.path.join(os.path.dirname(om.ORDERS_FILE) or ".",
 EQUITY_FILE = os.path.join(os.path.dirname(om.ORDERS_FILE) or ".",
                            "equity_curve.json")
 
-MAX_TOTAL_EXPOSURE = om.MAX_TOTAL_EXPOSURE   # $120
-MAX_POSITION_USD = om.MAX_POSITION_USD       # $40
+MAX_TOTAL_EXPOSURE = om.MAX_TOTAL_EXPOSURE   # $10,000
+MAX_POSITION_USD = om.MAX_POSITION_USD       # $1,000
 
 _NY = ZoneInfo("America/New_York")
 
@@ -55,7 +50,7 @@ class IBKRError(RuntimeError):
 
 # --- connection -------------------------------------------------------------
 def connect(client_id=DEFAULT_CLIENT_ID, timeout=20):
-    """Connect to IB Gateway live on 127.0.0.1:4001. Raises IBKRError on
+    """Connect to IB Gateway paper on 127.0.0.1:4002. Raises IBKRError on
     failure (gateway down, port closed, login incomplete). `timeout` is the
     connect deadline (lower it for latency-sensitive callers like the dashboard)."""
     try:
@@ -168,8 +163,6 @@ def get_portfolio(ib=None):
         items = ib.portfolio()
         out = []
         for it in items:
-            if it.account != LIVE_ACCOUNT:
-                continue
             out.append({
                 "ticker": it.contract.symbol,
                 "sec_type": it.contract.secType,
@@ -193,7 +186,8 @@ def get_account_value(ib=None):
     unrealized/realized P&L come from reqPnL (best-effort: NaN if unavailable)."""
     ib, owns = _maybe_connect(ib)
     try:
-        acct = LIVE_ACCOUNT
+        accts = ib.managedAccounts()
+        acct = accts[0] if accts else ""
         summ = {r.tag: r.value for r in ib.accountSummary(acct)}
         f = lambda k: float(summ.get(k, "nan"))
         netliq = f("NetLiquidation")
@@ -289,8 +283,7 @@ def _held_shares(ib, ticker):
     """Net shares currently held at IB for a stock `ticker` (0.0 if none)."""
     t = (ticker or "").upper()
     return sum(p.position for p in ib.positions()
-               if p.account == LIVE_ACCOUNT
-               and p.contract.secType == "STK" and p.contract.symbol.upper() == t)
+               if p.contract.secType == "STK" and p.contract.symbol.upper() == t)
 
 
 def _place_and_wait(ib, contract, action, shares, moo):
@@ -298,7 +291,6 @@ def _place_and_wait(ib, contract, action, shares, moo):
     terminal/resting state. Returns (trade, status, filled, avg_price, err_log)."""
     from ib_insync import MarketOrder
     mo = MarketOrder(action, shares)
-    mo.account = LIVE_ACCOUNT
     if moo:
         mo.tif = "OPG"
     trade = ib.placeOrder(contract, mo)
@@ -625,7 +617,7 @@ def reconcile_positions(ib=None, log_path=None):
     try:
         actual = {}
         for p in ib.positions():
-            if p.account == LIVE_ACCOUNT and p.contract.secType == "STK":
+            if p.contract.secType == "STK":
                 actual[p.contract.symbol.upper()] = (
                     actual.get(p.contract.symbol.upper(), 0.0) + p.position)
         tickers = set(expected) | set(actual)

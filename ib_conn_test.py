@@ -2,7 +2,7 @@
 from ib_insync import IB
 
 ib = IB()
-ib.connect('127.0.0.1', 4001, clientId=11, timeout=30)
+ib.connect('127.0.0.1', 4002, clientId=11, timeout=30)
 print('connected:', ib.isConnected())
 print('server version:', ib.client.serverVersion())
 accounts = ib.managedAccounts()
