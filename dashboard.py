@@ -152,7 +152,8 @@ PORTFOLIO_LABELS = {"grok": "Grok", "claude": "Claude",
 # Account classification + null-portfolio fallback are shared with monitor/
 # reconcile/auto_trader via accounts.py (single source of truth). Influencer
 # accounts are kept entirely separate from the AI portfolio views (own tab).
-from accounts import ACCOUNT_DEFAULT_PF, INFLUENCER_ACCOUNTS, NON_AI_ACCOUNTS
+from accounts import (ACCOUNT_DEFAULT_PF, INFLUENCER_ACCOUNTS,
+                      MIRROR_PORTFOLIOS, NON_AI_ACCOUNTS)
 
 
 def is_influencer(account):
@@ -1510,6 +1511,11 @@ def status_row_1(store):
         html.Span(f"{next_local} (~{mins:.0f}m)", style={"color": C["text"]}),
         _sep(),
         html.Span(gw_txt, style={"color": gw_color, "fontWeight": "bold"}),
+        _sep(),
+        html.Span("Mirroring: ", style={"color": C["dim"]}),
+        html.Span(", ".join(PORTFOLIO_LABELS.get(p, p.title())
+                            for p in sorted(MIRROR_PORTFOLIOS)),
+                  style={"color": C["text"], "fontWeight": "bold"}),
     ]
     br = _breaker_state()
     if br.get("halted"):
