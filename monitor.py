@@ -415,6 +415,17 @@ SELL_PATTERN = re.compile(
     r"took (?:some )?profits?|taking (?:some )?profits?|take profits?)\b",
     re.IGNORECASE)
 
+# Retweet detector for the cross-account dedup gate. A retweet is a verbatim
+# copy of another account's tweet, so when the ORIGINAL author is itself a
+# monitored account we already ingest that tweet directly — re-interpreting the
+# RT only creates a duplicate signal (e.g. @aifinancelabs and @theaiportfolios
+# both RT-ing @grkportfolio's FTAI post = 3 identical Grok positions). The drop
+# is SCOPED to monitored authors: RTs of NON-monitored accounts are KEPT, since
+# they can be the sole source of a signal (e.g. an external account breaking a
+# Grok buy @grkportfolio never posted itself). .match() anchors at string start.
+RETWEET_PATTERN = re.compile(r"RT @(\w+):", re.IGNORECASE)
+_MONITORED_LC = {a.lower() for a in ACCOUNTS}
+
 
 def is_reply(text):
     return text.lstrip().startswith("@")
@@ -447,6 +458,15 @@ def foreign_author(account, tw):
 def reply_has_sell_verb(text):
     """A reply worth keeping: it mentions a sell so we don't miss exits."""
     return bool(SELL_PATTERN.search(text or ""))
+
+
+def is_duplicate_retweet(text):
+    """True if `text` is a retweet of a MONITORED account — a cross-account
+    duplicate of a tweet we ingest from the original author directly, so it is
+    dropped pre-LLM. Retweets of NON-monitored accounts return False (kept):
+    they can be the sole source of a signal. See RETWEET_PATTERN."""
+    m = RETWEET_PATTERN.match((text or "").lstrip())
+    return bool(m) and m.group(1).lower() in _MONITORED_LC
 
 
 def slow_fetch_skip(account, state, now):
@@ -905,6 +925,9 @@ def backfill_batch(interp):
             if account in POSTS_ONLY_ACCOUNTS and tw.get("is_reply"):
                 skipped += 1
                 continue
+            if is_duplicate_retweet(tw.get("text", "")):  # RT of monitored acct
+                skipped += 1
+                continue
             if not influencer and not should_send_to_llm(tw):
                 skipped += 1
                 continue
@@ -1064,7 +1087,7 @@ def main():
             run_state.setdefault(account, {})["last_fetch"] = now.isoformat()
         total_reads += reads
         total_calls += calls
-        new, skipped, sell_cand, foreign, seen = 0, 0, 0, 0, 0
+        new, skipped, sell_cand, foreign, seen, retweet = 0, 0, 0, 0, 0, 0
         for tw in tweets:
             if tw["id"] in seen_ids:
                 continue
@@ -1086,6 +1109,12 @@ def main():
                 skipped += 1
                 continue
             text = tw.get("text", "")
+            # Drop retweets of OTHER monitored accounts (verbatim dupes of a
+            # tweet we ingest from the original author directly). Runs for ALL
+            # accounts, including influencers, before their reply-gate bypass.
+            if is_duplicate_retweet(text):
+                retweet += 1
+                continue
             # Influencer accounts (e.g. @IncomeSharks) bypass the reply gate —
             # every tweet AND reply is sent to the LLM.
             if tweet_is_reply(tw) and SOURCE_TYPE.get(account) != "influencer":
@@ -1113,7 +1142,8 @@ def main():
         total_sell_cand += sell_cand
         label = "queued for batch" if args.batch else "new signals"
         print(f"[{account}] scanned {len(tweets)}, already-seen-skipped {seen}, "
-              f"foreign-author-skipped {foreign}, reply-skipped {skipped}, "
+              f"foreign-author-skipped {foreign}, retweet-skipped {retweet}, "
+              f"reply-skipped {skipped}, "
               f"reply-sell-candidate {sell_cand}, {label} {new}")
 
     # --batch: now run the single bulk job. A timeout leaves state unwritten so

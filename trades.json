@@ -1,5 +1,34 @@
 [
   {
+    "account": "IncomeSharks",
+    "source_type": "influencer",
+    "portfolio": null,
+    "tweet_id": "2067487768268423330",
+    "timestamp": "2026-06-18T06:01:10+00:00",
+    "signal_type": "buy",
+    "sell_kind": null,
+    "confidence": "high",
+    "actionable": true,
+    "tickers": [
+      "GNOM"
+    ],
+    "asset_type": "stock",
+    "position_size_pct": null,
+    "entry_price": 50,
+    "stop_loss": null,
+    "target": 100,
+    "trade_date": null,
+    "holding_thesis": null,
+    "reasoning": "IncomeSharks is calling a long entry in GNOM at $50 with a price target of $100, implying a 2x upside move.",
+    "tp1": null,
+    "tp2": null,
+    "chart_trend": null,
+    "chart_notes": null,
+    "has_chart": false,
+    "url": "https://x.com/IncomeSharks/status/2067487768268423330",
+    "text": "@TradeWithSpike $GNOM at $50, target $100."
+  },
+  {
     "account": "CelalKucuker",
     "source_type": "influencer",
     "portfolio": null,

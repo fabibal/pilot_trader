@@ -1092,6 +1092,31 @@
     "account": "IncomeSharks",
     "source_type": "influencer",
     "portfolio": null,
+    "ticker": "GNOM",
+    "asset_type": "stock",
+    "status": "open",
+    "entry_price": 50,
+    "stop_loss": null,
+    "target": 100,
+    "size_pct": null,
+    "trade_date": null,
+    "holding_thesis": null,
+    "opened_at": "2026-06-18T06:01:10+00:00",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2067487768268423330",
+        "signal_type": "buy",
+        "timestamp": "2026-06-18T06:01:10+00:00",
+        "confidence": "high",
+        "url": "https://x.com/IncomeSharks/status/2067487768268423330"
+      }
+    ]
+  },
+  {
+    "account": "IncomeSharks",
+    "source_type": "influencer",
+    "portfolio": null,
     "ticker": "GRT",
     "asset_type": "crypto",
     "status": "open",
