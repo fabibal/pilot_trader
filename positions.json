@@ -2569,6 +2569,752 @@
     ]
   },
   {
+    "account": "ralliesarena",
+    "source_type": "portfolio",
+    "portfolio": "claude",
+    "ticker": "ACGL",
+    "asset_type": "stock",
+    "status": "open",
+    "entry_price": null,
+    "stop_loss": null,
+    "target": null,
+    "size_pct": null,
+    "trade_date": "2026-04-24",
+    "holding_thesis": null,
+    "opened_at": "2026-04-24T14:47:55+00:00",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2047688995841130714",
+        "signal_type": "buy",
+        "timestamp": "2026-04-24T14:47:55+00:00",
+        "confidence": "high",
+        "url": "https://x.com/ralliesarena/status/2047688995841130714"
+      }
+    ]
+  },
+  {
+    "account": "ralliesarena",
+    "source_type": "portfolio",
+    "portfolio": "chatgpt",
+    "ticker": "APH",
+    "asset_type": "stock",
+    "status": "open",
+    "entry_price": null,
+    "stop_loss": null,
+    "target": null,
+    "size_pct": null,
+    "trade_date": null,
+    "holding_thesis": "Amphenol is owned by ChatGPT's portfolio and has beaten earnings expectations.",
+    "opened_at": "2026-04-29T13:21:58+00:00",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2049479304908583237",
+        "signal_type": "position",
+        "timestamp": "2026-04-29T13:21:58+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/ralliesarena/status/2049479304908583237"
+      }
+    ]
+  },
+  {
+    "account": "ralliesarena",
+    "source_type": "portfolio",
+    "portfolio": "gemini",
+    "ticker": "ASML",
+    "asset_type": "stock",
+    "status": "open",
+    "entry_price": null,
+    "stop_loss": null,
+    "target": null,
+    "size_pct": null,
+    "trade_date": null,
+    "holding_thesis": null,
+    "opened_at": null,
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2045204332484739242",
+        "signal_type": "sell",
+        "timestamp": "2026-04-17T18:14:45+00:00",
+        "confidence": "high",
+        "url": "https://x.com/ralliesarena/status/2045204332484739242"
+      }
+    ]
+  },
+  {
+    "account": "ralliesarena",
+    "source_type": "portfolio",
+    "portfolio": "deepseek",
+    "ticker": "AVGO",
+    "asset_type": "stock",
+    "status": "open",
+    "entry_price": null,
+    "stop_loss": null,
+    "target": null,
+    "size_pct": null,
+    "trade_date": null,
+    "holding_thesis": null,
+    "opened_at": null,
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2046597708790579393",
+        "signal_type": "sell",
+        "timestamp": "2026-04-21T14:31:32+00:00",
+        "confidence": "high",
+        "url": "https://x.com/ralliesarena/status/2046597708790579393"
+      }
+    ]
+  },
+  {
+    "account": "ralliesarena",
+    "source_type": "portfolio",
+    "portfolio": "chatgpt",
+    "ticker": "CI",
+    "asset_type": "stock",
+    "status": "open",
+    "entry_price": null,
+    "stop_loss": null,
+    "target": null,
+    "size_pct": 5.3,
+    "trade_date": "2026-05-27",
+    "holding_thesis": "Diversification away from AI beta; exposure to healthcare/PBM sector.",
+    "opened_at": "2026-05-27T16:42:14+00:00",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2059676563692552461",
+        "signal_type": "buy",
+        "timestamp": "2026-05-27T16:42:14+00:00",
+        "confidence": "high",
+        "url": "https://x.com/ralliesarena/status/2059676563692552461"
+      }
+    ]
+  },
+  {
+    "account": "ralliesarena",
+    "source_type": "portfolio",
+    "portfolio": "chatgpt",
+    "ticker": "CRDO",
+    "asset_type": "stock",
+    "status": "open",
+    "entry_price": 117.49,
+    "stop_loss": null,
+    "target": null,
+    "size_pct": null,
+    "trade_date": "2026-03-06",
+    "holding_thesis": "Credo is ChatGPT's largest holding in the Rallies AI Arena portfolio.",
+    "opened_at": "2026-04-21T18:11:25+00:00",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2046653043777691930",
+        "signal_type": "position",
+        "timestamp": "2026-04-21T18:11:25+00:00",
+        "confidence": "high",
+        "url": "https://x.com/ralliesarena/status/2046653043777691930"
+      },
+      {
+        "tweet_id": "2046697178647736743",
+        "signal_type": "position",
+        "timestamp": "2026-04-21T21:06:47+00:00",
+        "confidence": "high",
+        "url": "https://x.com/ralliesarena/status/2046697178647736743"
+      },
+      {
+        "tweet_id": "2054575471451378120",
+        "signal_type": "sell",
+        "timestamp": "2026-05-13T14:52:19+00:00",
+        "confidence": "high",
+        "url": "https://x.com/ralliesarena/status/2054575471451378120"
+      },
+      {
+        "tweet_id": "2055007853316866136",
+        "signal_type": "position",
+        "timestamp": "2026-05-14T19:30:27+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/ralliesarena/status/2055007853316866136"
+      },
+      {
+        "tweet_id": "2059279354618589204",
+        "signal_type": "sell",
+        "timestamp": "2026-05-26T14:23:52+00:00",
+        "confidence": "high",
+        "url": "https://x.com/ralliesarena/status/2059279354618589204"
+      },
+      {
+        "tweet_id": "2060386143682842890",
+        "signal_type": "sell",
+        "timestamp": "2026-05-29T15:41:51+00:00",
+        "confidence": "high",
+        "url": "https://x.com/ralliesarena/status/2060386143682842890"
+      },
+      {
+        "tweet_id": "2062561044271190244",
+        "signal_type": "sell",
+        "timestamp": "2026-06-04T15:44:08+00:00",
+        "confidence": "high",
+        "url": "https://x.com/ralliesarena/status/2062561044271190244"
+      },
+      {
+        "tweet_id": "2064350768291840069",
+        "signal_type": "sell",
+        "timestamp": "2026-06-09T14:15:51+00:00",
+        "confidence": "high",
+        "url": "https://x.com/ralliesarena/status/2064350768291840069"
+      }
+    ]
+  },
+  {
+    "account": "ralliesarena",
+    "source_type": "portfolio",
+    "portfolio": "chatgpt",
+    "ticker": "GOOGL",
+    "asset_type": "stock",
+    "status": "open",
+    "entry_price": 286.64,
+    "stop_loss": null,
+    "target": null,
+    "size_pct": null,
+    "trade_date": "2026-03-31",
+    "holding_thesis": "Google stock was at a bottom point when ChatGPT initiated a position.",
+    "opened_at": "2026-04-30T13:56:40+00:00",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2049850424128111071",
+        "signal_type": "position",
+        "timestamp": "2026-04-30T13:56:40+00:00",
+        "confidence": "high",
+        "url": "https://x.com/ralliesarena/status/2049850424128111071"
+      },
+      {
+        "tweet_id": "2063806095987020214",
+        "signal_type": "position",
+        "timestamp": "2026-06-08T02:11:31+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/ralliesarena/status/2063806095987020214"
+      }
+    ]
+  },
+  {
+    "account": "ralliesarena",
+    "source_type": "portfolio",
+    "portfolio": "claude",
+    "ticker": "INTU",
+    "asset_type": "stock",
+    "status": "closed",
+    "entry_price": 367.07,
+    "stop_loss": null,
+    "target": null,
+    "size_pct": 7.05,
+    "trade_date": "2026-02-19",
+    "holding_thesis": "Claude believes in Intuit as a core holding, maintaining a 14.1% portfolio weight without selling.",
+    "opened_at": "2026-05-10T14:04:15+00:00",
+    "closed_at": "2026-05-26T17:50:30+00:00",
+    "signals": [
+      {
+        "tweet_id": "2053476212563956175",
+        "signal_type": "position",
+        "timestamp": "2026-05-10T14:04:15+00:00",
+        "confidence": "high",
+        "url": "https://x.com/ralliesarena/status/2053476212563956175"
+      },
+      {
+        "tweet_id": "2057468903417123281",
+        "signal_type": "sell",
+        "timestamp": "2026-05-21T14:29:47+00:00",
+        "confidence": "high",
+        "url": "https://x.com/ralliesarena/status/2057468903417123281"
+      },
+      {
+        "tweet_id": "2059331356379787672",
+        "signal_type": "sell",
+        "timestamp": "2026-05-26T17:50:30+00:00",
+        "confidence": "high",
+        "url": "https://x.com/ralliesarena/status/2059331356379787672"
+      }
+    ]
+  },
+  {
+    "account": "ralliesarena",
+    "source_type": "portfolio",
+    "portfolio": "chatgpt",
+    "ticker": "JPM",
+    "asset_type": "stock",
+    "status": "open",
+    "entry_price": 298.1,
+    "stop_loss": null,
+    "target": null,
+    "size_pct": 5.5,
+    "trade_date": "2026-06-02",
+    "holding_thesis": "Fortress bank with strong capital position and resilient fundamentals to balance AI-heavy portfolio and provide macro stability.",
+    "opened_at": "2026-06-02T14:10:54+00:00",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2061812808832930133",
+        "signal_type": "buy",
+        "timestamp": "2026-06-02T14:10:54+00:00",
+        "confidence": "high",
+        "url": "https://x.com/ralliesarena/status/2061812808832930133"
+      }
+    ]
+  },
+  {
+    "account": "ralliesarena",
+    "source_type": "portfolio",
+    "portfolio": "claude",
+    "ticker": "KR",
+    "asset_type": "stock",
+    "status": "closed",
+    "entry_price": null,
+    "stop_loss": null,
+    "target": null,
+    "size_pct": null,
+    "trade_date": null,
+    "holding_thesis": null,
+    "opened_at": null,
+    "closed_at": "2026-04-27T14:19:49+00:00",
+    "signals": [
+      {
+        "tweet_id": "2048769085958201446",
+        "signal_type": "sell",
+        "timestamp": "2026-04-27T14:19:49+00:00",
+        "confidence": "high",
+        "url": "https://x.com/ralliesarena/status/2048769085958201446"
+      }
+    ]
+  },
+  {
+    "account": "ralliesarena",
+    "source_type": "portfolio",
+    "portfolio": "chatgpt",
+    "ticker": "LDOS",
+    "asset_type": "stock",
+    "status": "open",
+    "entry_price": null,
+    "stop_loss": null,
+    "target": null,
+    "size_pct": 6.8,
+    "trade_date": null,
+    "holding_thesis": "Asymmetry play: oversold chart, solid contracts, cheap multiple.",
+    "opened_at": "2026-05-22T14:52:22+00:00",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2057836974677873027",
+        "signal_type": "buy",
+        "timestamp": "2026-05-22T14:52:22+00:00",
+        "confidence": "high",
+        "url": "https://x.com/ralliesarena/status/2057836974677873027"
+      }
+    ]
+  },
+  {
+    "account": "ralliesarena",
+    "source_type": "portfolio",
+    "portfolio": "claude",
+    "ticker": "META",
+    "asset_type": "stock",
+    "status": "open",
+    "entry_price": 610.43,
+    "stop_loss": null,
+    "target": null,
+    "size_pct": null,
+    "trade_date": "2026-05-18",
+    "holding_thesis": "Cheap mega-cap with fast revenue growth, strong Q1 results, and improving technicals; capex is driving growth not burdening it.",
+    "opened_at": "2026-05-18T19:48:05+00:00",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2056461842848030779",
+        "signal_type": "buy",
+        "timestamp": "2026-05-18T19:48:05+00:00",
+        "confidence": "high",
+        "url": "https://x.com/ralliesarena/status/2056461842848030779"
+      }
+    ]
+  },
+  {
+    "account": "ralliesarena",
+    "source_type": "portfolio",
+    "portfolio": "grok",
+    "ticker": "MU",
+    "asset_type": "stock",
+    "status": "closed",
+    "entry_price": null,
+    "stop_loss": null,
+    "target": null,
+    "size_pct": null,
+    "trade_date": null,
+    "holding_thesis": "Micron was a huge win, up 150% since purchase; Grok took partial profits while maintaining a long position.",
+    "opened_at": null,
+    "closed_at": "2026-06-05T20:38:32+00:00",
+    "signals": [
+      {
+        "tweet_id": "2049495217934381149",
+        "signal_type": "sell",
+        "timestamp": "2026-04-29T14:25:12+00:00",
+        "confidence": "high",
+        "url": "https://x.com/ralliesarena/status/2049495217934381149"
+      },
+      {
+        "tweet_id": "2049861612132032795",
+        "signal_type": "sell",
+        "timestamp": "2026-04-30T14:41:07+00:00",
+        "confidence": "high",
+        "url": "https://x.com/ralliesarena/status/2049861612132032795"
+      },
+      {
+        "tweet_id": "2051680932185190703",
+        "signal_type": "sell",
+        "timestamp": "2026-05-05T15:10:27+00:00",
+        "confidence": "high",
+        "url": "https://x.com/ralliesarena/status/2051680932185190703"
+      },
+      {
+        "tweet_id": "2052034731726799035",
+        "signal_type": "sell",
+        "timestamp": "2026-05-06T14:36:19+00:00",
+        "confidence": "high",
+        "url": "https://x.com/ralliesarena/status/2052034731726799035"
+      },
+      {
+        "tweet_id": "2052187372566016103",
+        "signal_type": "sell",
+        "timestamp": "2026-05-07T00:42:52+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/ralliesarena/status/2052187372566016103"
+      },
+      {
+        "tweet_id": "2052396204177179077",
+        "signal_type": "sell",
+        "timestamp": "2026-05-07T14:32:41+00:00",
+        "confidence": "high",
+        "url": "https://x.com/ralliesarena/status/2052396204177179077"
+      },
+      {
+        "tweet_id": "2052755844974932148",
+        "signal_type": "sell",
+        "timestamp": "2026-05-08T14:21:46+00:00",
+        "confidence": "high",
+        "url": "https://x.com/ralliesarena/status/2052755844974932148"
+      },
+      {
+        "tweet_id": "2053230811499897281",
+        "signal_type": "sell",
+        "timestamp": "2026-05-09T21:49:07+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/ralliesarena/status/2053230811499897281"
+      },
+      {
+        "tweet_id": "2053874944749015157",
+        "signal_type": "sell",
+        "timestamp": "2026-05-11T16:28:40+00:00",
+        "confidence": "high",
+        "url": "https://x.com/ralliesarena/status/2053874944749015157"
+      },
+      {
+        "tweet_id": "2054204533731885552",
+        "signal_type": "sell",
+        "timestamp": "2026-05-12T14:18:20+00:00",
+        "confidence": "high",
+        "url": "https://x.com/ralliesarena/status/2054204533731885552"
+      },
+      {
+        "tweet_id": "2059449488993890665",
+        "signal_type": "sell",
+        "timestamp": "2026-05-27T01:39:55+00:00",
+        "confidence": "high",
+        "url": "https://x.com/ralliesarena/status/2059449488993890665"
+      },
+      {
+        "tweet_id": "2061447916552700202",
+        "signal_type": "sell",
+        "timestamp": "2026-06-01T14:00:57+00:00",
+        "confidence": "high",
+        "url": "https://x.com/ralliesarena/status/2061447916552700202"
+      },
+      {
+        "tweet_id": "2062185917465419944",
+        "signal_type": "sell",
+        "timestamp": "2026-06-03T14:53:30+00:00",
+        "confidence": "high",
+        "url": "https://x.com/ralliesarena/status/2062185917465419944"
+      },
+      {
+        "tweet_id": "2062997519806746787",
+        "signal_type": "sell",
+        "timestamp": "2026-06-05T20:38:32+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/ralliesarena/status/2062997519806746787"
+      }
+    ]
+  },
+  {
+    "account": "ralliesarena",
+    "source_type": "portfolio",
+    "portfolio": null,
+    "ticker": "MU",
+    "asset_type": "stock",
+    "status": "open",
+    "entry_price": 344.96,
+    "stop_loss": null,
+    "target": null,
+    "size_pct": null,
+    "trade_date": "2025-12-15",
+    "holding_thesis": "Grok is holding a remaining position in Micron after a partial exit.",
+    "opened_at": "2026-06-02T16:14:24+00:00",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2061843886692061449",
+        "signal_type": "position",
+        "timestamp": "2026-06-02T16:14:24+00:00",
+        "confidence": "high",
+        "url": "https://x.com/ralliesarena/status/2061843886692061449"
+      }
+    ]
+  },
+  {
+    "account": "ralliesarena",
+    "source_type": "portfolio",
+    "portfolio": "chatgpt",
+    "ticker": "NBIS",
+    "asset_type": "stock",
+    "status": "open",
+    "entry_price": null,
+    "stop_loss": null,
+    "target": null,
+    "size_pct": null,
+    "trade_date": null,
+    "holding_thesis": "ChatGPT portfolio holding as part of Rallies AI Arena competition.",
+    "opened_at": "2026-05-14T14:07:05+00:00",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2054926478861603272",
+        "signal_type": "position",
+        "timestamp": "2026-05-14T14:07:05+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/ralliesarena/status/2054926478861603272"
+      },
+      {
+        "tweet_id": "2056399314864275782",
+        "signal_type": "sell",
+        "timestamp": "2026-05-18T15:39:37+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/ralliesarena/status/2056399314864275782"
+      },
+      {
+        "tweet_id": "2057174242303615002",
+        "signal_type": "sell",
+        "timestamp": "2026-05-20T18:58:54+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/ralliesarena/status/2057174242303615002"
+      },
+      {
+        "tweet_id": "2057586954716234049",
+        "signal_type": "position",
+        "timestamp": "2026-05-21T22:18:52+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/ralliesarena/status/2057586954716234049"
+      },
+      {
+        "tweet_id": "2060009086297555255",
+        "signal_type": "sell",
+        "timestamp": "2026-05-28T14:43:33+00:00",
+        "confidence": "high",
+        "url": "https://x.com/ralliesarena/status/2060009086297555255"
+      },
+      {
+        "tweet_id": "2067264612383195383",
+        "signal_type": "sell",
+        "timestamp": "2026-06-17T15:14:26+00:00",
+        "confidence": "high",
+        "url": "https://x.com/ralliesarena/status/2067264612383195383"
+      }
+    ]
+  },
+  {
+    "account": "ralliesarena",
+    "source_type": "portfolio",
+    "portfolio": null,
+    "ticker": "NBIS",
+    "asset_type": "stock",
+    "status": "open",
+    "entry_price": null,
+    "stop_loss": null,
+    "target": null,
+    "size_pct": null,
+    "trade_date": null,
+    "holding_thesis": null,
+    "opened_at": null,
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2055295209018171471",
+        "signal_type": "sell",
+        "timestamp": "2026-05-15T14:32:18+00:00",
+        "confidence": "high",
+        "url": "https://x.com/ralliesarena/status/2055295209018171471"
+      }
+    ]
+  },
+  {
+    "account": "ralliesarena",
+    "source_type": "portfolio",
+    "portfolio": "claude",
+    "ticker": "NVDA",
+    "asset_type": "stock",
+    "status": "open",
+    "entry_price": null,
+    "stop_loss": null,
+    "target": null,
+    "size_pct": null,
+    "trade_date": null,
+    "holding_thesis": null,
+    "opened_at": null,
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2046277346672681002",
+        "signal_type": "sell",
+        "timestamp": "2026-04-20T17:18:32+00:00",
+        "confidence": "high",
+        "url": "https://x.com/ralliesarena/status/2046277346672681002"
+      }
+    ]
+  },
+  {
+    "account": "ralliesarena",
+    "source_type": "portfolio",
+    "portfolio": "gemini",
+    "ticker": "NVDA",
+    "asset_type": "stock",
+    "status": "open",
+    "entry_price": null,
+    "stop_loss": null,
+    "target": null,
+    "size_pct": null,
+    "trade_date": null,
+    "holding_thesis": null,
+    "opened_at": null,
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2055367946352951398",
+        "signal_type": "sell",
+        "timestamp": "2026-05-15T19:21:19+00:00",
+        "confidence": "high",
+        "url": "https://x.com/ralliesarena/status/2055367946352951398"
+      }
+    ]
+  },
+  {
+    "account": "ralliesarena",
+    "source_type": "portfolio",
+    "portfolio": "chatgpt",
+    "ticker": "PGR",
+    "asset_type": "stock",
+    "status": "open",
+    "entry_price": null,
+    "stop_loss": null,
+    "target": null,
+    "size_pct": 6.5,
+    "trade_date": "2026-05-14",
+    "holding_thesis": "Anti-AI-insurance hedge with strong underwriting fundamentals, pricing power, and attractive valuation to reduce exposure to AI mega-cap duration risk.",
+    "opened_at": "2026-05-14T14:24:56+00:00",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2054930967857443064",
+        "signal_type": "buy",
+        "timestamp": "2026-05-14T14:24:56+00:00",
+        "confidence": "high",
+        "url": "https://x.com/ralliesarena/status/2054930967857443064"
+      }
+    ]
+  },
+  {
+    "account": "ralliesarena",
+    "source_type": "portfolio",
+    "portfolio": "claude",
+    "ticker": "REGN",
+    "asset_type": "stock",
+    "status": "open",
+    "entry_price": null,
+    "stop_loss": null,
+    "target": null,
+    "size_pct": 5.0,
+    "trade_date": null,
+    "holding_thesis": "Claude is positioning REGN as a small position in its stock portfolio.",
+    "opened_at": "2026-06-16T19:48:38+00:00",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2066971230843126087",
+        "signal_type": "buy",
+        "timestamp": "2026-06-16T19:48:38+00:00",
+        "confidence": "high",
+        "url": "https://x.com/ralliesarena/status/2066971230843126087"
+      }
+    ]
+  },
+  {
+    "account": "ralliesarena",
+    "source_type": "portfolio",
+    "portfolio": "chatgpt",
+    "ticker": "V",
+    "asset_type": "stock",
+    "status": "open",
+    "entry_price": null,
+    "stop_loss": null,
+    "target": null,
+    "size_pct": 6.8,
+    "trade_date": null,
+    "holding_thesis": "Asset-light business with strong fundamentals (61% operating margin, 62% ROE) trading at a discount to the market despite superior earnings growth.",
+    "opened_at": "2026-05-18T16:46:49+00:00",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2056416226377949317",
+        "signal_type": "buy",
+        "timestamp": "2026-05-18T16:46:49+00:00",
+        "confidence": "high",
+        "url": "https://x.com/ralliesarena/status/2056416226377949317"
+      }
+    ]
+  },
+  {
+    "account": "ralliesarena",
+    "source_type": "portfolio",
+    "portfolio": "chatgpt",
+    "ticker": "XOM",
+    "asset_type": "stock",
+    "status": "open",
+    "entry_price": null,
+    "stop_loss": null,
+    "target": null,
+    "size_pct": 5,
+    "trade_date": "2026-06-12",
+    "holding_thesis": "Energy hedge to diversify AI-heavy portfolio; positioned for higher-for-longer rates and supply-shock regime with XOM's low-cost production and buyback plans.",
+    "opened_at": "2026-06-12T18:09:49+00:00",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2065496810739601899",
+        "signal_type": "buy",
+        "timestamp": "2026-06-12T18:09:49+00:00",
+        "confidence": "high",
+        "url": "https://x.com/ralliesarena/status/2065496810739601899"
+      }
+    ]
+  },
+  {
     "account": "theaiportfolios",
     "source_type": "portfolio",
     "portfolio": "claude",

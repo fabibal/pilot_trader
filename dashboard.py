@@ -148,7 +148,8 @@ def get_getxapi_credits():
 
 
 PORTFOLIO_LABELS = {"grok": "Grok", "claude": "Claude",
-                    "deepseek": "DeepSeek", "chatgpt": "ChatGPT"}
+                    "deepseek": "DeepSeek", "chatgpt": "ChatGPT",
+                    "gemini": "Gemini"}
 # Account classification + null-portfolio fallback are shared with monitor/
 # reconcile/auto_trader via accounts.py (single source of truth). Influencer
 # accounts are kept entirely separate from the AI portfolio views (own tab).
@@ -519,6 +520,8 @@ def portfolio_cards(positions):
 
     cards = []
     for pf in sorted(by_pf):
+        if pf == "unknown":          # unattributed umbrella tweets: no model card
+            continue
         ps = by_pf[pf]
         rets, dates = [], []
         for p in ps:
@@ -572,7 +575,9 @@ def portfolio_cards(positions):
 
 
 def portfolios_in(positions):
-    pfs = sorted({pf_of(p) for p in positions}) if positions else []
+    # Drop "unknown" — an AI-umbrella tweet (e.g. @ralliesarena) the LLM could not
+    # attribute to a specific model has no model sub-tab of its own.
+    pfs = sorted({pf_of(p) for p in positions} - {"unknown"}) if positions else []
     return pfs or ["grok", "claude", "deepseek"]
 
 
@@ -1409,6 +1414,8 @@ def portfolio_kpis(positions):
         by.setdefault(pf_of(p), []).append(p)
     out, all_dates = [], []
     for pf in sorted(by):
+        if pf == "unknown":          # unattributed umbrella tweets: skip KPI row
+            continue
         ps, rets, dates = by[pf], [], []
         for p in ps:
             r = compute_return(p["ticker"], p.get("entry_price"),

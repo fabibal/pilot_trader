@@ -3,8 +3,9 @@
 
 Called from monitor.py at the end of each live run (and runnable standalone).
 Reads trades.json, picks the qualifying NEW signals from the mirrored AI
-portfolios (grok, claude, deepseek), and runs each through the idempotent order
-layer (order_manager) into the IBKR paper account (ibkr_connector). Every
+portfolio (grok only — see MIRROR_PORTFOLIOS), and runs each through the
+idempotent order layer (order_manager) into the IBKR paper account
+(ibkr_connector). Analysis-only umbrellas (NO_MIRROR_ACCOUNTS) are excluded. Every
 decision is logged to auto_trader.log; every executed trade pings Telegram.
 
 Qualifying signal (IBKR_SPEC.md):
@@ -60,7 +61,8 @@ MAX_BUY_AGE_DAYS = 3
 # Account-identity config is shared via accounts.py (single source of truth).
 # aifinancelabs posts carry the portfolio explicitly from the tweet text
 # (grok/claude/deepseek/chatgpt), so they resolve regardless of the fallback.
-from accounts import ACCOUNT_DEFAULT_PF, MIRROR_PORTFOLIOS  # noqa: E402
+from accounts import (ACCOUNT_DEFAULT_PF, MIRROR_PORTFOLIOS,  # noqa: E402
+                      NO_MIRROR_ACCOUNTS)
 
 # --- circuit breaker (issue 4) ---------------------------------------------
 DATA_DIR = os.path.join(HOME, "data")
@@ -141,7 +143,9 @@ def _effective_pf(sig):
 
 
 def _qualifies(sig):
-    if _effective_pf(sig) not in MIRROR_PORTFOLIOS:      # grok/claude/deepseek
+    if sig.get("account") in NO_MIRROR_ACCOUNTS:         # analysis-only umbrella
+        return False                                     # (e.g. ralliesarena)
+    if _effective_pf(sig) not in MIRROR_PORTFOLIOS:      # grok only
         return False
     st = sig.get("signal_type")
     if st not in ("buy", "sell"):                        # not a recap/none
@@ -173,6 +177,7 @@ def _gated_sell(sig):
     (least-trusted extraction, real liquidation), but dangerous to drop
     silently (it may be a real exit). These are skipped + Telegram-alerted."""
     return (sig.get("signal_type") == "sell"
+            and sig.get("account") not in NO_MIRROR_ACCOUNTS
             and sig.get("confidence") not in om.BUY_CONFIDENCE
             and _effective_pf(sig) in MIRROR_PORTFOLIOS
             and sig.get("asset_type") == "stock"
@@ -437,7 +442,7 @@ def _run_locked(no_trade=False, trades_path=None):
 if __name__ == "__main__":
     import argparse
     ap = argparse.ArgumentParser(
-        description="Execute new AI-portfolio signals (grok/claude/deepseek) on "
+        description="Execute new AI-portfolio signals (grok only) on "
                     "IBKR paper.")
     ap.add_argument("--no-trade", action="store_true",
                     help="queue orders but do NOT submit to IBKR")

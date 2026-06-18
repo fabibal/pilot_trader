@@ -12,13 +12,14 @@ are used.
 # Monitored handles. "portfolio" kind = AI bot posting its own trades;
 # "influencer" = human trader (no reply gate, extra fields).
 ACCOUNTS = ["grkportfolio", "theaiportfolios", "aifinancelabs", "IncomeSharks",
-            "CelalKucuker", "traderstewie"]
+            "CelalKucuker", "traderstewie", "ralliesarena"]
 
 SOURCE_TYPE = {"IncomeSharks": "influencer", "CelalKucuker": "influencer",
                "traderstewie": "influencer"}
 
 # Accounts fetched from the POSTS-ONLY endpoint (no @-replies in the thread).
-POSTS_ONLY_ACCOUNTS = {"traderstewie"}
+# ralliesarena posts standalone AI trade-update announcements; replies are noise.
+POSTS_ONLY_ACCOUNTS = {"traderstewie", "ralliesarena"}
 
 # Account -> default portfolio when the LLM left portfolio null.
 ACCOUNT_DEFAULT_PF = {"grkportfolio": "grok", "theaiportfolios": "claude",
@@ -33,3 +34,11 @@ NON_AI_ACCOUNTS = set(INFLUENCER_ACCOUNTS)
 # AI portfolios mirrored to the IBKR paper account. Grok only; claude/deepseek
 # and ChatGPT are intentionally excluded (chatgpt has no standalone handle).
 MIRROR_PORTFOLIOS = {"grok"}
+
+# Analysis-only AI umbrellas: per-tweet model attribution (claude/grok/deepseek/
+# gemini/chatgpt) shown in the AI dashboard, but NEVER mirrored to IBKR.
+# @ralliesarena runs its OWN AI-vs-AI experiment whose "grok"/"claude" books are
+# SEPARATE from Autopilot's @grkportfolio/@theaiportfolios — mirroring its grok
+# calls would conflate two different Grok books on auto_trader's ticker key (one
+# ACTIVE position per ticker). auto_trader._qualifies + _gated_sell exclude these.
+NO_MIRROR_ACCOUNTS = {"ralliesarena"}

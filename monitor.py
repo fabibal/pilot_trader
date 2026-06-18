@@ -54,8 +54,10 @@ from reconcile import reconcile, write_json_atomic
 from accounts import ACCOUNTS, SOURCE_TYPE, POSTS_ONLY_ACCOUNTS
 # Slow accounts: fetch only if the last fetch was more than N hours ago (instead
 # of an exact-hour cron match, which fails entirely if that one cron run fails).
-# Absent => polled on every run. The 3 AI portfolios (grok/claude/deepseek —
-# they rebalance ~monthly, so 4h polling is wasteful) are ~twice a day.
+# Absent => polled on every run (4h cron). The 3 Autopilot AI portfolios
+# (grok/claude/deepseek — they rebalance ~monthly, so 4h polling is wasteful) are
+# ~twice a day. ralliesarena is an AI portfolio too but posts daily trade
+# updates, so it is left ABSENT here (polled every run) like the influencers.
 # ⚠️ Use 11h, NOT 12h: a real fetch records last_fetch a few seconds AFTER the
 # cron slot (GetXAPI latency), so a 16:00->04:00 gap measures ~11h59m58s. With a
 # 12h threshold that is `< 12` => the 04:00 run SKIPS and the phase drifts. 11h
@@ -89,6 +91,7 @@ RAW_FILES = {  # used by --backfill; accounts without a snapshot are skipped
     "IncomeSharks": os.path.join(HOME, "tweets_incomesharks.json"),
     "CelalKucuker": os.path.join(HOME, "tweets_CelalKucuker.json"),
     "traderstewie": os.path.join(HOME, "tweets_traderstewie.json"),
+    "ralliesarena": os.path.join(HOME, "tweets_ralliesarena.json"),
 }
 MAX_FETCH = 100
 API_BASE = "https://api.twitter.com/2"
@@ -197,8 +200,9 @@ EXTRACTION_SYSTEM = (
     "- confidence: how confident you are this is a real actionable trade signal "
     "(\"high\", \"medium\", \"low\", or \"none\").\n"
     "- portfolio: for a portfolio bot, which model's portfolio the trade belongs "
-    "to — \"grok\", \"claude\", \"deepseek\", or \"chatgpt\". null if unclear or "
-    "for an influencer.\n"
+    "to — \"grok\", \"claude\", \"deepseek\", \"chatgpt\", or \"gemini\". Umbrella "
+    "feeds name the model explicitly (e.g. 'CLAUDE JUST BOUGHT', 'Gemini bought') "
+    "— attribute per tweet. null if unclear or for an influencer.\n"
     "- holding_thesis: for a buy or position, ONE short sentence stating WHY "
     "the account likes/holds the asset (the bull case / conviction reason), if "
     "stated or clearly implied. null if none is given.\n"
@@ -225,7 +229,8 @@ SIGNAL_SCHEMA = {
         "confidence": {"type": "string",
                        "enum": ["high", "medium", "low", "none"]},
         "portfolio": {"anyOf": [
-            {"type": "string", "enum": ["grok", "claude", "deepseek", "chatgpt"]},
+            {"type": "string",
+             "enum": ["grok", "claude", "deepseek", "chatgpt", "gemini"]},
             {"type": "null"},
         ]},
         "reasoning": {"type": "string"},

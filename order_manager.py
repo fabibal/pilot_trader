@@ -2,8 +2,8 @@
 """Idempotent order layer for the IBKR AI-portfolio mirror (LOGIC ONLY — no IBKR).
 
 Portfolio-agnostic: it sizes/risk-checks whatever signal it's handed. Which
-portfolios actually feed it is decided upstream by auto_trader.MIRROR_PORTFOLIOS
-({grok, claude, deepseek}); orders are keyed on ticker, not portfolio.
+portfolios actually feed it is decided upstream by MIRROR_PORTFOLIOS / the
+auto_trader._qualifies gate ({grok}); orders are keyed on ticker, not portfolio.
 
 Implements the rules in IBKR_SPEC.md against a JSON ledger
 (`data/orders.json`). It decides WHETHER and HOW MUCH to trade for a signal and
