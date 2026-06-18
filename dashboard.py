@@ -176,8 +176,35 @@ def _yf_symbol(ticker, asset_type):
     return ticker
 
 
+# Analysis-only AI umbrellas whose model books are INDEPENDENT of the Autopilot
+# bots: their model sub-tabs are labeled separately so the books never blend
+# (e.g. @ralliesarena's Grok is a different $100K experiment from @grkportfolio's).
+# Keyed `account|model`; the value is the display prefix. NOTE: @aifinancelabs is
+# deliberately NOT here — it reports the SAME Autopilot books, which SHOULD merge.
+UMBRELLA_TAG = {"ralliesarena": "Rallies"}
+
+
+def _pf_key(account, base):
+    """Model-grouping key. Independent umbrellas (UMBRELLA_TAG) are namespaced
+    `account|model` so their books stay distinct from the mirrored bots."""
+    if account in UMBRELLA_TAG and base and base != "unknown":
+        return f"{account}|{base}"
+    return base
+
+
 def pf_of(p):
-    return p.get("portfolio") or ACCOUNT_DEFAULT_PF.get(p.get("account"), "unknown")
+    base = p.get("portfolio") or ACCOUNT_DEFAULT_PF.get(p.get("account"), "unknown")
+    return _pf_key(p.get("account"), base)
+
+
+def pf_label(key):
+    """Human label for a model-grouping key, including namespaced umbrella keys
+    (`ralliesarena|grok` -> 'Rallies: Grok')."""
+    if "|" in key:
+        account, base = key.split("|", 1)
+        return (f"{UMBRELLA_TAG.get(account, account)}: "
+                f"{PORTFOLIO_LABELS.get(base, base.title())}")
+    return PORTFOLIO_LABELS.get(key, key.title())
 
 
 def _days_held(opened_date):
@@ -538,7 +565,7 @@ def portfolio_cards(positions):
         best = max(rets, key=lambda x: x[1]) if rets else None
         worst = min(rets, key=lambda x: x[1]) if rets else None
         spy = spy_return_since(min(dates)) if dates else None
-        label = PORTFOLIO_LABELS.get(pf, pf.title())
+        label = pf_label(pf)
 
         cards.append(html.Div(
             style={
@@ -648,7 +675,7 @@ def position_detail_table(positions, portfolio):
         ))
     return _table(["Ticker", "Size %", "Trade Date", "Entry", "Current",
                    "Return %", "Days Held"], rows,
-                  empty=f"No open positions for {PORTFOLIO_LABELS.get(portfolio, portfolio)}")
+                  empty=f"No open positions for {pf_label(portfolio)}")
 
 
 def closed_trades_table(positions, limit=5):
@@ -672,7 +699,7 @@ def closed_trades_table(positions, limit=5):
         ret = round((exit_px - entry) / entry * 100, 1) if (entry and exit_px) else None
         rows.append((
             (p["ticker"], C["blue"]),
-            PORTFOLIO_LABELS.get(pf_of(p), pf_of(p)),
+            pf_label(pf_of(p)),
             opened_disp or "—",
             close_disp or "—",
             _money(entry),
@@ -910,7 +937,7 @@ def holdings_figure(positions, portfolio):
     toward the disclosed-percentage label."""
     open_pos = [p for p in positions
                 if pf_of(p) == portfolio and p["status"] == "open"]
-    label = PORTFOLIO_LABELS.get(portfolio, portfolio)
+    label = pf_label(portfolio)
     if not open_pos:
         fig = go.Figure(go.Pie(labels=["no open positions"], values=[1],
                                hole=0.45, textinfo="none",
@@ -1011,7 +1038,7 @@ def _perf_rows(positions):
         cd = _norm_date((p.get("closed_at") or "")[:10]) \
             if status == "closed" else None
         if entry and od:
-            entries.append((PORTFOLIO_LABELS.get(pf_of(p), pf_of(p).title()),
+            entries.append((pf_label(pf_of(p)),
                             _yf_symbol(p["ticker"], atype), entry, od, cd))
     if not entries:
         return [], None
@@ -1159,7 +1186,7 @@ _TAB_SELECTED = {"backgroundColor": C["card"], "color": C["text"],
 
 def portfolio_tab_children(pfs):
     """dcc.Tab list for the AI Holdings sub-tabs (shared by layout + refresh)."""
-    return [dcc.Tab(label=PORTFOLIO_LABELS.get(pf, pf.title()),
+    return [dcc.Tab(label=pf_label(pf),
                     value=pf, style=_TAB_STYLE, selected_style=_TAB_SELECTED)
             for pf in pfs]
 
@@ -1432,7 +1459,7 @@ def portfolio_kpis(positions):
         delta = (round(avg - spy, 1)
                  if (avg is not None and spy is not None) else None)
         top = max(rets, key=lambda x: x[1])[0] if rets else None
-        out.append({"label": PORTFOLIO_LABELS.get(pf, pf.title()), "ret": avg,
+        out.append({"label": pf_label(pf), "ret": avg,
                     "spy": spy, "delta": delta, "n_open": len(ps), "top": top})
     overall_spy = spy_return_since(min(all_dates)) if all_dates else None
     return out, overall_spy
@@ -2560,15 +2587,20 @@ def refresh(_n, portfolio):
                  for p in positions} | {"SPY"})
     cards = portfolio_cards(positions)   # uses the now-warm price cache
     closed = closed_trades_table(positions)
-    signals_header = f"{PORTFOLIO_LABELS.get(portfolio, portfolio.title())} — Signals"
+    signals_header = f"{pf_label(portfolio)} — Signals"
 
     if not df.empty:
         df = df[~df["account"].isin(NON_AI_ACCOUNTS)]
         # Filter to the portfolio selected in the Holdings sub-tab (effective
         # portfolio = explicit value, else the account default — same as pf_of).
-        eff_pf = df["portfolio"].where(
-            df["portfolio"].notna(),
-            df["account"].map(ACCOUNT_DEFAULT_PF))
+        # Effective grouping key per signal — must match pf_of()/_pf_key() so the
+        # namespaced umbrella sub-tabs (e.g. "ralliesarena|grok") filter correctly.
+        eff_pf = df.apply(
+            lambda r: _pf_key(
+                r["account"],
+                r["portfolio"] if isinstance(r["portfolio"], str) and r["portfolio"]
+                else ACCOUNT_DEFAULT_PF.get(r["account"], "unknown")),
+            axis=1)
         df = df[eff_pf == portfolio]
     if df.empty:
         return ([], "No signals yet.", cards, closed, signals_header)
