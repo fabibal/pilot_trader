@@ -503,6 +503,38 @@
     "account": "CelalKucuker",
     "source_type": "influencer",
     "portfolio": null,
+    "ticker": "MUU",
+    "asset_type": "unknown",
+    "status": "open",
+    "entry_price": null,
+    "stop_loss": null,
+    "target": 1050,
+    "size_pct": null,
+    "trade_date": null,
+    "holding_thesis": null,
+    "opened_at": "2026-06-18T15:18:07+00:00",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2067627928620261834",
+        "signal_type": "buy",
+        "timestamp": "2026-06-18T15:18:07+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/CelalKucuker/status/2067627928620261834"
+      },
+      {
+        "tweet_id": "2067671442221646089",
+        "signal_type": "buy",
+        "timestamp": "2026-06-18T18:11:01+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/CelalKucuker/status/2067671442221646089"
+      }
+    ]
+  },
+  {
+    "account": "CelalKucuker",
+    "source_type": "influencer",
+    "portfolio": null,
     "ticker": "ONDO",
     "asset_type": "crypto",
     "status": "open",
@@ -1523,13 +1555,13 @@
     "asset_type": "stock",
     "status": "closed",
     "entry_price": null,
-    "stop_loss": null,
-    "target": null,
+    "stop_loss": 170.0,
+    "target": 190.0,
     "size_pct": null,
     "trade_date": null,
-    "holding_thesis": "Early entry into a company valued at 1.75 trillion.",
-    "opened_at": "2026-06-13T16:53:36+00:00",
-    "closed_at": "2026-06-17T17:01:36+00:00",
+    "holding_thesis": "Prediction markets offer a hedge opportunity at potentially lower premiums than options, allowing capital preservation to average down if price drops.",
+    "opened_at": "2026-06-18T17:15:44+00:00",
+    "closed_at": "2026-06-18T21:05:19+00:00",
     "signals": [
       {
         "tweet_id": "2065840016438538505",
@@ -1544,6 +1576,41 @@
         "timestamp": "2026-06-17T17:01:36+00:00",
         "confidence": "medium",
         "url": "https://x.com/IncomeSharks/status/2067291582077059269"
+      },
+      {
+        "tweet_id": "2067631131298787448",
+        "signal_type": "position",
+        "timestamp": "2026-06-18T15:30:51+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/IncomeSharks/status/2067631131298787448"
+      },
+      {
+        "tweet_id": "2067645988505006100",
+        "signal_type": "sell",
+        "timestamp": "2026-06-18T16:29:53+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/IncomeSharks/status/2067645988505006100"
+      },
+      {
+        "tweet_id": "2067657527240917498",
+        "signal_type": "buy",
+        "timestamp": "2026-06-18T17:15:44+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/IncomeSharks/status/2067657527240917498"
+      },
+      {
+        "tweet_id": "2067690643183587346",
+        "signal_type": "buy",
+        "timestamp": "2026-06-18T19:27:19+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/IncomeSharks/status/2067690643183587346"
+      },
+      {
+        "tweet_id": "2067715303329640799",
+        "signal_type": "sell",
+        "timestamp": "2026-06-18T21:05:19+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/IncomeSharks/status/2067715303329640799"
       }
     ]
   },
@@ -4244,6 +4311,31 @@
         "timestamp": "2025-12-19T17:13:08+00:00",
         "confidence": "medium",
         "url": "https://x.com/traderstewie/status/2002064670598033801"
+      }
+    ]
+  },
+  {
+    "account": "traderstewie",
+    "source_type": "influencer",
+    "portfolio": null,
+    "ticker": "CSCO",
+    "asset_type": "stock",
+    "status": "open",
+    "entry_price": null,
+    "stop_loss": null,
+    "target": 135,
+    "size_pct": null,
+    "trade_date": null,
+    "holding_thesis": "Coiling nicely on the 20-day EMA following mid-May price action; renewed strength expected.",
+    "opened_at": "2026-06-18T17:16:03+00:00",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2067657608652280252",
+        "signal_type": "buy",
+        "timestamp": "2026-06-18T17:16:03+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/traderstewie/status/2067657608652280252"
       }
     ]
   },
