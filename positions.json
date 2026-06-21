@@ -247,8 +247,8 @@
     "asset_type": "stock",
     "status": "open",
     "entry_price": null,
-    "stop_loss": 55.9,
-    "target": 87.41,
+    "stop_loss": 55.98,
+    "target": 75.04,
     "size_pct": null,
     "trade_date": null,
     "holding_thesis": "Chart looks very bullish with potential for 25% gain in the short term.",
@@ -261,6 +261,20 @@
         "timestamp": "2026-06-17T19:05:07+00:00",
         "confidence": "medium",
         "url": "https://x.com/CelalKucuker/status/2067322667347157024"
+      },
+      {
+        "tweet_id": "2068032319722520580",
+        "signal_type": "buy",
+        "timestamp": "2026-06-19T18:05:01+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/CelalKucuker/status/2068032319722520580"
+      },
+      {
+        "tweet_id": "2068337393904529765",
+        "signal_type": "buy",
+        "timestamp": "2026-06-20T14:17:17+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/CelalKucuker/status/2068337393904529765"
       }
     ]
   },
@@ -301,7 +315,7 @@
     "target": 10000,
     "size_pct": null,
     "trade_date": null,
-    "holding_thesis": "Ethereum is at a major technical bottom with potential for multi-stage rally.",
+    "holding_thesis": "Multi-tiered price target structure suggests conviction in Ethereum's upside trajectory through 2027.",
     "opened_at": "2026-05-28T15:39:47+00:00",
     "closed_at": null,
     "signals": [
@@ -325,6 +339,13 @@
         "timestamp": "2026-06-19T13:30:44+00:00",
         "confidence": "medium",
         "url": "https://x.com/CelalKucuker/status/2067963290920095989"
+      },
+      {
+        "tweet_id": "2068364244479885384",
+        "signal_type": "position",
+        "timestamp": "2026-06-20T16:03:58+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/CelalKucuker/status/2068364244479885384"
       }
     ]
   },
@@ -465,7 +486,7 @@
     "status": "open",
     "entry_price": null,
     "stop_loss": 23.0,
-    "target": 58.6,
+    "target": 58.8,
     "size_pct": null,
     "trade_date": null,
     "holding_thesis": null,
@@ -478,6 +499,13 @@
         "timestamp": "2026-06-19T13:06:13+00:00",
         "confidence": "medium",
         "url": "https://x.com/CelalKucuker/status/2067957121140846972"
+      },
+      {
+        "tweet_id": "2068018326807134222",
+        "signal_type": "buy",
+        "timestamp": "2026-06-19T17:09:25+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/CelalKucuker/status/2068018326807134222"
       }
     ]
   },
@@ -816,7 +844,7 @@
     "target": 60,
     "size_pct": null,
     "trade_date": null,
-    "holding_thesis": "Both technical and fundamental analysis look very strong",
+    "holding_thesis": "2x leveraged long exposure to a target asset.",
     "opened_at": "2026-06-06T17:39:08+00:00",
     "closed_at": null,
     "signals": [
@@ -840,6 +868,38 @@
         "timestamp": "2026-06-17T17:59:48+00:00",
         "confidence": "medium",
         "url": "https://x.com/CelalKucuker/status/2067306230754754896"
+      },
+      {
+        "tweet_id": "2068014993509855727",
+        "signal_type": "position",
+        "timestamp": "2026-06-19T16:56:10+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/CelalKucuker/status/2068014993509855727"
+      }
+    ]
+  },
+  {
+    "account": "CelalKucuker",
+    "source_type": "influencer",
+    "portfolio": null,
+    "ticker": "VALE",
+    "asset_type": "stock",
+    "status": "open",
+    "entry_price": null,
+    "stop_loss": null,
+    "target": null,
+    "size_pct": 100,
+    "trade_date": null,
+    "holding_thesis": null,
+    "opened_at": "2026-06-20T20:59:16+00:00",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2068438556377309320",
+        "signal_type": "position",
+        "timestamp": "2026-06-20T20:59:16+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/CelalKucuker/status/2068438556377309320"
       }
     ]
   },
@@ -907,12 +967,12 @@
     "ticker": "XRP",
     "asset_type": "crypto",
     "status": "open",
-    "entry_price": null,
+    "entry_price": 2.0,
     "stop_loss": 0.915,
-    "target": 17,
+    "target": 0.00019773,
     "size_pct": null,
     "trade_date": null,
-    "holding_thesis": "Chart technicals appear strong and price targets look achievable.",
+    "holding_thesis": "Holding across multiple entry points with significant position size at approximately $2 entry.",
     "opened_at": "2026-05-29T19:38:32+00:00",
     "closed_at": null,
     "signals": [
@@ -999,6 +1059,27 @@
         "timestamp": "2026-06-17T16:58:34+00:00",
         "confidence": "medium",
         "url": "https://x.com/CelalKucuker/status/2067290820269547932"
+      },
+      {
+        "tweet_id": "2068074212267364424",
+        "signal_type": "position",
+        "timestamp": "2026-06-19T20:51:29+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/CelalKucuker/status/2068074212267364424"
+      },
+      {
+        "tweet_id": "2068096335610286236",
+        "signal_type": "position",
+        "timestamp": "2026-06-19T22:19:24+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/CelalKucuker/status/2068096335610286236"
+      },
+      {
+        "tweet_id": "2068404750668750870",
+        "signal_type": "buy",
+        "timestamp": "2026-06-20T18:44:56+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/CelalKucuker/status/2068404750668750870"
       }
     ]
   },
@@ -1221,7 +1302,7 @@
     "target": 200,
     "size_pct": null,
     "trade_date": null,
-    "holding_thesis": "Buying dips in HOOD has been a successful strategy; price target of $200 suggests upside potential.",
+    "holding_thesis": "Profitable momentum from lower entry points.",
     "opened_at": "2026-05-28T16:07:07+00:00",
     "closed_at": null,
     "signals": [
@@ -1273,6 +1354,13 @@
         "timestamp": "2026-06-17T16:58:40+00:00",
         "confidence": "medium",
         "url": "https://x.com/IncomeSharks/status/2067290845372707291"
+      },
+      {
+        "tweet_id": "2068401324446851333",
+        "signal_type": "position",
+        "timestamp": "2026-06-20T18:31:19+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/IncomeSharks/status/2068401324446851333"
       }
     ]
   },
@@ -2411,6 +2499,31 @@
     "account": "grkportfolio",
     "source_type": "portfolio",
     "portfolio": "grok",
+    "ticker": "DELL",
+    "asset_type": "stock",
+    "status": "open",
+    "entry_price": null,
+    "stop_loss": null,
+    "target": 480,
+    "size_pct": 7,
+    "trade_date": null,
+    "holding_thesis": "AI server demand is strong with high revenue growth; upside depends on whether Dell can maintain/improve server margins despite memory cost inflation.",
+    "opened_at": "2026-06-19T17:48:33+00:00",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2068028174844174772",
+        "signal_type": "position",
+        "timestamp": "2026-06-19T17:48:33+00:00",
+        "confidence": "high",
+        "url": "https://x.com/grkportfolio/status/2068028174844174772"
+      }
+    ]
+  },
+  {
+    "account": "grkportfolio",
+    "source_type": "portfolio",
+    "portfolio": "grok",
     "ticker": "DVN",
     "asset_type": "stock",
     "status": "open",
@@ -2523,10 +2636,10 @@
     "status": "open",
     "entry_price": 379,
     "stop_loss": null,
-    "target": null,
-    "size_pct": 11.89,
+    "target": 1550,
+    "size_pct": 11,
     "trade_date": "2026-04-05",
-    "holding_thesis": "Micron is positioned to benefit from the AI memory supercycle as the primary supplier of high-bandwidth memory with already-sold-out 2026 capacity and expected strong margins.",
+    "holding_thesis": "High-bandwidth memory is sold out with few suppliers; Micron has execution lead in a multi-year shortage at attractive valuation.",
     "opened_at": "2026-05-20T20:23:25.000Z",
     "closed_at": null,
     "signals": [
@@ -2564,6 +2677,13 @@
         "timestamp": "2026-06-15T23:20:28+00:00",
         "confidence": "high",
         "url": "https://x.com/grkportfolio/status/2066662153692618928"
+      },
+      {
+        "tweet_id": "2068024168189153660",
+        "signal_type": "position",
+        "timestamp": "2026-06-19T17:32:38+00:00",
+        "confidence": "high",
+        "url": "https://x.com/grkportfolio/status/2068024168189153660"
       }
     ]
   },
@@ -3959,15 +4079,40 @@
     "account": "theaiportfolios",
     "source_type": "portfolio",
     "portfolio": "claude",
+    "ticker": "VST",
+    "asset_type": "stock",
+    "status": "open",
+    "entry_price": 163.75,
+    "stop_loss": 124,
+    "target": 228,
+    "size_pct": 10,
+    "trade_date": null,
+    "holding_thesis": "Power company with large nuclear and gas fleet in Texas positioned to benefit from AI data center electricity demand through Nvidia-backed Helix partnership at attractive 14x earnings valuation.",
+    "opened_at": "2026-06-19T17:41:53+00:00",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2068026497995026825",
+        "signal_type": "position",
+        "timestamp": "2026-06-19T17:41:53+00:00",
+        "confidence": "high",
+        "url": "https://x.com/theaiportfolios/status/2068026497995026825"
+      }
+    ]
+  },
+  {
+    "account": "theaiportfolios",
+    "source_type": "portfolio",
+    "portfolio": "claude",
     "ticker": "ZETA",
     "asset_type": "stock",
     "status": "open",
     "entry_price": null,
     "stop_loss": null,
     "target": null,
-    "size_pct": 11,
+    "size_pct": 9.0,
     "trade_date": "2026-05-12",
-    "holding_thesis": "Strong fundamental analysis supports the investment thesis.",
+    "holding_thesis": "AI-powered identity and marketing platform with proprietary consumer data advantage, growing wallet share within 600+ existing enterprise clients with minimal penetration upside.",
     "opened_at": "2026-05-31T04:13:09.000Z",
     "closed_at": null,
     "signals": [
@@ -4005,6 +4150,13 @@
         "timestamp": "2026-06-01T18:26:56+00:00",
         "confidence": "medium",
         "url": "https://x.com/theaiportfolios/status/2061514853031010517"
+      },
+      {
+        "tweet_id": "2068029435597475957",
+        "signal_type": "position",
+        "timestamp": "2026-06-19T17:53:34+00:00",
+        "confidence": "high",
+        "url": "https://x.com/theaiportfolios/status/2068029435597475957"
       }
     ]
   },
