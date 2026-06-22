@@ -577,7 +577,7 @@
     "stop_loss": null,
     "target": 1050,
     "size_pct": null,
-    "trade_date": null,
+    "trade_date": "2026-06-14",
     "holding_thesis": null,
     "opened_at": "2026-06-18T15:18:07+00:00",
     "closed_at": null,
@@ -595,6 +595,13 @@
         "timestamp": "2026-06-18T18:11:01+00:00",
         "confidence": "medium",
         "url": "https://x.com/CelalKucuker/status/2067671442221646089"
+      },
+      {
+        "tweet_id": "2068719900017697240",
+        "signal_type": "position",
+        "timestamp": "2026-06-21T15:37:13+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/CelalKucuker/status/2068719900017697240"
       }
     ]
   },
@@ -1302,7 +1309,7 @@
     "target": 200,
     "size_pct": null,
     "trade_date": null,
-    "holding_thesis": "Profitable momentum from lower entry points.",
+    "holding_thesis": "Historical pattern of 50%+ drawdowns followed by 400% runs suggests significant upside potential.",
     "opened_at": "2026-05-28T16:07:07+00:00",
     "closed_at": null,
     "signals": [
@@ -1361,6 +1368,13 @@
         "timestamp": "2026-06-20T18:31:19+00:00",
         "confidence": "medium",
         "url": "https://x.com/IncomeSharks/status/2068401324446851333"
+      },
+      {
+        "tweet_id": "2068786205081383088",
+        "signal_type": "buy",
+        "timestamp": "2026-06-21T20:00:42+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/IncomeSharks/status/2068786205081383088"
       }
     ]
   },
@@ -1680,15 +1694,15 @@
     "portfolio": null,
     "ticker": "SPCX",
     "asset_type": "stock",
-    "status": "closed",
+    "status": "open",
     "entry_price": null,
-    "stop_loss": 170.0,
-    "target": 190.0,
+    "stop_loss": 168.0,
+    "target": 196.0,
     "size_pct": null,
     "trade_date": null,
     "holding_thesis": "Prediction markets offer a hedge opportunity at potentially lower premiums than options, allowing capital preservation to average down if price drops.",
-    "opened_at": "2026-06-18T17:15:44+00:00",
-    "closed_at": "2026-06-18T21:05:19+00:00",
+    "opened_at": "2026-06-21T19:57:50+00:00",
+    "closed_at": null,
     "signals": [
       {
         "tweet_id": "2065840016438538505",
@@ -1738,6 +1752,13 @@
         "timestamp": "2026-06-18T21:05:19+00:00",
         "confidence": "medium",
         "url": "https://x.com/IncomeSharks/status/2067715303329640799"
+      },
+      {
+        "tweet_id": "2068785483820454179",
+        "signal_type": "buy",
+        "timestamp": "2026-06-21T19:57:50+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/IncomeSharks/status/2068785483820454179"
       }
     ]
   },
