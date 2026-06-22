@@ -41,8 +41,9 @@ services:
       resources:
         limits:
           cpus: "0.5"
-          # 384M (was 256M): ib_insync + a live IB API connection per refresh.
-          memory: 384M
+          # 512M (was 384M): ib_insync + an IB API connection per refresh +
+          # the background price-cache warmer; 384M ran ~91% full (OOM risk).
+          memory: 512M
 
     logging:
       driver: "json-file"

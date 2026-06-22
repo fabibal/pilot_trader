@@ -416,6 +416,42 @@ def get_price_series(ticker, start_date):
     return series
 
 
+def warm_series(symbols, start_date):
+    """Batch-fetch daily close Series for many symbols in ONE yf.download call,
+    populating _series_cache. Mirrors warm_prices; falls back to single fetches
+    via get_price_series on the symbols the batch misses."""
+    now = time.time()
+    need = sorted({s for s in symbols if s and not (
+        _series_cache.get((s, start_date))
+        and now - _series_cache[(s, start_date)][1] < PRICE_TTL)})
+    if not need:
+        return
+    _fetch_state["last"] = now
+    close = None
+    try:
+        data = yf.download(need, start=start_date, progress=False, threads=True)
+        if "Close" in data:
+            close = data["Close"]
+    except Exception:
+        close = None
+    for s in need:
+        series = None
+        try:
+            if close is not None:
+                col = close[s] if hasattr(close, "columns") and \
+                    s in getattr(close, "columns", []) else close
+                col = col.dropna()
+                if len(col):
+                    col.index = col.index.strftime("%Y-%m-%d")
+                    series = col[~col.index.duplicated(keep="last")].sort_index()
+        except Exception:
+            series = None
+        if series is not None:
+            _series_cache[(s, start_date)] = (series, now)
+        else:                    # batch missed this symbol — single fetch (self-caches)
+            get_price_series(s, start_date)
+
+
 _ohlc_cache = {}   # (symbol, start) -> (DataFrame[High,Low] | None, ts)
 
 
@@ -1046,6 +1082,10 @@ def _perf_rows(positions):
     start = min(e[3] for e in entries)
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     idx = [d.strftime("%Y-%m-%d") for d in pd.bdate_range(start=start, end=today)]
+    # Batch all daily-series fetches into ONE yf.download (incl. the SPY
+    # benchmark) so the per-symbol get_price_series calls below hit warm cache
+    # instead of N sequential Yahoo round-trips.
+    warm_series({t for _, t, _, _, _ in entries} | {"SPY"}, start)
     series = {t: get_price_series(t, start) for _, t, _, _, _ in entries}
 
     rows = []
@@ -1267,7 +1307,7 @@ def _pnl_span(v, pct=False):
     return html.Span(txt, style={"color": _color(v), "fontWeight": "bold"})
 
 
-def ibkr_offline(detail="IB Gateway not reachable on 127.0.0.1:4001"):
+def ibkr_offline(detail="IB Gateway not reachable on 127.0.0.1:4002"):
     return html.Div([
         html.Span("● ", style={"color": C["red"], "fontWeight": "bold"}),
         html.Span("Gateway offline", style={"color": C["red"],
@@ -2323,7 +2363,7 @@ app.layout = html.Div(
         ]),
 
         # --- My Paper Account tab -- hidden until selected -------------------
-        # Live reads from IB Gateway (127.0.0.1:4001) via the shared ibkr-store;
+        # Live reads from IB Gateway (127.0.0.1:4002) via the shared ibkr-store;
         # degrades to "Gateway offline" (ledger-backed tables still render).
         html.Div(id="ibkr-section", style={"display": "none"}, children=[
             html.Div(id="ibkr-halt"),
@@ -2674,7 +2714,51 @@ def refresh_influencers(_n, account):
             [])
 
 
+# --- background cache warmer -------------------------------------------------
+# yfinance is the dominant page-load cost and sits on the request path (every
+# callback fires on load, no prevent_initial_call): a cold load pays ~13s of
+# current-price fetches + ~16s of daily-series fetches. Yahoo throttles per-IP,
+# so batching cuts request count but NOT wall-clock. The real fix is to pre-warm
+# the shared in-memory caches OFF the request path on a 30-min loop (< the 1h
+# PRICE_TTL so they never lapse to cold) — user page loads then hit warm cache
+# and render immediately instead of blocking on Yahoo.
+WARM_INTERVAL_S = 1800
+
+
+def _warm_all():
+    positions = load_positions()
+    ai = ai_positions(positions)
+    try:
+        warm_prices({_yf_symbol(p["ticker"], p.get("asset_type", "stock"))
+                     for p in ai} | {"SPY"})
+    except Exception:
+        pass
+    try:
+        overview_figure(ai)          # warms _series_cache via _perf_rows
+    except Exception:
+        pass
+    infl = influencer_positions(positions)
+    try:
+        warm_prices({_yf_symbol(p["ticker"], p.get("asset_type", "stock"))
+                     for p in infl if p.get("status") == "open"})
+    except Exception:
+        pass
+    try:
+        influencer_resolutions(positions)   # warms _ohlc_cache + hist closes
+    except Exception:
+        pass
+
+
+def _warm_loop():
+    while True:
+        _warm_all()
+        time.sleep(WARM_INTERVAL_S)
+
+
 if __name__ == "__main__":
+    # Pre-warm price/series/OHLC caches in the background so page loads don't
+    # block on ~30s of Yahoo round-trips (see _warm_loop above).
+    threading.Thread(target=_warm_loop, daemon=True, name="cache-warmer").start()
     # Bind 0.0.0.0 INSIDE the container so Docker's port proxy can reach it;
     # host exposure is set by the publish mapping in docker-compose.yml.
     app.run(host="0.0.0.0", port=PORT, debug=False)
