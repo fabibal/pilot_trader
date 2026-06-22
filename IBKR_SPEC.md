@@ -1,8 +1,10 @@
 # IBKR Mirroring Spec — pilot_trader
 
-Status: **DESIGN / logic-only.** No IBKR connection exists yet. This document is
-the contract that `order_manager.py` (the idempotent order layer) implements and
-tests against. Live execution (IB Gateway on port 4001) is a later, separate step.
+Status: **LIVE (paper).** Implemented and executing since 2026-06-03 against the
+IBKR paper account `DUQ#####` (IB Gateway on port 4002) via `order_manager.py`
+(the idempotent order layer) -> `ibkr_connector.py` -> `auto_trader.py`. This
+document remains the contract those layers implement and test against. Real-money
+live execution (IB Gateway on port 4001) remains a later, separate step.
 
 Grounded in `positions.json` / `trades.json` as of 2026-06-02.
 
