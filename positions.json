@@ -32,8 +32,8 @@
     "asset_type": "crypto",
     "status": "open",
     "entry_price": null,
-    "stop_loss": 54201,
-    "target": 93548,
+    "stop_loss": 65399.98,
+    "target": 144000,
     "size_pct": null,
     "trade_date": null,
     "holding_thesis": "Main trend is upward.",
@@ -186,6 +186,13 @@
         "timestamp": "2026-06-19T15:12:53+00:00",
         "confidence": "medium",
         "url": "https://x.com/CelalKucuker/status/2067989001051451735"
+      },
+      {
+        "tweet_id": "2069077752603431226",
+        "signal_type": "buy",
+        "timestamp": "2026-06-22T15:19:12+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/CelalKucuker/status/2069077752603431226"
       }
     ]
   },
@@ -246,12 +253,12 @@
     "ticker": "DRAM",
     "asset_type": "stock",
     "status": "open",
-    "entry_price": null,
-    "stop_loss": 55.98,
-    "target": 75.04,
+    "entry_price": 71,
+    "stop_loss": 55.9,
+    "target": 85.5,
     "size_pct": null,
-    "trade_date": null,
-    "holding_thesis": "Chart looks very bullish with potential for 25% gain in the short term.",
+    "trade_date": "2026-06-15",
+    "holding_thesis": "Roundhill Memory ETF positioned for gains as memory demand continues.",
     "opened_at": "2026-06-17T19:05:07+00:00",
     "closed_at": null,
     "signals": [
@@ -275,6 +282,13 @@
         "timestamp": "2026-06-20T14:17:17+00:00",
         "confidence": "medium",
         "url": "https://x.com/CelalKucuker/status/2068337393904529765"
+      },
+      {
+        "tweet_id": "2069131636755562867",
+        "signal_type": "buy",
+        "timestamp": "2026-06-22T18:53:19+00:00",
+        "confidence": "high",
+        "url": "https://x.com/CelalKucuker/status/2069131636755562867"
       }
     ]
   },
@@ -571,7 +585,7 @@
     "source_type": "influencer",
     "portfolio": null,
     "ticker": "MUU",
-    "asset_type": "unknown",
+    "asset_type": "crypto",
     "status": "open",
     "entry_price": null,
     "stop_loss": null,
@@ -602,6 +616,13 @@
         "timestamp": "2026-06-21T15:37:13+00:00",
         "confidence": "medium",
         "url": "https://x.com/CelalKucuker/status/2068719900017697240"
+      },
+      {
+        "tweet_id": "2069075034396557628",
+        "signal_type": "sell",
+        "timestamp": "2026-06-22T15:08:24+00:00",
+        "confidence": "high",
+        "url": "https://x.com/CelalKucuker/status/2069075034396557628"
       }
     ]
   },
@@ -732,7 +753,7 @@
     "portfolio": null,
     "ticker": "SPCX",
     "asset_type": "stock",
-    "status": "open",
+    "status": "closed",
     "entry_price": null,
     "stop_loss": null,
     "target": null,
@@ -740,7 +761,7 @@
     "trade_date": null,
     "holding_thesis": null,
     "opened_at": "2026-06-16T00:37:05+00:00",
-    "closed_at": null,
+    "closed_at": "2026-06-22T19:41:54+00:00",
     "signals": [
       {
         "tweet_id": "2066681435004575979",
@@ -755,6 +776,13 @@
         "timestamp": "2026-06-16T14:16:33+00:00",
         "confidence": "medium",
         "url": "https://x.com/CelalKucuker/status/2066887660040335554"
+      },
+      {
+        "tweet_id": "2069143865139892272",
+        "signal_type": "sell",
+        "timestamp": "2026-06-22T19:41:54+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/CelalKucuker/status/2069143865139892272"
       }
     ]
   },
@@ -975,8 +1003,8 @@
     "asset_type": "crypto",
     "status": "open",
     "entry_price": 2.0,
-    "stop_loss": 0.915,
-    "target": 0.00019773,
+    "stop_loss": 1.1003,
+    "target": 4.9578,
     "size_pct": null,
     "trade_date": null,
     "holding_thesis": "Holding across multiple entry points with significant position size at approximately $2 entry.",
@@ -1087,6 +1115,13 @@
         "timestamp": "2026-06-20T18:44:56+00:00",
         "confidence": "medium",
         "url": "https://x.com/CelalKucuker/status/2068404750668750870"
+      },
+      {
+        "tweet_id": "2069102504927723768",
+        "signal_type": "buy",
+        "timestamp": "2026-06-22T16:57:33+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/CelalKucuker/status/2069102504927723768"
       }
     ]
   },
@@ -1187,6 +1222,31 @@
         "timestamp": "2026-05-28T21:44:28+00:00",
         "confidence": "medium",
         "url": "https://x.com/IncomeSharks/status/2060115013382058211"
+      }
+    ]
+  },
+  {
+    "account": "IncomeSharks",
+    "source_type": "influencer",
+    "portfolio": null,
+    "ticker": "ETH",
+    "asset_type": "crypto",
+    "status": "closed",
+    "entry_price": null,
+    "stop_loss": null,
+    "target": null,
+    "size_pct": null,
+    "trade_date": null,
+    "holding_thesis": null,
+    "opened_at": null,
+    "closed_at": "2026-06-22T16:09:31+00:00",
+    "signals": [
+      {
+        "tweet_id": "2069090415995957530",
+        "signal_type": "sell",
+        "timestamp": "2026-06-22T16:09:31+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/IncomeSharks/status/2069090415995957530"
       }
     ]
   },
@@ -1610,6 +1670,31 @@
     "account": "IncomeSharks",
     "source_type": "influencer",
     "portfolio": null,
+    "ticker": "PLTR",
+    "asset_type": "stock",
+    "status": "open",
+    "entry_price": null,
+    "stop_loss": null,
+    "target": null,
+    "size_pct": null,
+    "trade_date": null,
+    "holding_thesis": "Support loss makes it attractive; expects recovery on the way back up.",
+    "opened_at": "2026-06-22T19:49:52+00:00",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2069145867928699185",
+        "signal_type": "buy",
+        "timestamp": "2026-06-22T19:49:52+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/IncomeSharks/status/2069145867928699185"
+      }
+    ]
+  },
+  {
+    "account": "IncomeSharks",
+    "source_type": "influencer",
+    "portfolio": null,
     "ticker": "SEZL",
     "asset_type": "stock",
     "status": "open",
@@ -1692,9 +1777,34 @@
     "account": "IncomeSharks",
     "source_type": "influencer",
     "portfolio": null,
+    "ticker": "SOL",
+    "asset_type": "crypto",
+    "status": "closed",
+    "entry_price": null,
+    "stop_loss": null,
+    "target": null,
+    "size_pct": null,
+    "trade_date": null,
+    "holding_thesis": null,
+    "opened_at": null,
+    "closed_at": "2026-06-22T16:05:51+00:00",
+    "signals": [
+      {
+        "tweet_id": "2069089492242428311",
+        "signal_type": "sell",
+        "timestamp": "2026-06-22T16:05:51+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/IncomeSharks/status/2069089492242428311"
+      }
+    ]
+  },
+  {
+    "account": "IncomeSharks",
+    "source_type": "influencer",
+    "portfolio": null,
     "ticker": "SPCX",
     "asset_type": "stock",
-    "status": "open",
+    "status": "closed",
     "entry_price": null,
     "stop_loss": 168.0,
     "target": 196.0,
@@ -1702,7 +1812,7 @@
     "trade_date": null,
     "holding_thesis": "Prediction markets offer a hedge opportunity at potentially lower premiums than options, allowing capital preservation to average down if price drops.",
     "opened_at": "2026-06-21T19:57:50+00:00",
-    "closed_at": null,
+    "closed_at": "2026-06-22T19:45:18+00:00",
     "signals": [
       {
         "tweet_id": "2065840016438538505",
@@ -1759,6 +1869,20 @@
         "timestamp": "2026-06-21T19:57:50+00:00",
         "confidence": "medium",
         "url": "https://x.com/IncomeSharks/status/2068785483820454179"
+      },
+      {
+        "tweet_id": "2069087605803843603",
+        "signal_type": "sell",
+        "timestamp": "2026-06-22T15:58:21+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/IncomeSharks/status/2069087605803843603"
+      },
+      {
+        "tweet_id": "2069144717179437549",
+        "signal_type": "sell",
+        "timestamp": "2026-06-22T19:45:18+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/IncomeSharks/status/2069144717179437549"
       }
     ]
   },
@@ -2657,10 +2781,10 @@
     "status": "open",
     "entry_price": 379,
     "stop_loss": null,
-    "target": 1550,
-    "size_pct": 11,
+    "target": 1950,
+    "size_pct": 13,
     "trade_date": "2026-04-05",
-    "holding_thesis": "High-bandwidth memory is sold out with few suppliers; Micron has execution lead in a multi-year shortage at attractive valuation.",
+    "holding_thesis": "AI demand and Anthropic deal confirm thesis; high-bandwidth memory sold out through 2026 and incremental Micron stake in Anthropic's $65B round anchors sticky 2027+ relationship with Claude-optimized co-design.",
     "opened_at": "2026-05-20T20:23:25.000Z",
     "closed_at": null,
     "signals": [
@@ -2705,6 +2829,13 @@
         "timestamp": "2026-06-19T17:32:38+00:00",
         "confidence": "high",
         "url": "https://x.com/grkportfolio/status/2068024168189153660"
+      },
+      {
+        "tweet_id": "2069085285309100224",
+        "signal_type": "position",
+        "timestamp": "2026-06-22T15:49:08+00:00",
+        "confidence": "high",
+        "url": "https://x.com/grkportfolio/status/2069085285309100224"
       }
     ]
   },
@@ -3854,10 +3985,10 @@
     "status": "open",
     "entry_price": null,
     "stop_loss": null,
-    "target": 200,
+    "target": 141,
     "size_pct": 15,
     "trade_date": "2026-04-01",
-    "holding_thesis": "Model-agnostic enterprise automation platform positioned above underlying AI models; subscription growth above 20% and $1.5B AI assistant opportunity.",
+    "holding_thesis": "20% grower with wide moat in software, AI momentum not yet in estimates, stock cheaper after mechanical selloff from rally cooldown and rate signals.",
     "opened_at": "2026-05-28T21:59:10.000Z",
     "closed_at": null,
     "signals": [
@@ -3972,6 +4103,13 @@
         "timestamp": "2026-06-14T23:52:48+00:00",
         "confidence": "high",
         "url": "https://x.com/theaiportfolios/status/2066307900105253353"
+      },
+      {
+        "tweet_id": "2069081437215547739",
+        "signal_type": "position",
+        "timestamp": "2026-06-22T15:33:50+00:00",
+        "confidence": "high",
+        "url": "https://x.com/theaiportfolios/status/2069081437215547739"
       }
     ]
   },
