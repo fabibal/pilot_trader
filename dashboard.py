@@ -1792,6 +1792,94 @@ def youtube_section(summaries, limit=5):
     return [_yt_card(v) for v in ordered[:limit]]
 
 
+# --- Twitter analysis digest (@ki_young_ju) -------------------------------
+# Same analysis-only pattern as the YouTube/Cowen section, but for X posts
+# (written by twitter_digest.py): per-post Sonnet read + optional chart vision,
+# Hungarian prose, English sentiment enum. NEVER traded. Reuses the YouTube card
+# helpers (_yt_chip / _YT_SENTIMENT) since the visual language is identical.
+TW_SUMMARIES_FILE = os.path.join(DATA_DIR, "twitter_summaries.json")
+
+
+def load_twitter_summaries():
+    """@ki_young_ju post analyses (written by twitter_digest.py). Missing or
+    corrupt file -> [] (the section just shows 'no data')."""
+    try:
+        with open(TW_SUMMARIES_FILE) as f:
+            data = json.load(f)
+        return data if isinstance(data, list) else []
+    except (OSError, json.JSONDecodeError):
+        return []
+
+
+def _tw_title(text):
+    """First line of the post, collapsed + trimmed to a single-line card title."""
+    line = " ".join((text or "").split())
+    return (line[:90] + "…") if len(line) > 90 else (line or "post")
+
+
+def _tw_card(p):
+    sent = (p.get("overall_sentiment") or "neutral").lower()
+    color = _YT_SENTIMENT.get(sent, C["dim"])
+    date = (p.get("created_at") or "")[:10]
+    levels = p.get("key_levels") or []
+    themes = p.get("top_themes") or []
+    chart_color = _YT_SENTIMENT.get((p.get("chart_trend") or "neutral").lower(),
+                                    C["dim"])
+    return html.Div(style={
+        "background": C["card"], "border": f"1px solid {C['border']}",
+        "borderLeft": f"3px solid {color}", "borderRadius": "8px",
+        "padding": "12px 16px", "marginTop": "10px"}, children=[
+        html.Div(style={"display": "flex", "justifyContent": "space-between",
+                        "alignItems": "flex-start", "gap": "12px"}, children=[
+            html.A(_tw_title(p.get("text")), href=p.get("url"),
+                   target="_blank", rel="noopener noreferrer",
+                   style={"color": C["text"], "fontWeight": "bold",
+                          "fontSize": "0.9rem", "textDecoration": "none"}),
+            html.Span(sent.upper(), style={
+                "background": color, "color": C["bg"], "borderRadius": "10px",
+                "padding": "1px 10px", "fontSize": "0.66rem", "fontWeight": "bold",
+                "whiteSpace": "nowrap", "letterSpacing": "0.04em"}),
+        ]),
+        html.Div(f"{date}{'  ·  chart' if p.get('has_chart') else ''}",
+                 style={"color": C["dim"], "fontSize": "0.68rem",
+                        "marginTop": "3px"}),
+        html.Div(p.get("summary") or "", style={"color": C["text"],
+                                                 "fontSize": "0.8rem",
+                                                 "marginTop": "8px",
+                                                 "lineHeight": "1.45"}),
+        html.Div([html.Span("Piaci nézet: ", style={"color": C["dim"],
+                                                     "fontWeight": "bold"}),
+                  html.Span(p.get("market_view") or "—")],
+                 style={"color": C["text"], "fontSize": "0.76rem",
+                        "marginTop": "8px", "lineHeight": "1.4"}),
+        (html.Div([html.Span("Chart: ", style={"color": chart_color,
+                                               "fontWeight": "bold"}),
+                   html.Span(p.get("chart_summary") or "")],
+                  style={"color": C["text"], "fontSize": "0.74rem",
+                         "marginTop": "8px", "lineHeight": "1.4"})
+         if p.get("has_chart") and p.get("chart_summary") else html.Span()),
+        (html.Div([html.Span("Szintek: ", style={"color": C["dim"],
+                                                 "fontSize": "0.7rem"})]
+                  + [_yt_chip(s, C["blue"]) for s in levels],
+                  style={"marginTop": "8px"}) if levels else html.Span()),
+        (html.Div([html.Span("Témák: ", style={"color": C["dim"],
+                                               "fontSize": "0.7rem"})]
+                  + [_yt_chip(t) for t in themes],
+                  style={"marginTop": "6px"}) if themes else html.Span()),
+    ])
+
+
+def twitter_section(summaries, limit=8):
+    """Render the most recent `limit` post analyses as cards (newest first)."""
+    if not summaries:
+        return [html.Div("No @ki_young_ju posts analyzed yet.",
+                         style={"color": C["dim"], "fontSize": "0.8rem",
+                                "marginTop": "8px"})]
+    ordered = sorted(summaries, key=lambda r: r.get("created_at") or "",
+                     reverse=True)
+    return [_tw_card(p) for p in ordered[:limit]]
+
+
 # --- Reddit trading-strategy miner output ---------------------------------
 # Mirrors the YouTube section: read scripts/reddit_miner.py's JSON ledger and
 # render it with the same GitHub-dark helpers as the rest of the app.
@@ -2299,6 +2387,8 @@ app.layout = html.Div(
                                  style=_TAB_STYLE, selected_style=_TAB_SELECTED),
                          dcc.Tab(label="Ben Cowen", value="BenCowen",
                                  style=_TAB_STYLE, selected_style=_TAB_SELECTED),
+                         dcc.Tab(label="Ki Young Ju", value="KiYoungJu",
+                                 style=_TAB_STYLE, selected_style=_TAB_SELECTED),
                      ]),
 
             # Per-influencer header card (handle · win-rate/holdings · open ·
@@ -2359,6 +2449,23 @@ app.layout = html.Div(
                                         "fontSize": "0.8rem"})],
                          style=_SECTION_H),
                 html.Div(id="youtube-summaries", style={"marginTop": "4px"}),
+            ]),
+
+            # Ki Young Ju view: X/Twitter post analysis cards (analysis only —
+            # CryptoQuant founder, BTC on-chain macro; never traded/mirrored).
+            html.Div(id="ki-view", style={"display": "none"}, children=[
+                html.Div(["Twitter Analysis — Ki Young Ju (CryptoQuant)",
+                          html.A("→ @ki_young_ju",
+                                 href="https://x.com/ki_young_ju",
+                                 target="_blank", rel="noopener noreferrer",
+                                 style={"color": C["blue"], "marginLeft": "14px",
+                                        "textTransform": "none",
+                                        "letterSpacing": "normal",
+                                        "textDecoration": "none",
+                                        "fontWeight": "normal",
+                                        "fontSize": "0.8rem"})],
+                         style=_SECTION_H),
+                html.Div(id="ki-summaries", style={"marginTop": "4px"}),
             ]),
         ]),
 
@@ -2577,6 +2684,7 @@ def _influencer_header(title, account):
 @app.callback(
     Output("influencer-trade-view", "style"),
     Output("youtube-view", "style"),
+    Output("ki-view", "style"),
     Output("influencer-pos-header", "children"),
     Output("influencer-sig-header", "children"),
     Input("influencer-subtabs", "value"),
@@ -2584,8 +2692,10 @@ def _influencer_header(title, account):
 def switch_influencer_subtab(account):
     show, hide = {"display": "block"}, {"display": "none"}
     if account == "BenCowen":           # YouTube analysis view, not a trade view
-        return hide, show, "", ""
-    return (show, hide,
+        return hide, show, hide, "", ""
+    if account == "KiYoungJu":          # X analysis view, not a trade view
+        return hide, hide, show, "", ""
+    return (show, hide, hide,
             _influencer_header(f"{account} — Open Positions", account),
             _influencer_header(f"{account} — Signals", account))
 
@@ -2694,14 +2804,17 @@ def refresh_pie(_n, portfolio):
     Output("influencer-positions", "children"),
     Output("influencer-winrate", "children"),
     Output("youtube-summaries", "children"),
+    Output("ki-summaries", "children"),
     Input("interval", "n_intervals"),
     Input("influencer-subtabs", "value"),
 )
 def refresh_influencers(_n, account):
-    # Ben Cowen is a YouTube analysis view, not a trader: no header card /
-    # positions / signals — just the video summary cards.
+    # Ben Cowen / Ki Young Ju are analysis-only views, not traders: no header
+    # card / positions / signals — just the summary cards.
     if account == "BenCowen":
-        return "", [], None, None, youtube_section(load_youtube_summaries())
+        return "", [], None, None, youtube_section(load_youtube_summaries()), []
+    if account == "KiYoungJu":
+        return "", [], None, None, [], twitter_section(load_twitter_summaries())
     positions = load_positions()
     warm_prices({_yf_symbol(p["ticker"], p.get("asset_type", "stock"))
                  for p in influencer_positions(positions)
@@ -2711,7 +2824,7 @@ def refresh_influencers(_n, account):
             influencer_signals_data(load_trades(), account=account),
             influencer_positions_table(resolutions),
             influencer_winrate_card(resolutions),
-            [])
+            [], [])
 
 
 # --- background cache warmer -------------------------------------------------
