@@ -28,9 +28,34 @@
     "account": "CelalKucuker",
     "source_type": "influencer",
     "portfolio": null,
+    "ticker": "APLD",
+    "asset_type": "unknown",
+    "status": "open",
+    "entry_price": null,
+    "stop_loss": null,
+    "target": null,
+    "size_pct": null,
+    "trade_date": null,
+    "holding_thesis": null,
+    "opened_at": "2026-06-22T22:30:11+00:00",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2069186213794197739",
+        "signal_type": "buy",
+        "timestamp": "2026-06-22T22:30:11+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/CelalKucuker/status/2069186213794197739"
+      }
+    ]
+  },
+  {
+    "account": "CelalKucuker",
+    "source_type": "influencer",
+    "portfolio": null,
     "ticker": "BTC",
     "asset_type": "crypto",
-    "status": "open",
+    "status": "closed",
     "entry_price": null,
     "stop_loss": 65399.98,
     "target": 144000,
@@ -38,7 +63,7 @@
     "trade_date": null,
     "holding_thesis": "Main trend is upward.",
     "opened_at": "2026-06-17T15:59:38+00:00",
-    "closed_at": null,
+    "closed_at": "2026-06-23T15:07:52+00:00",
     "signals": [
       {
         "tweet_id": "2060382028130820142",
@@ -193,6 +218,13 @@
         "timestamp": "2026-06-22T15:19:12+00:00",
         "confidence": "medium",
         "url": "https://x.com/CelalKucuker/status/2069077752603431226"
+      },
+      {
+        "tweet_id": "2069437286786228381",
+        "signal_type": "sell",
+        "timestamp": "2026-06-23T15:07:52+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/CelalKucuker/status/2069437286786228381"
       }
     ]
   },
@@ -623,6 +655,13 @@
         "timestamp": "2026-06-22T15:08:24+00:00",
         "confidence": "high",
         "url": "https://x.com/CelalKucuker/status/2069075034396557628"
+      },
+      {
+        "tweet_id": "2069280590994571354",
+        "signal_type": "buy",
+        "timestamp": "2026-06-23T04:45:12+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/CelalKucuker/status/2069280590994571354"
       }
     ]
   },
@@ -761,7 +800,7 @@
     "trade_date": null,
     "holding_thesis": null,
     "opened_at": "2026-06-16T00:37:05+00:00",
-    "closed_at": "2026-06-22T19:41:54+00:00",
+    "closed_at": "2026-06-23T13:57:30+00:00",
     "signals": [
       {
         "tweet_id": "2066681435004575979",
@@ -783,6 +822,13 @@
         "timestamp": "2026-06-22T19:41:54+00:00",
         "confidence": "medium",
         "url": "https://x.com/CelalKucuker/status/2069143865139892272"
+      },
+      {
+        "tweet_id": "2069419580993245302",
+        "signal_type": "sell",
+        "timestamp": "2026-06-23T13:57:30+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/CelalKucuker/status/2069419580993245302"
       }
     ]
   },
@@ -794,11 +840,11 @@
     "asset_type": "crypto",
     "status": "open",
     "entry_price": 0.8,
-    "stop_loss": 0.55,
-    "target": 9,
+    "stop_loss": 0.5593,
+    "target": 5,
     "size_pct": 100,
     "trade_date": null,
-    "holding_thesis": "Chart structure shows strong technical support levels and bullish setup for a 2027 target.",
+    "holding_thesis": "If $SUI captures a meaningful share of the AI narrative, a move toward $15\u2013$20 is possible.",
     "opened_at": "2026-05-28T14:48:19+00:00",
     "closed_at": null,
     "signals": [
@@ -864,6 +910,13 @@
         "timestamp": "2026-06-16T16:52:45+00:00",
         "confidence": "medium",
         "url": "https://x.com/CelalKucuker/status/2066926969468473544"
+      },
+      {
+        "tweet_id": "2069431268148687312",
+        "signal_type": "buy",
+        "timestamp": "2026-06-23T14:43:57+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/CelalKucuker/status/2069431268148687312"
       }
     ]
   },
@@ -1122,6 +1175,13 @@
         "timestamp": "2026-06-22T16:57:33+00:00",
         "confidence": "medium",
         "url": "https://x.com/CelalKucuker/status/2069102504927723768"
+      },
+      {
+        "tweet_id": "2069272771633270790",
+        "signal_type": "buy",
+        "timestamp": "2026-06-23T04:14:08+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/CelalKucuker/status/2069272771633270790"
       }
     ]
   },
@@ -1319,7 +1379,7 @@
     "target": 100,
     "size_pct": null,
     "trade_date": null,
-    "holding_thesis": null,
+    "holding_thesis": "Expected to consistently outperform the S&P 500 over the next few years due to valuation near all-time lows.",
     "opened_at": "2026-06-18T06:01:10+00:00",
     "closed_at": null,
     "signals": [
@@ -1329,6 +1389,13 @@
         "timestamp": "2026-06-18T06:01:10+00:00",
         "confidence": "high",
         "url": "https://x.com/IncomeSharks/status/2067487768268423330"
+      },
+      {
+        "tweet_id": "2069159589493567864",
+        "signal_type": "position",
+        "timestamp": "2026-06-22T20:44:23+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/IncomeSharks/status/2069159589493567864"
       }
     ]
   },
@@ -2338,6 +2405,31 @@
     "account": "aifinancelabs",
     "source_type": "portfolio",
     "portfolio": "deepseek",
+    "ticker": "PLMR",
+    "asset_type": "stock",
+    "status": "open",
+    "entry_price": null,
+    "stop_loss": null,
+    "target": null,
+    "size_pct": 5.25,
+    "trade_date": null,
+    "holding_thesis": "Specialty insurer with fast 60% revenue growth trading at 10x next-year earnings, 28% below 52-week high, generating strong free cash flow.",
+    "opened_at": "2026-06-23T15:01:39+00:00",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2069435724756103662",
+        "signal_type": "position",
+        "timestamp": "2026-06-23T15:01:39+00:00",
+        "confidence": "high",
+        "url": "https://x.com/aifinancelabs/status/2069435724756103662"
+      }
+    ]
+  },
+  {
+    "account": "aifinancelabs",
+    "source_type": "portfolio",
+    "portfolio": "deepseek",
     "ticker": "SALT",
     "asset_type": "stock",
     "status": "open",
@@ -2874,9 +2966,9 @@
     "entry_price": null,
     "stop_loss": null,
     "target": 155,
-    "size_pct": 6.8,
+    "size_pct": 8.0,
     "trade_date": "2026-06-05",
-    "holding_thesis": "Specialty insurer with 60% premium growth, lifted net income guidance, ROE above 20%, and trades near 11x earnings close to 52-week lows\u2014fundamentals improving while valuation remains attractive.",
+    "holding_thesis": "Specialty insurer that provides portfolio resilience and rises when AI/tech trades wobble; steady premium growth and improving profitability independent of market cycles.",
     "opened_at": "2026-06-11T14:40:01+00:00",
     "closed_at": null,
     "signals": [
@@ -2886,6 +2978,13 @@
         "timestamp": "2026-06-11T14:40:01+00:00",
         "confidence": "high",
         "url": "https://x.com/grkportfolio/status/2065081624019017907"
+      },
+      {
+        "tweet_id": "2069437255035367757",
+        "signal_type": "position",
+        "timestamp": "2026-06-23T15:07:44+00:00",
+        "confidence": "high",
+        "url": "https://x.com/grkportfolio/status/2069437255035367757"
       }
     ]
   },
@@ -3002,7 +3101,7 @@
     "portfolio": "gemini",
     "ticker": "ASML",
     "asset_type": "stock",
-    "status": "open",
+    "status": "closed",
     "entry_price": null,
     "stop_loss": null,
     "target": null,
@@ -3010,7 +3109,7 @@
     "trade_date": null,
     "holding_thesis": null,
     "opened_at": null,
-    "closed_at": null,
+    "closed_at": "2026-06-23T14:21:04+00:00",
     "signals": [
       {
         "tweet_id": "2045204332484739242",
@@ -3018,6 +3117,13 @@
         "timestamp": "2026-04-17T18:14:45+00:00",
         "confidence": "high",
         "url": "https://x.com/ralliesarena/status/2045204332484739242"
+      },
+      {
+        "tweet_id": "2069425510786937225",
+        "signal_type": "sell",
+        "timestamp": "2026-06-23T14:21:04+00:00",
+        "confidence": "high",
+        "url": "https://x.com/ralliesarena/status/2069425510786937225"
       }
     ]
   },
@@ -3142,6 +3248,13 @@
         "timestamp": "2026-06-09T14:15:51+00:00",
         "confidence": "high",
         "url": "https://x.com/ralliesarena/status/2064350768291840069"
+      },
+      {
+        "tweet_id": "2069523622683689276",
+        "signal_type": "sell",
+        "timestamp": "2026-06-23T20:50:56+00:00",
+        "confidence": "high",
+        "url": "https://x.com/ralliesarena/status/2069523622683689276"
       }
     ]
   },
@@ -3988,7 +4101,7 @@
     "target": 141,
     "size_pct": 15,
     "trade_date": "2026-04-01",
-    "holding_thesis": "20% grower with wide moat in software, AI momentum not yet in estimates, stock cheaper after mechanical selloff from rally cooldown and rate signals.",
+    "holding_thesis": "ServiceNow's AI pricing shift to usage-based billing (agent actions, work performed) rather than per-seat allows the company to capture productivity gains even as customers reduce headcount, with existing customers already spending 15-20% more annually.",
     "opened_at": "2026-05-28T21:59:10.000Z",
     "closed_at": null,
     "signals": [
@@ -4110,6 +4223,20 @@
         "timestamp": "2026-06-22T15:33:50+00:00",
         "confidence": "high",
         "url": "https://x.com/theaiportfolios/status/2069081437215547739"
+      },
+      {
+        "tweet_id": "2069106011676217692",
+        "signal_type": "position",
+        "timestamp": "2026-06-22T17:11:29+00:00",
+        "confidence": "medium",
+        "url": "https://x.com/theaiportfolios/status/2069106011676217692"
+      },
+      {
+        "tweet_id": "2069111701350293916",
+        "signal_type": "position",
+        "timestamp": "2026-06-22T17:34:06+00:00",
+        "confidence": "high",
+        "url": "https://x.com/theaiportfolios/status/2069111701350293916"
       }
     ]
   },
@@ -4173,9 +4300,9 @@
     "entry_price": 107.0,
     "stop_loss": 82,
     "target": 138,
-    "size_pct": 5.0,
+    "size_pct": 5,
     "trade_date": "2026-06-09",
-    "holding_thesis": "Premiums compound ~40% annually while stock trades near 52-week low; earnings guidance of $10 EPS exceeds analyst models at $9; catastrophe exposure capped at $20M retention with $3.9B reinsurance limit.",
+    "holding_thesis": "23% ROE insurer with 30-40% annual premium growth priced near 52-week lows on catastrophe fear; reinsurance locked in and buyback authorized.",
     "opened_at": "2026-06-09T14:19:29+00:00",
     "closed_at": null,
     "signals": [
@@ -4206,6 +4333,13 @@
         "timestamp": "2026-06-11T12:17:22+00:00",
         "confidence": "high",
         "url": "https://x.com/theaiportfolios/status/2065045728016134620"
+      },
+      {
+        "tweet_id": "2069440829215629549",
+        "signal_type": "position",
+        "timestamp": "2026-06-23T15:21:56+00:00",
+        "confidence": "high",
+        "url": "https://x.com/theaiportfolios/status/2069440829215629549"
       }
     ]
   },
@@ -4231,6 +4365,31 @@
         "timestamp": "2026-06-11T14:44:25+00:00",
         "confidence": "high",
         "url": "https://x.com/theaiportfolios/status/2065082731705336202"
+      }
+    ]
+  },
+  {
+    "account": "theaiportfolios",
+    "source_type": "portfolio",
+    "portfolio": "claude",
+    "ticker": "RDDT",
+    "asset_type": "stock",
+    "status": "open",
+    "entry_price": null,
+    "stop_loss": null,
+    "target": null,
+    "size_pct": 6.5,
+    "trade_date": null,
+    "holding_thesis": "AI licensing deals with major companies could grow 4x to $550M annually, creating a gap between Street estimates and actual potential; core business compounding with 69% revenue growth, 91% gross margins, and 17% daily user growth.",
+    "opened_at": "2026-06-22T19:08:13+00:00",
+    "closed_at": null,
+    "signals": [
+      {
+        "tweet_id": "2069135388233314675",
+        "signal_type": "position",
+        "timestamp": "2026-06-22T19:08:13+00:00",
+        "confidence": "high",
+        "url": "https://x.com/theaiportfolios/status/2069135388233314675"
       }
     ]
   },
@@ -4271,7 +4430,7 @@
     "target": null,
     "size_pct": 9.0,
     "trade_date": "2026-05-12",
-    "holding_thesis": "AI-powered identity and marketing platform with proprietary consumer data advantage, growing wallet share within 600+ existing enterprise clients with minimal penetration upside.",
+    "holding_thesis": "Palantir partnership to build AI infrastructure for marketing with significant upside optionality not yet reflected in valuations.",
     "opened_at": "2026-05-31T04:13:09.000Z",
     "closed_at": null,
     "signals": [
@@ -4316,6 +4475,13 @@
         "timestamp": "2026-06-19T17:53:34+00:00",
         "confidence": "high",
         "url": "https://x.com/theaiportfolios/status/2068029435597475957"
+      },
+      {
+        "tweet_id": "2069445892743258526",
+        "signal_type": "position",
+        "timestamp": "2026-06-23T15:42:03+00:00",
+        "confidence": "high",
+        "url": "https://x.com/theaiportfolios/status/2069445892743258526"
       }
     ]
   },
