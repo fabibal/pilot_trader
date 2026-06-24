@@ -31,10 +31,13 @@ dashboard Influencers tab next to the Ben Cowen YouTube analysis.
   python twitter_digest.py --no-vision     # skip the chart vision pass
 """
 import argparse
+import http.client
 import json
 import os
 import sys
+import time
 import traceback
+import urllib.error
 import urllib.parse
 from datetime import datetime, timezone
 
@@ -144,6 +147,37 @@ VISION_SCHEMA = {
 
 
 # --- GetXAPI fetch --------------------------------------------------------
+# GetXAPI is an unaffiliated scraper with no SLA; it intermittently truncates
+# responses mid-body (http.client.IncompleteRead) or drops the connection. Retry
+# transient read/network errors with a short linear backoff so a momentary blip
+# doesn't fail the daily run (and page Telegram). A sustained outage still raises
+# after the final attempt; permanent HTTP client errors (4xx except 429, e.g. a
+# bad key) raise immediately without burning retries.
+GETXAPI_RETRIES = 3
+GETXAPI_BACKOFF_S = 3
+_TRANSIENT_NET = (http.client.HTTPException, OSError)   # OSError covers URLError
+
+
+def _getxapi_get_retry(url):
+    last = None
+    for attempt in range(1, GETXAPI_RETRIES + 1):
+        try:
+            return getxapi_get(url)
+        except urllib.error.HTTPError as e:
+            if e.code < 500 and e.code != 429:
+                raise                                  # permanent -> don't retry
+            last = e
+        except _TRANSIENT_NET as e:
+            last = e
+        if attempt < GETXAPI_RETRIES:
+            wait = GETXAPI_BACKOFF_S * attempt
+            print(f"  [getxapi] transient {type(last).__name__} "
+                  f"(attempt {attempt}/{GETXAPI_RETRIES}); retrying in {wait}s",
+                  file=sys.stderr)
+            time.sleep(wait)
+    raise last
+
+
 def fetch_posts(seen_ids):
     """Cursor-paginate the GetXAPI posts-only endpoint for @ki_young_ju. Stops
     early once a page contains a tweet we've already analyzed (high-water dedup)
@@ -155,7 +189,7 @@ def fetch_posts(seen_ids):
         params = {"userName": ACCOUNT}
         if cursor:
             params["cursor"] = cursor
-        data = getxapi_get(
+        data = _getxapi_get_retry(
             f"{GETXAPI_BASE}{GETXAPI_POSTS_PATH}?{urllib.parse.urlencode(params)}")
         calls += 1
         batch = data.get("tweets", [])
