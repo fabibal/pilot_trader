@@ -304,6 +304,7 @@ def process(candidates, client, allow_vision=True):
             print("    text analysis failed; skipping", file=sys.stderr)
             continue
 
+        media = n.get("media") or []           # photo URLs (charts) on this post
         rec = {
             "tweet_id": tid,
             "created_at": n.get("created_at"),
@@ -311,13 +312,14 @@ def process(candidates, client, allow_vision=True):
             "text": text,
             "lang": tw.get("lang"),
             "analyzed_at": datetime.now(timezone.utc).isoformat(),
+            "media": media,                    # persisted so the dashboard can
+                                               # show the chart image(s) inline
             "has_chart": False,
             "chart_trend": None,
             "chart_summary": None,
             **analysis,
         }
 
-        media = n.get("media") or []
         if media and allow_vision:
             chart, ci, co = analyze_chart(client, media, ACCOUNT, date, text)
             total_in += ci

@@ -1817,6 +1817,24 @@ def _tw_title(text):
     return (line[:90] + "…") if len(line) > 90 else (line or "post")
 
 
+def _tw_images(media):
+    """Inline chart thumbnail(s) for a post. Small/medium (capped width, not full
+    width); loads Twitter's lightweight `?name=small` variant and links to the
+    full-res image. Empty span when the post had no images (card unchanged)."""
+    if not media:
+        return html.Span()
+    return html.Div([
+        html.A(html.Img(src=f"{u}?name=small",
+                        style={"maxWidth": "100%", "maxHeight": "190px",
+                               "borderRadius": "6px", "display": "block",
+                               "border": f"1px solid {C['border']}"}),
+               href=u, target="_blank", rel="noopener noreferrer",
+               style={"display": "block", "maxWidth": "300px"})
+        for u in media[:4]
+    ], style={"display": "flex", "flexWrap": "wrap", "gap": "8px",
+              "marginTop": "8px"})
+
+
 def _tw_card(p):
     sent = (p.get("overall_sentiment") or "neutral").lower()
     color = _YT_SENTIMENT.get(sent, C["dim"])
@@ -1858,6 +1876,7 @@ def _tw_card(p):
                   style={"color": C["text"], "fontSize": "0.74rem",
                          "marginTop": "8px", "lineHeight": "1.4"})
          if p.get("has_chart") and p.get("chart_summary") else html.Span()),
+        _tw_images(p.get("media") or []),
         (html.Div([html.Span("Szintek: ", style={"color": C["dim"],
                                                  "fontSize": "0.7rem"})]
                   + [_yt_chip(s, C["blue"]) for s in levels],
