@@ -183,35 +183,40 @@ def reconcile(trades_file=TRADES_FILE, positions_file=POSITIONS_FILE):
             if e.get("target") is not None:
                 pos["target"] = e["target"]
         elif st == "sell":
-            # A partial sell (trim/scale-out/took-some-profits) reduces the
-            # position but leaves it open; only a full exit closes it.
-            if e.get("sell_kind") == "partial":
-                if pos["status"] != "closed":
-                    pos["status"] = "open"
-                # New remaining size if disclosed, else assume ~half trimmed.
-                if e.get("position_size_pct") is not None:
-                    pos["size_pct"] = e["position_size_pct"]
-                elif pos.get("size_pct") is not None:
-                    pos["size_pct"] = round(pos["size_pct"] / 2, 2)
-            else:
-                pos["status"] = "closed"
-                pos["closed_at"] = e.get("timestamp")
+            # A sell only acts on a position ALREADY observed as open. A sell
+            # that is the first event for a ticker (no prior buy/position seen)
+            # is not evidence of a holding we can price or size, so it must NOT
+            # materialize a phantom open/closed record; and a sell never reopens
+            # or mutates a closed cycle (only a buy re-opens).
+            if pos["status"] == "open":
+                if e.get("sell_kind") == "partial":
+                    # Partial sell (trim/scale-out): stays open, update remaining
+                    # size (disclosed, else assume ~half trimmed).
+                    if e.get("position_size_pct") is not None:
+                        pos["size_pct"] = e["position_size_pct"]
+                    elif pos.get("size_pct") is not None:
+                        pos["size_pct"] = round(pos["size_pct"] / 2, 2)
+                else:                            # full exit closes it
+                    pos["status"] = "closed"
+                    pos["closed_at"] = e.get("timestamp")
         elif st == "position":
             # Only a never-seen ticker opens here; a CLOSED position stays
             # closed (disclosures recap old holdings — only a buy re-opens).
             if pos["status"] is None:           # disclosure implies it's held
                 pos["status"] = "open"
                 pos["opened_at"] = e.get("timestamp")
-            if e.get("position_size_pct") is not None:
-                pos["size_pct"] = e["position_size_pct"]
-            if pos["entry_price"] is None and e.get("entry_price"):
-                pos["entry_price"] = e["entry_price"]
-            if pos["trade_date"] is None and e.get("trade_date"):
-                pos["trade_date"] = e["trade_date"]
-            if e.get("stop_loss") is not None:
-                pos["stop_loss"] = e["stop_loss"]
-            if e.get("target") is not None:
-                pos["target"] = e["target"]
+            # A recap must not mutate a CLOSED position's sold-cycle fields.
+            if pos["status"] != "closed":
+                if e.get("position_size_pct") is not None:
+                    pos["size_pct"] = e["position_size_pct"]
+                if pos["entry_price"] is None and e.get("entry_price"):
+                    pos["entry_price"] = e["entry_price"]
+                if pos["trade_date"] is None and e.get("trade_date"):
+                    pos["trade_date"] = e["trade_date"]
+                if e.get("stop_loss") is not None:
+                    pos["stop_loss"] = e["stop_loss"]
+                if e.get("target") is not None:
+                    pos["target"] = e["target"]
 
     result = sorted(positions.values(),
                     key=lambda p: (p["account"], p["ticker"]))

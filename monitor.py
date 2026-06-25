@@ -30,12 +30,14 @@ loaded from ~/pilot_trader/.env. Run with the project venv:
 import argparse
 import base64
 import gzip
+import http.client
 import json
 import os
 import re
 import sys
 import time
 import traceback
+import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
@@ -735,6 +737,39 @@ def getxapi_get(url):
     return json.loads(body)
 
 
+# GetXAPI is an unaffiliated scraper with no SLA: its upstream proxy
+# intermittently truncates responses mid-body (http.client.IncompleteRead) or
+# drops the connection (RemoteDisconnected). Without retry, ONE such blip on any
+# account aborts the whole monitor run and the state is left unwritten, so the
+# next cron retries from scratch -- a flaky proxy then keeps the pipeline down
+# for many cycles (observed: 6 consecutive failed runs / ~24h). Retry transient
+# read/network errors with a short linear backoff; permanent 4xx (except 429)
+# raise immediately. Mirrors twitter_digest._getxapi_get_retry.
+GETXAPI_RETRIES = 3
+GETXAPI_BACKOFF_S = 3
+_TRANSIENT_NET = (http.client.HTTPException, OSError)   # OSError covers URLError
+
+
+def getxapi_get_retry(url):
+    last = None
+    for attempt in range(1, GETXAPI_RETRIES + 1):
+        try:
+            return getxapi_get(url)
+        except urllib.error.HTTPError as e:
+            if e.code < 500 and e.code != 429:
+                raise                                  # permanent -> don't retry
+            last = e
+        except _TRANSIENT_NET as e:
+            last = e
+        if attempt < GETXAPI_RETRIES:
+            wait = GETXAPI_BACKOFF_S * attempt
+            print(f"  [getxapi] transient {type(last).__name__} "
+                  f"(attempt {attempt}/{GETXAPI_RETRIES}); retrying in {wait}s",
+                  file=sys.stderr)
+            time.sleep(wait)
+    raise last
+
+
 def _normalize_getxapi(tw):
     """Map a GetXAPI tweet to the official-API shape the rest of the code uses.
 
@@ -774,7 +809,7 @@ def fetch_getxapi(account, since_id=None):
         params = {"userName": account}
         if cursor:
             params["cursor"] = cursor
-        data = getxapi_get(
+        data = getxapi_get_retry(
             f"{GETXAPI_BASE}{path}?{urllib.parse.urlencode(params)}")
         calls += 1
         batch = data.get("tweets", [])
@@ -1069,6 +1104,8 @@ def main():
     all_new, total_reads, total_skipped, total_sell_cand, total_calls = \
         [], 0, 0, 0, 0
     candidates = []          # (custom_id, account, tw) accumulator for --batch
+    fetch_failures = []      # accounts whose GetXAPI fetch failed after retries
+    attempted = 0            # accounts that reached the fetch (not slow-skipped)
     now = datetime.now(timezone.utc)
     for account in accounts:
         # Slow accounts (POLL_MIN_INTERVAL_H): skip on a live run if fetched too
@@ -1088,12 +1125,24 @@ def main():
         prior_newest = None
         if not (args.backfill or args.dry_run):
             prior_newest = (run_state.get(account) or {}).get("newest_id")
+        attempted += 1
         try:
             tweets, reads, calls = tweets_for_account(
                 account, run_state, args.backfill, args.source)
         except urllib.error.HTTPError as e:
             print(f"[{account}] HTTP {e.code}: "
                   f"{e.read().decode('utf-8', 'replace')}", file=sys.stderr)
+            fetch_failures.append(account)
+            continue
+        except (http.client.HTTPException, OSError) as e:
+            # Exhausted-retry transient GetXAPI error (IncompleteRead /
+            # RemoteDisconnected) on ONE account: skip just this account so a
+            # single flaky upstream doesn't abort the whole run (which would
+            # discard candidates already extracted from earlier accounts and
+            # leave state unwritten). Mirrors twitter_digest's per-feed isolation.
+            print(f"[{account}] fetch failed after retries "
+                  f"({type(e).__name__}: {e}); skipping account", file=sys.stderr)
+            fetch_failures.append(account)
             continue
         # Record the fetch time so POLL_MIN_INTERVAL_H accounts can pace
         # themselves off "last fetch", not an exact cron hour.
@@ -1159,6 +1208,22 @@ def main():
               f"foreign-author-skipped {foreign}, retweet-skipped {retweet}, "
               f"reply-skipped {skipped}, "
               f"reply-sell-candidate {sell_cand}, {label} {new}")
+
+    # If EVERY attempted account failed to fetch, this is a total GetXAPI outage:
+    # defer the whole run (leave state unwritten so the next run refetches via the
+    # high-water gate) and alert, instead of writing a fresh _last_run that would
+    # mask the outage as a healthy run on the dashboard.
+    if attempted and len(fetch_failures) == attempted:
+        msg = (f"all {attempted} account fetch(es) failed after retries "
+               f"({', '.join(fetch_failures)}) -- deferring run")
+        print(f"ERROR: {msg}", file=sys.stderr)
+        if not args.dry_run:
+            notify_telegram(f"monitor: {msg}")
+        return
+    if fetch_failures:
+        print(f"WARNING: {len(fetch_failures)}/{attempted} account(s) failed "
+              f"fetch after retries, continuing with the rest: "
+              f"{', '.join(fetch_failures)}", file=sys.stderr)
 
     # --batch: now run the single bulk job. A timeout leaves state unwritten so
     # the next run refetches+resubmits these tweets (no signals are lost).

@@ -574,15 +574,22 @@ def main():
     write_json_atomic(SEEN_FILE, sorted(seen))
 
     # Append this run's Anthropic spend to the cost ledger; the dashboard sums
-    # the current calendar month ("Reddit: $X.XX this month"). Only successful,
-    # non-dry-run batches reach here, so every record is a real billed run.
-    cost_log = load_json(COST_LOG_FILE, [])
-    if not isinstance(cost_log, list):
-        cost_log = []
-    cost_log.append({"timestamp": datetime.now(timezone.utc).isoformat(),
-                     "in_tok": in_tok, "out_tok": out_tok,
-                     "total_usd": round(cost, 6)})
-    write_json_atomic(COST_LOG_FILE, cost_log)
+    # the current calendar month ("Reddit: $X.XX this month"). Skip zero-token
+    # runs (e.g. every batch request errored) so the ledger holds only real
+    # billed runs, and never let a telemetry-write failure fail the whole run
+    # (strategies + seen are already persisted above).
+    if in_tok or out_tok:
+        try:
+            cost_log = load_json(COST_LOG_FILE, [])
+            if not isinstance(cost_log, list):
+                cost_log = []
+            cost_log.append({"timestamp": datetime.now(timezone.utc).isoformat(),
+                             "in_tok": in_tok, "out_tok": out_tok,
+                             "total_usd": round(cost, 6)})
+            write_json_atomic(COST_LOG_FILE, cost_log)
+        except OSError as exc:
+            print(f"  [warn] could not write reddit cost ledger: {exc!r}",
+                  file=sys.stderr)
 
     # summary
     print(f"\nAnalyzed {analyzed} post(s); found {len(records)} strateg(ies) "

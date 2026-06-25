@@ -661,7 +661,34 @@ if __name__ == "__main__":
     # by the Gateway. 12 is unused (7 auto_trader, 20 dashboard, 8-11/21-26
     # tests).
     CLI_CLIENT_ID = 12
-    _ib = connect(client_id=CLI_CLIENT_ID)
+    # Connect with a few retries: the Gateway may be mid-restart (IB's nightly
+    # bounce / a watchdog relaunch take up to ~2.5min). If it STILL can't
+    # connect, alert + exit non-zero -- this CLI is the weekly safety check that
+    # cross-checks the ledger against IB, so a silent crash (the old behaviour:
+    # connect() raised straight out of __main__) means a real divergence could
+    # go undetected indefinitely.
+    import time as _time
+    _ib = None
+    for _attempt in range(1, 4):
+        try:
+            _ib = connect(client_id=CLI_CLIENT_ID)
+            break
+        except IBKRError as _e:
+            print(f"connect attempt {_attempt}/3 failed: {_e}")
+            if _attempt < 3:
+                _time.sleep(30)
+    if _ib is None:
+        _msg = ("ibkr_connector CLI could not reach IB Gateway after 3 tries -- "
+                "weekly ledger/position divergence check did NOT run")
+        print(f"ERROR: {_msg}")
+        try:                       # alert, but never let alerting hide the exit
+            from monitor import load_env, notify_telegram, TELEGRAM_ENVS
+            for _p in TELEGRAM_ENVS:
+                load_env(_p)
+            notify_telegram(_msg)
+        except Exception as _e:        # noqa: BLE001
+            print(f"(telegram alert failed: {_e!r})")
+        raise SystemExit(1)
     try:
         if _args.reconcile_orders:
             print("reconcile_open_orders:", reconcile_open_orders(_ib))
