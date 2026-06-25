@@ -139,6 +139,33 @@ tests/              # unit tests (ordering, reconciliation, poll gating)
 
 ---
 
+## Security & contributing
+
+> ⚠️ **This is a public repository — never commit sensitive data.**
+
+This applies to human contributors **and to automated assistants (e.g. Claude
+Code sessions)** alike. The following must **never** be committed — they belong
+only in a local `.env` (git-ignored) or stay out of the repo entirely:
+
+- **Credentials** — API keys, tokens, bearer tokens, passwords (Anthropic,
+  GetXAPI, X/Twitter, Telegram, etc.)
+- **Account identifiers** — brokerage / IBKR account IDs, order IDs
+- **Network details** — internal/LAN IPs, public IPs, private hostnames or URLs
+- **Host details** — SSH keys or key filenames, server usernames, absolute host
+  paths
+- **Personal data** — emails, phone numbers, addresses
+
+Guidelines:
+
+- **All secrets load from environment variables / `.env`** (which is
+  git-ignored). Never hardcode them — reference `os.environ[...]` instead.
+- **Runtime data stays out of git** — `positions.json`, `trades.json`, `data/`,
+  `tweets_*.json`, logs, and state files are already git-ignored.
+- **Review every diff before committing.** If a secret is ever committed, treat
+  it as compromised: rotate it immediately and scrub it from git history.
+
+---
+
 ## Disclaimer
 
 This is a **personal, educational project**.
