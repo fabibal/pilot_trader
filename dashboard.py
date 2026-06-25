@@ -1822,7 +1822,7 @@ def youtube_section(summaries, limit=5):
 # helpers (_yt_chip / _YT_SENTIMENT) since the visual language is identical.
 TW_SUMMARIES_FILE = os.path.join(DATA_DIR, "twitter_summaries.json")
 JOAO_SUMMARIES_FILE = os.path.join(DATA_DIR, "joao_summaries.json")
-KENDRICK_SUMMARIES_FILE = os.path.join(DATA_DIR, "kendrick_summaries.json")
+KENDRICK_FORECASTS_FILE = os.path.join(DATA_DIR, "kendrick_forecasts.json")
 
 
 def _load_summaries(path):
@@ -1846,9 +1846,17 @@ def load_joao_summaries():
     return _load_summaries(JOAO_SUMMARIES_FILE)
 
 
-def load_kendrick_summaries():
-    """Geoff Kendrick / Standard Chartered topic-search analyses (multi-author)."""
-    return _load_summaries(KENDRICK_SUMMARIES_FILE)
+def load_kendrick_forecasts():
+    """Standard Chartered / Geoff Kendrick forecast ledger (one row per forecast,
+    written by twitter_digest.py's forecast-ledger mode). The file is a dict
+    {seen_ids, forecasts} -- return just the forecasts list."""
+    try:
+        with open(KENDRICK_FORECASTS_FILE) as f:
+            data = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return []
+    fc = data.get("forecasts") if isinstance(data, dict) else data
+    return fc if isinstance(fc, list) else []
 
 
 def _tw_title(text):
@@ -1947,6 +1955,127 @@ def twitter_section(summaries, limit=8, who="@ki_young_ju"):
     ordered = sorted(summaries, key=lambda r: r.get("created_at") or "",
                      reverse=True)
     return [_tw_card(p) for p in ordered[:limit]]
+
+
+# --- Kendrick / Standard Chartered forecast ledger ------------------------
+# Unlike the per-post feeds above, kendrick_sc is a forecast LEDGER: one research
+# call (echoed by 20-30 outlets) is deduplicated into a single row. So it renders
+# as a compact, expandable table (one row per forecast) rather than a card stream;
+# the source count IS the signal (how widely the call was picked up).
+def _dedupe_targets(targets):
+    """Collapse target phrasings that differ only by commas/spacing/case so the
+    row doesn't show '$3,500' and '$3500' side by side."""
+    seen, out = set(), []
+    for t in targets or []:
+        k = t.replace(",", "").replace(" ", "").lower()
+        if k and k not in seen:
+            seen.add(k)
+            out.append(t)
+    return out
+
+
+def _kendrick_row(f):
+    sent = (f.get("overall_sentiment") or "neutral").lower()
+    color = _YT_SENTIMENT.get(sent, C["dim"])
+    direction = (f.get("direction") or "").lower()
+    arrow = "▲" if direction == "up" else "▼" if direction == "down" else "→"
+    arrow_color = (C["green"] if direction == "up"
+                   else C["red"] if direction == "down" else C["dim"])
+    asset = f.get("asset") or "?"
+    targets = "  ·  ".join(_dedupe_targets(f.get("targets"))) or "—"
+    tf = f.get("timeframe") or "—"
+    first = (f.get("first_seen") or "")[:10]
+    sources = f.get("sources") or []
+    n = f.get("source_count") or len(sources)
+
+    summary = html.Summary(style={
+        "display": "flex", "alignItems": "center", "gap": "10px",
+        "cursor": "pointer", "listStyle": "none", "padding": "9px 2px"},
+        children=[
+        html.Span("▸", style={"color": C["dim"], "fontSize": "0.7rem",
+                              "flex": "0 0 auto"}),
+        html.Span(asset, style={
+            "background": C["bg"], "color": C["blue"],
+            "border": f"1px solid {C['border']}", "borderRadius": "6px",
+            "padding": "2px 9px", "fontWeight": "bold", "fontFamily": MONO,
+            "fontSize": "0.8rem", "minWidth": "54px", "textAlign": "center",
+            "flex": "0 0 auto"}),
+        html.Span(arrow, style={"color": arrow_color, "fontWeight": "bold",
+                               "flex": "0 0 auto"}),
+        html.Span(targets, style={
+            "color": C["text"], "fontWeight": "bold", "fontSize": "0.82rem",
+            "flex": "1 1 auto", "minWidth": "0", "overflow": "hidden",
+            "textOverflow": "ellipsis", "whiteSpace": "nowrap"}),
+        html.Span(tf, style={"color": C["dim"], "fontSize": "0.74rem",
+                            "whiteSpace": "nowrap", "flex": "0 0 auto"}),
+        html.Span(f"{n} src", title="accounts that reported this call",
+                  style={"background": C["bg"], "color": C["text"],
+                         "border": f"1px solid {C['border']}",
+                         "borderRadius": "10px", "padding": "1px 8px",
+                         "fontSize": "0.68rem", "whiteSpace": "nowrap",
+                         "flex": "0 0 auto"}),
+        html.Span(first, style={"color": C["dim"], "fontSize": "0.68rem",
+                               "whiteSpace": "nowrap", "minWidth": "74px",
+                               "textAlign": "right", "flex": "0 0 auto"}),
+        html.Span(style={"width": "8px", "height": "8px", "borderRadius": "50%",
+                        "background": color, "flex": "0 0 auto"}),
+    ])
+
+    levels = f.get("key_levels") or []
+    themes = f.get("top_themes") or []
+    src_links = []
+    for s in sources[:12]:
+        src_links.append(html.A(f"@{s.get('author')}", href=s.get("url"),
+            target="_blank", rel="noopener noreferrer",
+            style={"color": C["blue"], "textDecoration": "none",
+                   "fontSize": "0.72rem", "marginRight": "12px"}))
+    if n > len(sources[:12]):
+        src_links.append(html.Span(f"+{n - len(sources[:12])} more",
+            style={"color": C["dim"], "fontSize": "0.72rem"}))
+
+    chart_color = _YT_SENTIMENT.get((f.get("chart_trend") or "neutral").lower(),
+                                    C["dim"])
+    body = html.Div(style={"padding": "2px 6px 12px",
+                           "borderTop": f"1px solid {C['border']}"}, children=[
+        html.Div(f.get("summary") or "", style={
+            "color": C["text"], "fontSize": "0.8rem", "marginTop": "8px",
+            "lineHeight": "1.45"}),
+        (html.Div([html.Span("Piaci nézet: ", style={"color": C["dim"],
+            "fontWeight": "bold"}), html.Span(f.get("market_view") or "—")],
+            style={"color": C["text"], "fontSize": "0.76rem", "marginTop": "8px",
+                   "lineHeight": "1.4"}) if f.get("market_view") else html.Span()),
+        (html.Div([html.Span("Chart: ", style={"color": chart_color,
+            "fontWeight": "bold"}), html.Span(f.get("chart_summary") or "")],
+            style={"color": C["text"], "fontSize": "0.74rem", "marginTop": "8px",
+                   "lineHeight": "1.4"})
+         if f.get("has_chart") and f.get("chart_summary") else html.Span()),
+        _tw_images(f.get("media") or []),
+        (html.Div([html.Span("Szintek: ", style={"color": C["dim"],
+            "fontSize": "0.7rem"})] + [_yt_chip(s, C["blue"]) for s in levels],
+            style={"marginTop": "8px"}) if levels else html.Span()),
+        (html.Div([html.Span("Témák: ", style={"color": C["dim"],
+            "fontSize": "0.7rem"})] + [_yt_chip(t) for t in themes],
+            style={"marginTop": "6px"}) if themes else html.Span()),
+        html.Div([html.Span("Források: ", style={"color": C["dim"],
+            "fontSize": "0.7rem"})] + src_links, style={"marginTop": "10px"}),
+    ])
+
+    return html.Details(style={
+        "background": C["card"], "border": f"1px solid {C['border']}",
+        "borderLeft": f"3px solid {color}", "borderRadius": "8px",
+        "padding": "0 12px", "marginTop": "8px"}, children=[summary, body])
+
+
+def kendrick_forecast_section(forecasts, limit=30):
+    """Render the SC / Kendrick forecast ledger as a compact, newest-first list
+    of expandable rows (one per forecast, not per post)."""
+    if not forecasts:
+        return [html.Div("No Standard Chartered / Kendrick forecasts captured "
+                         "yet.", style={"color": C["dim"], "fontSize": "0.8rem",
+                                        "marginTop": "8px"})]
+    ordered = sorted(forecasts, key=lambda f: (f.get("last_seen")
+                     or f.get("first_seen") or ""), reverse=True)[:limit]
+    return [html.Div([_kendrick_row(f) for f in ordered])]
 
 
 # --- Reddit trading-strategy miner output ---------------------------------
@@ -2952,8 +3081,7 @@ def refresh_influencers(_n, account):
                 twitter_section(load_joao_summaries(), who="@joao_wedson"), [])
     if account == "GeoffKendrick":
         return ("", [], None, None, [], [], [],
-                twitter_section(load_kendrick_summaries(),
-                                who="Geoff Kendrick / Standard Chartered"))
+                kendrick_forecast_section(load_kendrick_forecasts()))
     positions = load_positions()
     warm_prices({_yf_symbol(p["ticker"], p.get("asset_type", "stock"))
                  for p in influencer_positions(positions)

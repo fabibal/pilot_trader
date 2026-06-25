@@ -20,20 +20,22 @@ skipped, so reruns / the daily cron are idempotent (no reprocessing, no double
 LLM spend).
 
 A feed is either a USER timeline (one account's posts) or a TOPIC SEARCH (every
-account's posts matching a GetXAPI advanced-search query). Both share the same
-filter -> Sonnet -> ledger path; a search feed just fetches differently, keeps
-any author, and collapses near-identical reposts by content signature.
+account's posts matching a GetXAPI advanced-search query). Most feeds emit one
+record per post; a FORECAST-LEDGER feed (kendrick_sc) instead emits one record
+per forecast (see the "forecast-ledger mode" block + run_forecast_feed()).
 
 Feeds (see FEEDS):
   - ki_young_ju (Ki Young Ju, CryptoQuant founder; BTC on-chain / macro) ->
       data/twitter_summaries.json. Korean-language posts are skipped.
   - joao_wedson (Joao Wedson, Alphractal founder; crypto on-chain / quant) ->
       data/joao_summaries.json.
-  - kendrick_sc (TOPIC SEARCH, not a user timeline): every account's coverage of
-      Geoff Kendrick / Standard Chartered crypto research -> data/
-      kendrick_summaries.json. No single account is dedicated to his calls, so we
-      search the topic instead. English only; verbatim reposts of the same
-      headline across accounts are collapsed by content signature.
+  - kendrick_sc (TOPIC SEARCH + FORECAST LEDGER): Standard Chartered / Geoff
+      Kendrick crypto price calls, deduplicated into one row per forecast ->
+      data/kendrick_forecasts.json ({seen_ids, forecasts}). No single account is
+      dedicated to his calls and each call is echoed by 20-30 outlets, so we
+      search the topic, Haiku-triage each post into (asset, direction, target,
+      timeframe), cluster echoes by (asset, timeframe), and Sonnet-read only one
+      representative per new forecast. English only; source count = reach.
 
 ANALYSIS ONLY: neither account is in accounts.ACCOUNTS; neither is written to
 trades.json / positions.json; neither is mirrored to IBKR. Surfaced on the
@@ -69,7 +71,8 @@ import monitor
 from monitor import (load_env, load_json, notify_telegram, TELEGRAM_ENVS,
                      getxapi_get, _normalize_getxapi, _image_block,
                      GETXAPI_BASE, GETXAPI_POSTS_PATH, GETXAPI_COST_PER_CALL,
-                     MAX_VISION_IMAGES, SONNET_INPUT_PER_1M, SONNET_OUTPUT_PER_1M)
+                     MAX_VISION_IMAGES, SONNET_INPUT_PER_1M, SONNET_OUTPUT_PER_1M,
+                     HAIKU_INPUT_PER_1M, HAIKU_OUTPUT_PER_1M)
 
 # --- config ---------------------------------------------------------------
 HOME = "/home/fbazsa/pilot_trader"
@@ -162,6 +165,71 @@ VISION_SCHEMA = {
 }
 
 
+# --- forecast-ledger mode (kendrick_sc) -----------------------------------
+# kendrick_sc is a TOPIC SEARCH where ONE research event (a Standard Chartered /
+# Geoff Kendrick price call) is echoed by 20-30 outlets. Per-post cards would be
+# 20-30 near-duplicates, so this feed runs in FORECAST-LEDGER mode: a cheap Haiku
+# triage extracts the forecast(s) from each new post, posts are CLUSTERED by
+# (asset, timeframe), and only a genuinely NEW forecast triggers the (expensive)
+# Sonnet read of one representative post. Echoes of a known forecast just append a
+# source + bump the count. One ledger row per forecast; the source count IS the
+# signal (how widely the call was picked up). Dedup is semantic (the forecast),
+# not textual (text_sig), so differently-worded reports of one call still merge.
+TRIAGE_MODEL = "claude-haiku-4-5-20251001"   # cheap gate; Sonnet only on new ones
+
+TRIAGE_BODY = (
+    "You triage a single X/Twitter post for whether it states or relays a "
+    "SPECIFIC crypto PRICE FORECAST or PRICE TARGET attributed to Standard "
+    "Chartered or its analyst Geoff Kendrick (Head of Digital Assets Research).\n"
+    "Set relevant=true ONLY if the post conveys such a call (an asset + a "
+    "directional view, with or without a numeric target/timeframe). Set "
+    "relevant=false for posts that merely name-drop Standard Chartered or "
+    "Kendrick without a crypto price call -- generic market recaps, ads, "
+    "unrelated banking news, or a trader's own opinion that does not relay an "
+    "SC/Kendrick call.\n"
+    "For EACH distinct forecast in the post, return:\n"
+    "- asset: the crypto TICKER in uppercase (BTC, ETH, XRP, AAVE, UNI, ...), "
+    "not the full name.\n"
+    "- direction: 'up', 'down', or 'neutral'.\n"
+    "- target: the price target or magnitude AS STATED, short (e.g. '$3,500', "
+    "'50x', '$200k', '$1M'); empty string if none is given.\n"
+    "- timeframe: the horizon, normalized to a 4-digit year when one is given or "
+    "implied ('by 2030'->'2030', 'end of 2025'->'2025'); else a short token "
+    "such as 'unspecified'.\n"
+    "A post may contain MULTIPLE DISTINCT forecasts (e.g. UNI to $100 AND AAVE "
+    "to $3,500) -> return one object each. BUT if a post lays out a multi-year "
+    "PATH or trajectory toward a single headline target for ONE asset (e.g. "
+    "yearly waypoints $1k/2026 ... $3.5k/2030), return ONLY the headline/final "
+    "target for that asset, not each intermediate year. If relevant=false, "
+    "return an empty forecasts list.\n"
+    "Return ONLY valid JSON matching the schema. No markdown, no preamble."
+)
+
+TRIAGE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "relevant": {"type": "boolean"},
+        "forecasts": {"type": "array", "items": {
+            "type": "object",
+            "properties": {
+                "asset": {"type": "string"},
+                "direction": {"type": "string",
+                              "enum": ["up", "down", "neutral"]},
+                "target": {"type": "string"},
+                "timeframe": {"type": "string"},
+            },
+            "required": ["asset", "direction", "target", "timeframe"],
+            "additionalProperties": False,
+        }},
+    },
+    "required": ["relevant", "forecasts"],
+    "additionalProperties": False,
+}
+
+SOURCES_CAP = 60          # max sources stored per forecast (source_count is exact)
+SEEN_IDS_CAP = 1500       # bound the triaged-id high-water set
+
+
 # --- feed registry --------------------------------------------------------
 @dataclass(frozen=True)
 class Feed:
@@ -180,6 +248,10 @@ class Feed:
     # ordering: 'Latest' (newest-first) is required for the high-water stop.
     query: str = None
     product: str = "Latest"
+    # Forecast-ledger mode (search feeds only): cluster echoes of one research
+    # event into a single forecast row instead of one card per post. See the
+    # "forecast-ledger mode" block above and run_forecast_feed().
+    forecast_ledger: bool = False
     # Fetch buffer. Daily cron + high-water dedup means a normal run stops early
     # after a few new posts; this only bounds catch-up after a missed run.
     max_fetch: int = 40
@@ -239,7 +311,8 @@ FEEDS = {f.key: f for f in [
         key="kendrick_sc",
         account="",                      # topic search: no single timeline
         display_name="Geoff Kendrick / Standard Chartered",
-        summaries_file=os.path.join(DATA_DIR, "kendrick_summaries.json"),
+        summaries_file=os.path.join(DATA_DIR, "kendrick_forecasts.json"),
+        forecast_ledger=True,            # one row per forecast, not per post
         # No account is dedicated to his calls; reputable outlets cover him only
         # incidentally amid huge volume. So search the TOPIC and let every
         # account's coverage flow in -- ~100% relevant, ~2-6 unique en posts/day.
@@ -420,11 +493,15 @@ def select_candidates(raw, seen_ids, feed, seen_sigs=frozenset()):
             continue                                  # not an allowed language
         if not _has_analyzable_content(tw):
             continue                                  # contentless
-        if feed.is_search:
+        # Plain search feeds collapse verbatim reposts by text signature.
+        # Forecast-ledger feeds skip this -- they dedup SEMANTICALLY (by the
+        # extracted forecast), so differently-worded reports of one call still
+        # merge, and a shared boilerplate prefix must NOT drop a distinct call.
+        if feed.is_search and not feed.forecast_ledger:
             sig = _content_sig(tw.get("text", ""))
             if sig and (sig in seen_sigs or sig in batch_sigs):
                 continue                              # verbatim repost of a story
-            if sig:                                   # we've already analyzed
+            if sig:
                 batch_sigs.add(sig)
         out.append(tw)
     # newest first by numeric id (snowflake ids sort chronologically)
@@ -554,8 +631,231 @@ def process(candidates, client, feed, allow_vision=True):
     return records, total_in, total_out
 
 
+# --- forecast-ledger pipeline (kendrick_sc) -------------------------------
+def _norm_timeframe(tf):
+    """Normalize a forecast horizon into a clustering token: a 4-digit 20xx year
+    when present, else a short lowercased token, else 'unspecified'."""
+    s = (tf or "").strip().lower()
+    if not s:
+        return "unspecified"
+    m = re.search(r"\b(20[2-9]\d)\b", s)
+    return m.group(1) if m else s[:16]
+
+
+def _authority(tw):
+    """Sort key for picking the most authoritative source in a cluster: verified
+    first, then followers, then longer (more detailed) text."""
+    a = tw.get("author") or {}
+    return (1 if (a.get("isBlueVerified") or a.get("isVerified")) else 0,
+            a.get("followers") or 0, len(tw.get("text") or ""))
+
+
+def _source_of(tw, n):
+    a = tw.get("author") or {}
+    return {
+        "author": n.get("author") or a.get("userName"),
+        "url": tw.get("url") or f"https://x.com/{n.get('author')}/status/{n['id']}",
+        "followers": a.get("followers") or 0,
+        "verified": bool(a.get("isBlueVerified") or a.get("isVerified")),
+        "tweet_id": n["id"],
+        "created_at": n.get("created_at"),
+    }
+
+
+def triage_forecasts(client, text):
+    """Haiku gate: does this post relay an SC/Kendrick crypto forecast, and which?
+    Returns (result_dict|None, in_tok, out_tok)."""
+    try:
+        resp = client.messages.create(
+            model=TRIAGE_MODEL, max_tokens=600,
+            system=[{"type": "text", "text": TRIAGE_BODY}],
+            output_config={"format": {"type": "json_schema",
+                                      "schema": TRIAGE_SCHEMA}},
+            messages=[{"role": "user", "content": text}],
+        )
+    except anthropic.APIError as e:
+        print(f"  [triage error] {type(e).__name__}: {e}", file=sys.stderr)
+        return None, 0, 0
+    return _parse_json(resp.content), _usage_in(resp), resp.usage.output_tokens
+
+
+def _merge_sources(rec, sources, targets):
+    """Fold new sources/targets into a forecast record. source_count is a running
+    total (each tweet is triaged once ever -> no double count); the stored sources
+    list is capped to the most authoritative SOURCES_CAP. best_source = the single
+    highest-authority source seen."""
+    have = {s["tweet_id"] for s in rec["sources"]}
+    for s in sources:
+        if s["tweet_id"] in have:
+            continue
+        have.add(s["tweet_id"])
+        rec["sources"].append(s)
+        rec["source_count"] = rec.get("source_count", 0) + 1
+        ca = s.get("created_at") or ""
+        if ca and ca > (rec.get("last_seen") or ""):
+            rec["last_seen"] = ca
+        if ca and ca < (rec.get("first_seen") or ca):
+            rec["first_seen"] = ca
+    for t in targets:
+        if t and t not in rec["targets"]:
+            rec["targets"].append(t)
+    rec["sources"].sort(key=lambda s: (bool(s.get("verified")),
+                                       s.get("followers") or 0), reverse=True)
+    if rec["sources"]:
+        b = rec["sources"][0]
+        rec["best_source"] = {"author": b["author"], "url": b["url"]}
+    rec["sources"] = rec["sources"][:SOURCES_CAP]
+
+
+def _new_forecast(key, cluster, sources, rep, analysis, chart):
+    """Build a fresh forecast record from a cluster + the Sonnet read of its
+    representative post (analysis/chart may be None if the LLM call failed)."""
+    cas = [s["created_at"] for s in sources if s.get("created_at")]
+    analysis = analysis or {}
+    rec = {
+        "key": key, "asset": cluster["asset"], "direction": cluster["direction"],
+        "timeframe": cluster["timeframe"], "targets": [],
+        "first_seen": min(cas) if cas else rep.get("created_at"),
+        "last_seen": max(cas) if cas else rep.get("created_at"),
+        "source_count": 0, "sources": [], "best_source": None,
+        "rep_author": rep.get("author"),
+        "analyzed_at": datetime.now(timezone.utc).isoformat(),
+        "media": rep.get("media") or [],
+        "has_chart": False, "chart_trend": None, "chart_summary": None,
+        "overall_sentiment": analysis.get("overall_sentiment"),
+        "market_view": analysis.get("market_view"),
+        "summary": analysis.get("summary"),
+        "key_levels": analysis.get("key_levels") or [],
+        "top_themes": analysis.get("top_themes") or [],
+    }
+    if chart:
+        rec["has_chart"] = True
+        rec["chart_trend"] = chart.get("chart_trend")
+        rec["chart_summary"] = chart.get("chart_summary")
+    _merge_sources(rec, sources, cluster["targets"])
+    return rec
+
+
+def _load_forecast_ledger(path):
+    """Forecast ledger file is a dict {seen_ids, forecasts} (NOT a bare list like
+    the post-feed ledgers). Missing/corrupt -> empty skeleton."""
+    data = load_json(path, {})
+    if not isinstance(data, dict):
+        data = {}
+    data.setdefault("seen_ids", [])
+    data.setdefault("forecasts", [])
+    return data
+
+
+def run_forecast_feed(feed, client, args):
+    """kendrick_sc pipeline: Haiku triage -> cluster by (asset, timeframe) ->
+    Sonnet read of one representative per NEW forecast; echoes just add a source.
+    One ledger row per forecast (vs one per post)."""
+    print(f"\n=== {feed.display_name} (forecast ledger; search) ===")
+    ledger = _load_forecast_ledger(feed.summaries_file)
+    seen = set(map(str, ledger["seen_ids"]))
+    forecasts = {f["key"]: f for f in ledger["forecasts"] if f.get("key")}
+
+    force_ids = set(args.force or [])
+    raw, calls = fetch_search(feed, set() if force_ids else seen)
+    print(f"Fetched {len(raw)} raw posts in {calls} GetXAPI call(s) "
+          f"(${calls * GETXAPI_COST_PER_CALL:.4f})")
+
+    if force_ids:
+        by_id = {str(t.get("id")): t for t in raw}
+        candidates = [by_id[i] for i in force_ids if i in by_id]
+    else:
+        candidates = select_candidates(raw, seen, feed)
+        if args.limit is not None:
+            candidates = candidates[:args.limit]
+    if not candidates:
+        print("No new posts to process.")
+        return
+
+    # 1) Haiku triage every new post; record ALL as seen (don't re-triage).
+    triaged, tri_in, tri_out = [], 0, 0
+    for tw in candidates:
+        n = _normalize_getxapi(tw)
+        seen.add(n["id"])
+        res, i_t, o_t = triage_forecasts(client, n.get("text", ""))
+        tri_in += i_t
+        tri_out += o_t
+        if res and res.get("relevant") and res.get("forecasts"):
+            triaged.append((tw, n, res["forecasts"]))
+    print(f"Triaged {len(candidates)} (Haiku); {len(triaged)} carry a forecast")
+
+    # 2) cluster by (asset, timeframe)
+    clusters = {}
+    for tw, n, fcs in triaged:
+        for fc in fcs:
+            asset = (fc.get("asset") or "").upper().strip()
+            if not asset:
+                continue
+            tf = _norm_timeframe(fc.get("timeframe"))
+            key = f"{asset}|{tf}"
+            c = clusters.setdefault(key, {"asset": asset,
+                                          "direction": fc.get("direction"),
+                                          "timeframe": tf, "targets": [],
+                                          "tweets": []})
+            t = (fc.get("target") or "").strip()
+            if t and t not in c["targets"]:
+                c["targets"].append(t)
+            c["tweets"].append((tw, n))
+
+    # 3) new forecast -> Sonnet a representative; known forecast -> add sources
+    ana_in = ana_out = 0
+    new_keys, upd_keys = [], []
+    for key, c in clusters.items():
+        sources = [_source_of(tw, n) for tw, n in c["tweets"]]
+        if key in forecasts:
+            _merge_sources(forecasts[key], sources, c["targets"])
+            upd_keys.append(key)
+            continue
+        rep_tw, rep = max(c["tweets"], key=lambda p: _authority(p[0]))
+        date = (rep.get("created_at") or "")[:10]
+        analysis, a_i, a_o = analyze_text(client, feed, date,
+                                          rep.get("text", ""),
+                                          rep.get("author") or "")
+        ana_in += a_i
+        ana_out += a_o
+        chart, media = None, rep.get("media") or []
+        if media and not args.no_vision:
+            chart, ci, co = analyze_chart(client, feed, media, date,
+                                          rep.get("text", ""),
+                                          rep.get("author") or "")
+            ana_in += ci
+            ana_out += co
+        forecasts[key] = _new_forecast(key, c, sources, rep, analysis, chart)
+        new_keys.append(key)
+        print(f"  NEW {key}: {forecasts[key]['source_count']} src "
+              f"-> {forecasts[key].get('overall_sentiment')}")
+    for key in upd_keys:
+        print(f"  +src {key}: now {forecasts[key]['source_count']}")
+
+    hcost = tri_in / 1e6 * HAIKU_INPUT_PER_1M + tri_out / 1e6 * HAIKU_OUTPUT_PER_1M
+    scost = ana_in / 1e6 * SONNET_INPUT_PER_1M + ana_out / 1e6 * SONNET_OUTPUT_PER_1M
+    print(f"Triage Haiku in={tri_in} out={tri_out} (${hcost:.4f}); "
+          f"Analysis Sonnet in={ana_in} out={ana_out} (${scost:.4f}); "
+          f"{len(new_keys)} new, {len(upd_keys)} updated")
+
+    ordered = sorted(forecasts.values(),
+                     key=lambda f: f.get("last_seen") or "", reverse=True)
+    if args.dry_run:
+        print("[dry-run] not writing; ledger preview (newest first):")
+        print(json.dumps(ordered, indent=2, ensure_ascii=False)[:5000])
+        return
+    ledger["forecasts"] = ordered
+    ledger["seen_ids"] = sorted(
+        seen, key=lambda x: int(x) if x.isdigit() else 0)[-SEEN_IDS_CAP:]
+    os.makedirs(DATA_DIR, exist_ok=True)
+    write_json_atomic(feed.summaries_file, ledger)
+    print(f"Wrote {len(ledger['forecasts'])} forecasts -> {feed.summaries_file}")
+
+
 def run_feed(feed, client, args):
     """Process one feed end-to-end: fetch -> filter -> analyze -> write ledger."""
+    if feed.forecast_ledger:                 # kendrick_sc: forecast rows, not posts
+        return run_forecast_feed(feed, client, args)
     where = f"search: {feed.query}" if feed.is_search else f"@{feed.account}"
     print(f"\n=== {feed.display_name} ({where}) ===")
     summaries = load_json(feed.summaries_file, [])
