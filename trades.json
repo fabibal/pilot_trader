@@ -1,5 +1,34 @@
 [
   {
+    "account": "IncomeSharks",
+    "source_type": "influencer",
+    "portfolio": null,
+    "tweet_id": "2069577541296464118",
+    "timestamp": "2026-06-24T00:25:11+00:00",
+    "signal_type": "position",
+    "sell_kind": null,
+    "confidence": "low",
+    "actionable": true,
+    "tickers": [
+      "DXY"
+    ],
+    "asset_type": "stock",
+    "position_size_pct": null,
+    "entry_price": null,
+    "stop_loss": null,
+    "target": 102.0,
+    "trade_date": null,
+    "holding_thesis": "US dollar showing strength.",
+    "reasoning": "Account is observing current strength in the US Dollar Index but is not making a specific actionable buy/sell call or disclosing a position size.",
+    "tp1": 102.0,
+    "tp2": null,
+    "chart_trend": "bullish",
+    "chart_notes": "DXY breaking out of a descending wedge pattern with strong upside momentum toward the 102 resistance area.",
+    "has_chart": true,
+    "url": "https://x.com/IncomeSharks/status/2069577541296464118",
+    "text": "$DXY - US dollar showing a lot of strength here. https://t.co/JUfLH6SJIs"
+  },
+  {
     "account": "ralliesarena",
     "source_type": "portfolio",
     "portfolio": "chatgpt",
