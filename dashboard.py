@@ -668,20 +668,29 @@ _TD = {"color": C["text"], "fontFamily": MONO, "fontSize": "0.78rem",
        "borderBottom": f"1px solid {C['border']}"}
 
 
-def _table(headers, rows, empty="No data"):
-    """rows: list of cells; each cell is str or (text, color)."""
+def _table(headers, rows, empty="No data", hide_sm=None):
+    """rows: list of cells; each cell is str or (text, color).
+    hide_sm: optional iterable of column indices hidden on phones (<=760px) via
+    the .col-sm-hide CSS class, so wide tables fit a 390px screen."""
     if not rows:
         return html.Div(empty, style={"color": C["dim"], "fontSize": "0.8rem",
                                       "padding": "8px 2px"})
-    head = html.Thead(html.Tr([html.Th(h, style=_TH) for h in headers]))
+    hide_sm = set(hide_sm or ())
+
+    def cls(i):
+        return "col-sm-hide" if i in hide_sm else None
+
+    head = html.Thead(html.Tr([html.Th(h, style=_TH, className=cls(i))
+                               for i, h in enumerate(headers)]))
     body = []
     for r in rows:
         tds = []
-        for c in r:
+        for i, c in enumerate(r):
             if isinstance(c, tuple):
-                tds.append(html.Td(c[0], style={**_TD, "color": c[1]}))
+                tds.append(html.Td(c[0], style={**_TD, "color": c[1]},
+                                   className=cls(i)))
             else:
-                tds.append(html.Td(c, style=_TD))
+                tds.append(html.Td(c, style=_TD, className=cls(i)))
         body.append(html.Tr(tds))
     return html.Table([head, html.Tbody(body)],
                       style={"borderCollapse": "collapse", "width": "100%",
@@ -725,11 +734,15 @@ def position_detail_table(positions, portfolio):
         ))
     return _table(["Ticker", "Size %", "Trade Date", "Entry", "Current",
                    "Return %", "Days Held"], rows,
-                  empty=f"No open positions for {pf_label(portfolio)}")
+                  empty=f"No open positions for {pf_label(portfolio)}",
+                  hide_sm={1, 2, 6})   # phones: drop size%/trade-date/days-held
 
 
-def closed_trades_table(positions, limit=5):
-    closed = [p for p in positions if p.get("status") == "closed"]
+def closed_trades_table(positions, portfolio, limit=5):
+    """Recent closed trades for the SELECTED portfolio only (matches the pie +
+    position detail). The Portfolio column is dropped -- every row is `portfolio`."""
+    closed = [p for p in positions
+              if p.get("status") == "closed" and pf_of(p) == portfolio]
     closed.sort(key=lambda p: p.get("closed_at") or "", reverse=True)
     rows = []
     for p in closed[:limit]:
@@ -749,15 +762,15 @@ def closed_trades_table(positions, limit=5):
         ret = round((exit_px - entry) / entry * 100, 1) if (entry and exit_px) else None
         rows.append((
             (p["ticker"], C["blue"]),
-            pf_label(pf_of(p)),
             opened_disp or "—",
             close_disp or "—",
             _money(entry),
             _money(exit_px),
             (_fmt_pct(ret), _color(ret)),
         ))
-    return _table(["Ticker", "Portfolio", "Opened", "Closed", "Entry",
-                   "Exit", "Return %"], rows, empty="No closed trades yet")
+    return _table(["Ticker", "Opened", "Closed", "Entry", "Exit", "Return %"],
+                  rows, empty=f"No closed trades for {pf_label(portfolio)}",
+                  hide_sm={1, 2})   # phones: drop opened/closed dates
 
 
 # --- influencer (IncomeSharks) views ----------------------------------------
@@ -976,7 +989,8 @@ def influencer_positions_table(resolutions):
     rows.sort(key=lambda r: r[2], reverse=True)
     return _table(["Ticker", "Asset", "Trade Date", "Entry", "Current",
                    "Return %", "Stop", "Target", "Status"], rows,
-                  empty="No open influencer positions")
+                  empty="No open influencer positions",
+                  hide_sm={1, 2, 6, 7})   # phones: drop asset/date/stop/target
 
 
 def holdings_figure(positions, portfolio):
@@ -1024,7 +1038,11 @@ def holdings_figure(positions, portfolio):
             font=dict(family=MONO, color=C["text"], size=14)),
         paper_bgcolor=C["card"], plot_bgcolor=C["card"],
         font=dict(family=MONO, color=C["text"]),
-        legend=dict(font=dict(color=C["text"])),
+        # Fixed height + no legend so the pie's footprint is IDENTICAL for every
+        # portfolio (1 holding or 12): the slice labels (textinfo="label") already
+        # name each holding, and a variable-length legend was what shifted the
+        # layout / squished the row between card selections.
+        height=380, showlegend=False,
         margin=dict(l=20, r=20, t=50, b=20),
     )
     return fig
@@ -1041,8 +1059,13 @@ def _dark_chart(fig, title, h=360):
         title=dict(text=title, font=dict(family=MONO, color=C["text"], size=14)),
         paper_bgcolor=C["card"], plot_bgcolor=C["card"], height=h,
         font=dict(family=MONO, color=C["text"], size=11),
-        legend=dict(font=dict(color=C["text"]), title_text=""),
-        margin=dict(l=50, r=20, t=50, b=40),
+        # Legend horizontal, below the plot — never overlaps the chart area on
+        # narrow/mobile screens (plotly can't be CSS-media-queried); bottom
+        # margin grows to make room. _dark_chart is used only by the perf chart.
+        legend=dict(orientation="h", yanchor="top", y=-0.18,
+                    xanchor="left", x=0,
+                    font=dict(color=C["text"]), title_text=""),
+        margin=dict(l=50, r=20, t=50, b=72),
         xaxis=dict(gridcolor=C["border"], linecolor=C["border"]),
         yaxis=dict(gridcolor=C["border"], linecolor=C["border"], ticksuffix="%"),
     )
@@ -1228,7 +1251,9 @@ app.index_string = """<!DOCTYPE html>
            .tab-container to flex-direction:column on phones; without flex:0 0
            auto the tabs would shrink to fit instead of overflowing). */
         .tab-container { flex-wrap: nowrap !important; }
-        .tab-container .tab { flex: 0 0 auto !important; }
+        .tab-container .tab { flex: 0 0 auto !important;
+                              padding: 9px 12px !important; min-height: 40px !important;
+                              font-size: 0.78rem !important; }
         /* portfolio summary cards stack full-width on phones */
         #portfolio-summary > div { min-width: 100% !important;
                                    flex-basis: 100% !important;
@@ -1237,10 +1262,18 @@ app.index_string = """<!DOCTYPE html>
         .pie-row { flex-direction: column !important; }
         .pie-row > .pie-col { flex: 0 0 100% !important;
                               max-width: 100% !important; min-width: 0 !important; }
-        /* wide tables scroll horizontally instead of overflowing the page */
-        #closed-trades table, #position-detail table, #overview-leaderboard table,
-        #ibkr-positions table, #ibkr-pending table, #ibkr-history table,
-        #influencer-positions table { min-width: 560px; }
+        /* phones: hide low-priority columns (marked .col-sm-hide), tighten
+           cell padding, and stop headers wrapping ("TRADE DATE") so the key
+           columns (ticker/return/current) fit a 390px screen without h-scroll.
+           A table still too wide falls back to its wrapper's overflow-x:auto. */
+        .col-sm-hide { display: none !important; }
+        table th { white-space: nowrap !important; }
+        table td, table th { padding-left: 6px !important;
+                             padding-right: 6px !important; }
+        /* monospace status bar: smaller so segments don't dominate the screen */
+        #status-row-1, #status-row-2 { font-size: 0.62rem !important;
+                                       padding: 5px 8px !important;
+                                       line-height: 1.45 !important; }
       }
     </style>
   </head>
@@ -1406,7 +1439,8 @@ def ibkr_positions_table(positions):
             (_fmt_pct(pnl_pct), col),
         ])
     return _table(["Ticker", "Qty", "Avg Cost", "Current", "Mkt Value",
-                   "Unrealized P&L %"], rows, empty="No open positions.")
+                   "Unrealized P&L %"], rows, empty="No open positions.",
+                  hide_sm={1, 2, 4})   # phones: drop qty/avg-cost/mkt-value
 
 
 # Status -> color for the order tables (issues 5/9).
@@ -1433,7 +1467,8 @@ def ibkr_pending_table(orders):
             (o.get("ib_status") or "queued", C["yellow"]),
         ])
     return _table(["Placed", "Ticker", "Action", "Qty", "IB Status"], rows,
-                  empty="No working orders (none waiting for the open).")
+                  empty="No working orders (none waiting for the open).",
+                  hide_sm={0})   # phones: drop placed-timestamp
 
 
 def ibkr_history_table(orders, positions):
@@ -1469,7 +1504,8 @@ def ibkr_history_table(orders, positions):
         ])
     return _table(["Date", "Ticker", "Action", "Qty", "Fill Price",
                    "Current", "Return %", "Status"], rows,
-                  empty="No orders yet.")
+                  empty="No orders yet.",
+                  hide_sm={0, 3, 4})   # phones: drop date/qty/fill-price
 
 
 # --- redesign: data helpers -------------------------------------------------
@@ -1732,7 +1768,8 @@ def leaderboard_table(kpis):
             (k["top"] or "—", C["text"]),
         ])
     return _table(["Portfolio", "Return", "vs S&P", "# Open", "Top holding"],
-                  rows, empty="No open AI positions yet.")
+                  rows, empty="No open AI positions yet.",
+                  hide_sm={3})   # phones: drop # open
 
 
 # --- YouTube (Benjamin Cowen) analysis ------------------------------------
@@ -2535,7 +2572,8 @@ app.layout = html.Div(
                                   dcc.Graph(id="holdings-pie",
                                             config={"displayModeBar": False,
                                                     "responsive": True},
-                                            style={"width": "100%"}),
+                                            style={"width": "100%",
+                                                   "height": "380px"}),
                               ]),
                      html.Div(id="position-detail",
                               style={"flex": "1", "minWidth": "0",
@@ -2992,7 +3030,7 @@ def refresh(_n, portfolio):
     warm_prices({_yf_symbol(p["ticker"], p.get("asset_type", "stock"))
                  for p in positions} | {"SPY"})
     cards = portfolio_cards(positions, selected=portfolio)   # warm price cache
-    closed = closed_trades_table(positions)
+    closed = closed_trades_table(positions, portfolio)
     signals_header = f"{pf_label(portfolio)} — Signals"
 
     if not df.empty:
