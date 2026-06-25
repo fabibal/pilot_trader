@@ -55,6 +55,9 @@ from monitor import (load_env, load_json, notify_telegram,    # noqa: E402
 HOME = "/home/fbazsa/pilot_trader"
 DATA_DIR = os.path.join(HOME, "data")
 STRATEGIES_FILE = os.path.join(DATA_DIR, "reddit_strategies.json")
+# Per-run Anthropic spend ledger (one record/run: timestamp + tokens + USD) so
+# the dashboard can show Reddit mining cost separately from the tweet pipeline.
+COST_LOG_FILE = os.path.join(DATA_DIR, "reddit_cost_log.json")
 # Seen-id ledger (every analyzed post_id, strategy or not) so the LLM never
 # re-scores a post -- the Reddit analogue of monitor's .monitor_state.json.
 SEEN_FILE = os.path.join(HOME, ".seen_reddit_ids.json")
@@ -569,6 +572,17 @@ def main():
     os.makedirs(DATA_DIR, exist_ok=True)
     write_json_atomic(STRATEGIES_FILE, merged)
     write_json_atomic(SEEN_FILE, sorted(seen))
+
+    # Append this run's Anthropic spend to the cost ledger; the dashboard sums
+    # the current calendar month ("Reddit: $X.XX this month"). Only successful,
+    # non-dry-run batches reach here, so every record is a real billed run.
+    cost_log = load_json(COST_LOG_FILE, [])
+    if not isinstance(cost_log, list):
+        cost_log = []
+    cost_log.append({"timestamp": datetime.now(timezone.utc).isoformat(),
+                     "in_tok": in_tok, "out_tok": out_tok,
+                     "total_usd": round(cost, 6)})
+    write_json_atomic(COST_LOG_FILE, cost_log)
 
     # summary
     print(f"\nAnalyzed {analyzed} post(s); found {len(records)} strateg(ies) "

@@ -35,7 +35,7 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import yfinance as yf
-from dash import Dash, dash_table, dcc, html, Input, Output, State
+from dash import ALL, Dash, ctx, dash_table, dcc, html, Input, Output, State
 from dash.exceptions import PreventUpdate
 
 import resolver
@@ -101,6 +101,10 @@ CREDITS_LOW_USD = 1.00           # below this, show the balance in red
 
 # Anthropic spend telemetry written per run by monitor.log_cost().
 COST_LOG_FILE = "/home/fbazsa/pilot_trader/data/cost_log.json"
+# Reddit-miner Anthropic spend, written per run by scripts/reddit_miner.py
+# (one record/run: {timestamp, in_tok, out_tok, total_usd}). Separate ledger so
+# the Reddit cost is shown distinctly from the tweet-pipeline API costs.
+REDDIT_COST_LOG_FILE = "/home/fbazsa/pilot_trader/data/reddit_cost_log.json"
 
 
 def _load_env(path):
@@ -575,7 +579,10 @@ def _stat_line(label, value_span):
     ], style={"fontSize": "0.82rem", "marginTop": "3px"})
 
 
-def portfolio_cards(positions):
+def portfolio_cards(positions, selected=None):
+    """Clickable per-portfolio summary cards. The card whose key == `selected`
+    is highlighted (blue border); clicking a card drives the Holdings pie +
+    position detail below (see the `pf-card` pattern-matching callback)."""
     open_pos = [p for p in positions if p.get("status") == "open"]
     by_pf = {}
     for p in open_pos:
@@ -603,11 +610,18 @@ def portfolio_cards(positions):
         spy = spy_return_since(min(dates)) if dates else None
         label = pf_label(pf)
 
+        sel = (pf == selected)
         cards.append(html.Div(
+            id={"type": "pf-card", "index": pf},
+            n_clicks=0,
             style={
-                "background": C["card"], "border": f"1px solid {C['border']}",
+                "background": C["buy_bg"] if sel else C["card"],
+                "border": (f"1px solid {C['blue']}" if sel
+                           else f"1px solid {C['border']}"),
+                "boxShadow": f"0 0 0 1px {C['blue']}" if sel else "none",
                 "borderRadius": "8px", "padding": "14px 18px", "minWidth": "230px",
-                "flex": "1",
+                "flex": "1", "cursor": "pointer",
+                "transition": "border-color .15s, background .15s",
             },
             children=[
                 html.Div(label, style={
@@ -1018,7 +1032,7 @@ def holdings_figure(positions, portfolio):
 
 # Stable per-portfolio colors (+ S&P) shared by the timeseries and bar charts.
 PF_COLORS = {"Grok": "#58a6ff", "Claude": "#bc8cff", "DeepSeek": "#3fb950",
-             "ChatGPT": "#e3b341", "Unknown": "#8b949e", "S&P 500": "#f85149",
+             "ChatGPT": "#e3b341", "S&P 500": "#f85149",
              "My Paper": "#f0f6fc"}   # bright near-white: the paper mirror line
 
 
@@ -1065,6 +1079,8 @@ def _perf_rows(positions):
     for p in positions:
         status = p.get("status")
         if status not in ("open", "closed"):
+            continue
+        if pf_of(p) == "unknown":    # unattributed umbrella tweets: no chart line
             continue
         atype = p.get("asset_type", "stock")
         entry, _ = estimate_entry(p["ticker"], p.get("entry_price"),
@@ -1203,6 +1219,29 @@ app.index_string = """<!DOCTYPE html>
       ::-webkit-scrollbar { width: 10px; height: 10px; }
       ::-webkit-scrollbar-track { background: #0d1117; }
       ::-webkit-scrollbar-thumb { background: #30363d; border-radius: 5px; }
+      /* --- responsive / mobile ------------------------------------------ */
+      html, body { -webkit-text-size-adjust: 100%; }
+      @media (max-width: 760px) {
+        .root-pad { padding: 12px 12px !important; }
+        /* tab bars: keep a single horizontal row that overflows so the
+           wrapping div scrolls (mobile_breakpoint=0 stops Dash from switching
+           .tab-container to flex-direction:column on phones; without flex:0 0
+           auto the tabs would shrink to fit instead of overflowing). */
+        .tab-container { flex-wrap: nowrap !important; }
+        .tab-container .tab { flex: 0 0 auto !important; }
+        /* portfolio summary cards stack full-width on phones */
+        #portfolio-summary > div { min-width: 100% !important;
+                                   flex-basis: 100% !important;
+                                   max-width: 100% !important; }
+        /* Holdings: pie + detail stack vertically, pie spans full width */
+        .pie-row { flex-direction: column !important; }
+        .pie-row > .pie-col { flex: 0 0 100% !important;
+                              max-width: 100% !important; min-width: 0 !important; }
+        /* wide tables scroll horizontally instead of overflowing the page */
+        #closed-trades table, #position-detail table, #overview-leaderboard table,
+        #ibkr-positions table, #ibkr-pending table, #ibkr-history table,
+        #influencer-positions table { min-width: 560px; }
+      }
     </style>
   </head>
   <body>
@@ -1217,18 +1256,14 @@ _SECTION_H = {"color": C["text"], "fontFamily": MONO, "fontSize": "0.95rem",
               "marginTop": "28px"}
 _TAB_STYLE = {"backgroundColor": C["bg"], "color": C["dim"],
               "border": f"1px solid {C['border']}", "fontFamily": MONO,
-              "padding": "6px 14px"}
+              "padding": "11px 16px", "minHeight": "44px", "whiteSpace": "nowrap",
+              "display": "flex", "alignItems": "center", "justifyContent": "center"}
 _TAB_SELECTED = {"backgroundColor": C["card"], "color": C["text"],
                  "border": f"1px solid {C['border']}",
                  "borderTop": f"2px solid {C['blue']}", "fontFamily": MONO,
-                 "padding": "6px 14px"}
-
-
-def portfolio_tab_children(pfs):
-    """dcc.Tab list for the AI Holdings sub-tabs (shared by layout + refresh)."""
-    return [dcc.Tab(label=pf_label(pf),
-                    value=pf, style=_TAB_STYLE, selected_style=_TAB_SELECTED)
-            for pf in pfs]
+                 "padding": "11px 16px", "minHeight": "44px",
+                 "whiteSpace": "nowrap", "display": "flex",
+                 "alignItems": "center", "justifyContent": "center"}
 
 
 # --- IBKR paper portfolio (live from IB Gateway) ----------------------------
@@ -1534,6 +1569,22 @@ def _cost_sums():
     return d, m, t
 
 
+def _reddit_cost_month():
+    """Current-month Reddit-miner Anthropic spend (USD) from
+    data/reddit_cost_log.json. 0.0 if the ledger is missing/corrupt (the segment
+    just reads $0.00 until the next reddit_miner run writes a record)."""
+    try:
+        with open(REDDIT_COST_LOG_FILE) as f:
+            log = json.load(f)
+        if not isinstance(log, list):
+            log = []
+    except (json.JSONDecodeError, OSError):
+        log = []
+    month = datetime.now(timezone.utc).strftime("%Y-%m")
+    return sum((r.get("total_usd") or 0.0) for r in log
+               if (r.get("timestamp") or "")[:7] == month)
+
+
 def _next_cron_run(now=None):
     """Next monitor cron slot (returns a UTC datetime)."""
     now = now or datetime.now(timezone.utc)
@@ -1636,6 +1687,10 @@ def status_row_2():
         html.Span("GetXAPI: ", style={"color": C["dim"]}),
         html.Span(bal_txt, style={"color": bal_color, "fontWeight": "bold"}),
         _sep(),
+        html.Span("Reddit: ", style={"color": C["dim"]}),
+        html.Span(f"${_reddit_cost_month():.2f} this month",
+                  style={"color": C["text"]}),
+        _sep(),
         html.Span("API Costs: ", style={"color": C["dim"]}),
         html.Span(f"today ${d:,.2f} / mo ${m:,.2f} / total ${t:,.2f}",
                   style={"color": C["text"]}),
@@ -1660,38 +1715,6 @@ def _kpi_tile(label, value, value_color, sub=None):
         html.Div(sub or "", style={"color": C["dim"], "fontSize": "0.7rem",
                                    "marginTop": "1px", "minHeight": "0.9rem"}),
     ])
-
-
-def hero_strip(store, kpis, overall_spy):
-    """Always-visible KPI strip: paper account headline + each portfolio vs SPY
-    + S&P. The 'are we winning' answer at a glance."""
-    tiles = []
-    acct = (store or {}).get("account") or {}
-    nl = acct.get("net_liquidation")
-    today, total = acct.get("daily_pnl"), acct.get("total_pnl")
-    if (store or {}).get("offline"):
-        tiles.append(_kpi_tile("Paper Account", "offline", C["red"],
-                               "IB Gateway unreachable"))
-    else:
-        nl_txt = _money(nl) if nl else "—"
-        sub = []
-        if today is not None:
-            sub.append(f"today {today:+,.0f}")
-        if total is not None:
-            sub.append(f"total {total:+,.0f}")
-        tiles.append(_kpi_tile("Paper NetLiq", nl_txt,
-                               _color(total if total is not None else 0),
-                               " · ".join(sub) or None))
-    for k in kpis:
-        v = k["ret"]
-        sub = (f"vs S&P {k['delta']:+.1f}" if k["delta"] is not None else
-               (f"S&P {_fmt_pct(k['spy'])}" if k["spy"] is not None else None))
-        tiles.append(_kpi_tile(k["label"], _fmt_pct(v), _color(v), sub))
-    tiles.append(_kpi_tile("S&P 500", _fmt_pct(overall_spy), _color(overall_spy),
-                           f"vs year start ({datetime.now(timezone.utc).year})"))
-    return html.Div(tiles, style={
-        "display": "flex", "flexWrap": "wrap", "gap": "10px",
-        "marginTop": "10px"})
 
 
 def leaderboard_table(kpis):
@@ -2259,10 +2282,12 @@ def container_stat(name=DASH_CONTAINER):
 
 
 app.layout = html.Div(
+    className="root-pad",
     style={"backgroundColor": C["bg"], "color": C["text"], "fontFamily": MONO,
            "minHeight": "100vh", "padding": "20px 26px"},
     children=[
         dcc.Store(id="ibkr-store"),
+        dcc.Store(id="selected-pf", data=_portfolios[0]),
         dcc.Interval(id="interval", interval=REFRESH_MS, n_intervals=0),
 
         html.H2("Pilot Trader", style={"margin": 0, "color": C["text"],
@@ -2286,58 +2311,88 @@ app.layout = html.Div(
                 "lineHeight": "1.5"}),
         ]),
 
-        # Hero KPI strip (across every tab).
-        html.Div(id="hero-strip"),
         html.Div(id="summary", style={"color": C["dim"], "fontSize": "0.76rem",
                                       "marginTop": "8px"}),
 
-        # Top-level tabs: Overview (landing) · My Paper Account · AI Portfolios ·
-        # Influencers.
-        dcc.Tabs(id="main-tabs", value="overview", style={"marginTop": "12px"},
-                 children=[
-                     dcc.Tab(label="Overview", value="overview",
-                             style=_TAB_STYLE, selected_style=_TAB_SELECTED),
-                     dcc.Tab(label="My Paper Account", value="ibkr",
-                             style=_TAB_STYLE, selected_style=_TAB_SELECTED),
-                     dcc.Tab(label="AI Portfolios", value="ai",
-                             style=_TAB_STYLE, selected_style=_TAB_SELECTED),
-                     dcc.Tab(label="Influencers", value="influencers",
-                             style=_TAB_STYLE, selected_style=_TAB_SELECTED),
-                     dcc.Tab(label="Reddit stratégiák", value="reddit",
-                             style=_TAB_STYLE, selected_style=_TAB_SELECTED),
-                 ]),
+        # Top-level tabs: Overview (landing; includes the paper account) · AI
+        # Portfolios · Influencers · Reddit. Wrapped in a horizontally
+        # scrollable container so the bar never wraps/breaks on mobile.
+        html.Div(style={"overflowX": "auto", "WebkitOverflowScrolling": "touch",
+                        "marginTop": "12px"},
+                 children=dcc.Tabs(
+                     id="main-tabs", value="overview", mobile_breakpoint=0,
+                     style={"display": "flex", "flexWrap": "nowrap"},
+                     children=[
+                         dcc.Tab(label="Overview", value="overview",
+                                 style=_TAB_STYLE, selected_style=_TAB_SELECTED),
+                         dcc.Tab(label="AI Portfolios", value="ai",
+                                 style=_TAB_STYLE, selected_style=_TAB_SELECTED),
+                         dcc.Tab(label="Influencers", value="influencers",
+                                 style=_TAB_STYLE, selected_style=_TAB_SELECTED),
+                         dcc.Tab(label="Reddit stratégiák", value="reddit",
+                                 style=_TAB_STYLE, selected_style=_TAB_SELECTED),
+                     ])),
 
-        # Overview tab (landing): unified normalized chart + leaderboard.
+        # Overview tab (landing): normalized chart + leaderboard + the merged
+        # My Paper Account view (live IB Gateway reads; ledger-backed tables
+        # still render when the gateway is offline).
         html.Div(id="overview-section", children=[
             html.Div("Normalized Performance — portfolios vs paper mirror vs S&P",
                      style=_SECTION_H),
-            dcc.Graph(id="overview-chart", config={"displayModeBar": False}),
+            dcc.Graph(id="overview-chart",
+                      config={"displayModeBar": False, "responsive": True},
+                      style={"width": "100%"}),
             html.Div("Leaderboard", style=_SECTION_H),
-            html.Div(id="overview-leaderboard", style={"marginTop": "4px"}),
+            html.Div(id="overview-leaderboard",
+                     style={"marginTop": "4px", "overflowX": "auto"}),
+
+            # --- My Paper Account (merged from the former tab) --------------
+            html.Div(id="ibkr-halt"),
+            html.Div("My Paper Account — Account Summary", style=_SECTION_H),
+            html.Div(id="ibkr-account"),
+            html.Div("Exposure", style=_SECTION_H),
+            html.Div(id="ibkr-exposure", style={"marginTop": "4px"}),
+            html.Div("Open Positions", style=_SECTION_H),
+            html.Div(id="ibkr-positions",
+                     style={"marginTop": "4px", "overflowX": "auto"}),
+            html.Div("Pending / Working Orders", style=_SECTION_H),
+            html.Div(id="ibkr-pending",
+                     style={"marginTop": "4px", "overflowX": "auto"}),
+            html.Div("Order Outcomes", style=_SECTION_H),
+            html.Div(id="ibkr-funnel", style={"marginTop": "4px"}),
+            html.Div("Order History (last 20)", style=_SECTION_H),
+            html.Div(id="ibkr-history",
+                     style={"marginTop": "4px", "overflowX": "auto"}),
         ]),
 
         html.Div(id="ai-section", style={"display": "none"}, children=[
 
-        html.Div("Portfolio Summary", style=_SECTION_H),
+        # Click a card to select a portfolio (one selected at a time); the
+        # Holdings pie + position detail below reflect the selection.
+        html.Div("Portfolio Summary  ", style=_SECTION_H),
+        html.Div("click a portfolio card to view its holdings",
+                 style={"color": C["dim"], "fontSize": "0.72rem",
+                        "marginTop": "4px"}),
         html.Div(id="portfolio-summary",
                  style={"display": "flex", "flexWrap": "wrap", "gap": "14px",
                         "marginTop": "12px"}),
 
         # (Performance chart lives on the Overview tab — not duplicated here.)
+        # Holdings of the SELECTED card. Pie (40%, fixed) + position detail
+        # table (flexible) side by side; stacks vertically on mobile (.pie-row).
         html.Div("Holdings", style=_SECTION_H),
-        dcc.Tabs(id="portfolio-tabs", value=_portfolios[0],
-                 children=portfolio_tab_children(_portfolios)),
-        # Pie (40%, fixed) + position detail table (flexible) side by side in one
-        # row. No flex-wrap, so they never stack vertically; minWidth:0 lets the
-        # table shrink/overflow within its column instead of forcing a wrap.
-        html.Div(style={"display": "flex", "flexDirection": "row",
+        html.Div(className="pie-row",
+                 style={"display": "flex", "flexDirection": "row",
                         "alignItems": "flex-start", "gap": "20px",
-                        "marginTop": "6px"},
+                        "marginTop": "6px", "flexWrap": "wrap"},
                  children=[
-                     html.Div(style={"flex": "0 0 40%", "maxWidth": "40%"},
+                     html.Div(className="pie-col",
+                              style={"flex": "0 0 40%", "maxWidth": "40%",
+                                     "minWidth": "300px"},
                               children=[
                                   dcc.Graph(id="holdings-pie",
-                                            config={"displayModeBar": False},
+                                            config={"displayModeBar": False,
+                                                    "responsive": True},
                                             style={"width": "100%"}),
                               ]),
                      html.Div(id="position-detail",
@@ -2346,7 +2401,8 @@ app.layout = html.Div(
                  ]),
 
         html.Div("Recent Closed Trades", style=_SECTION_H),
-        html.Div(id="closed-trades", style={"marginTop": "4px"}),
+        html.Div(id="closed-trades", style={"marginTop": "4px",
+                                            "overflowX": "auto"}),
 
         html.Div("All Signals", id="signals-header", style=_SECTION_H),
         html.Div([
@@ -2410,21 +2466,26 @@ app.layout = html.Div(
         html.Div(id="influencer-section", style={"display": "none"}, children=[
             # One sub-tab per influencer handle (IncomeSharks / CelalKucuker /
             # traderstewie): trade-call view with winrate + positions + signals.
-            dcc.Tabs(id="influencer-subtabs", value="IncomeSharks",
-                     children=[
-                         dcc.Tab(label="IncomeSharks", value="IncomeSharks",
-                                 style=_TAB_STYLE, selected_style=_TAB_SELECTED),
-                         dcc.Tab(label="CelalKucuker", value="CelalKucuker",
-                                 style=_TAB_STYLE, selected_style=_TAB_SELECTED),
-                         dcc.Tab(label="traderstewie", value="traderstewie",
-                                 style=_TAB_STYLE, selected_style=_TAB_SELECTED),
-                         dcc.Tab(label="Ben Cowen", value="BenCowen",
-                                 style=_TAB_STYLE, selected_style=_TAB_SELECTED),
-                         dcc.Tab(label="Ki Young Ju", value="KiYoungJu",
-                                 style=_TAB_STYLE, selected_style=_TAB_SELECTED),
-                         dcc.Tab(label="Joao Wedson", value="JoaoWedson",
-                                 style=_TAB_STYLE, selected_style=_TAB_SELECTED),
-                     ]),
+            html.Div(style={"overflowX": "auto",
+                            "WebkitOverflowScrolling": "touch"},
+                     children=dcc.Tabs(
+                         id="influencer-subtabs", value="IncomeSharks",
+                         mobile_breakpoint=0,
+                         style={"display": "flex", "flexWrap": "nowrap"},
+                         children=[
+                             dcc.Tab(label="IncomeSharks", value="IncomeSharks",
+                                     style=_TAB_STYLE, selected_style=_TAB_SELECTED),
+                             dcc.Tab(label="CelalKucuker", value="CelalKucuker",
+                                     style=_TAB_STYLE, selected_style=_TAB_SELECTED),
+                             dcc.Tab(label="traderstewie", value="traderstewie",
+                                     style=_TAB_STYLE, selected_style=_TAB_SELECTED),
+                             dcc.Tab(label="Ben Cowen", value="BenCowen",
+                                     style=_TAB_STYLE, selected_style=_TAB_SELECTED),
+                             dcc.Tab(label="Ki Young Ju", value="KiYoungJu",
+                                     style=_TAB_STYLE, selected_style=_TAB_SELECTED),
+                             dcc.Tab(label="Joao Wedson", value="JoaoWedson",
+                                     style=_TAB_STYLE, selected_style=_TAB_SELECTED),
+                         ])),
 
             # Per-influencer header card (handle · win-rate/holdings · open ·
             # best performer), shown for whichever sub-tab is selected.
@@ -2434,7 +2495,8 @@ app.layout = html.Div(
             html.Div(id="influencer-trade-view", children=[
             html.Div(id="influencer-pos-header", style=_SECTION_H),
             html.Div(id="influencer-winrate"),
-            html.Div(id="influencer-positions", style={"marginTop": "4px"}),
+            html.Div(id="influencer-positions", style={"marginTop": "4px",
+                                                       "overflowX": "auto"}),
 
             html.Div(id="influencer-sig-header", style=_SECTION_H),
             dash_table.DataTable(
@@ -2521,24 +2583,8 @@ app.layout = html.Div(
             ]),
         ]),
 
-        # --- My Paper Account tab -- hidden until selected -------------------
-        # Live reads from IB Gateway (127.0.0.1:4002) via the shared ibkr-store;
-        # degrades to "Gateway offline" (ledger-backed tables still render).
-        html.Div(id="ibkr-section", style={"display": "none"}, children=[
-            html.Div(id="ibkr-halt"),
-            html.Div("Account Summary", style=_SECTION_H),
-            html.Div(id="ibkr-account"),
-            html.Div("Exposure", style=_SECTION_H),
-            html.Div(id="ibkr-exposure", style={"marginTop": "4px"}),
-            html.Div("Open Positions", style=_SECTION_H),
-            html.Div(id="ibkr-positions", style={"marginTop": "4px"}),
-            html.Div("Pending / Working Orders", style=_SECTION_H),
-            html.Div(id="ibkr-pending", style={"marginTop": "4px"}),
-            html.Div("Order Outcomes", style=_SECTION_H),
-            html.Div(id="ibkr-funnel", style={"marginTop": "4px"}),
-            html.Div("Order History (last 20)", style=_SECTION_H),
-            html.Div(id="ibkr-history", style={"marginTop": "4px"}),
-        ]),
+        # (My Paper Account is no longer a separate tab — its components now
+        # render inside the Overview tab, fed by the same ibkr-store + ledger.)
 
         # --- Reddit strategies tab -- hidden until selected ------------------
         # Strategies mined by scripts/reddit_miner.py (data/reddit_strategies.json):
@@ -2585,15 +2631,14 @@ app.layout = html.Div(
     Output("overview-section", "style"),
     Output("ai-section", "style"),
     Output("influencer-section", "style"),
-    Output("ibkr-section", "style"),
     Output("reddit-section", "style"),
     Input("main-tabs", "value"),
 )
 def switch_main_tab(tab):
     show, hide = {"display": "block"}, {"display": "none"}
-    order = {"overview": 0, "ai": 1, "influencers": 2, "ibkr": 3, "reddit": 4}
+    order = {"overview": 0, "ai": 1, "influencers": 2, "reddit": 3}
     i = order.get(tab, 0)
-    return tuple(show if j == i else hide for j in range(5))
+    return tuple(show if j == i else hide for j in range(4))
 
 
 @app.callback(
@@ -2640,8 +2685,9 @@ def render_reddit(_n, min_conf, sub, tag):
 def refresh_ibkr(store, tab):
     # Renders from the SHARED ibkr-store (no own IB connection); skips rendering
     # work when the tab isn't visible. The order tables + exposure + funnel + halt
-    # are ledger/file-backed and render even when the gateway is offline.
-    if tab != "ibkr":
+    # are ledger/file-backed and render even when the gateway is offline. The
+    # paper account now lives on the Overview tab (merged from its own tab).
+    if tab != "overview":
         raise PreventUpdate
     orders = load_orders()
     halt = ibkr_halt_banner()
@@ -2664,9 +2710,9 @@ def refresh_ibkr(store, tab):
     Input("interval", "n_intervals"),
 )
 def update_ibkr_store(_n):
-    """ONE shared IB fetch per 60s on the singleton connection — feeds the hero
-    strip + status bar (always) and the My Paper Account tab. Records a daily
-    NetLiq point for the equity curve (item 2)."""
+    """ONE shared IB fetch per 60s on the singleton connection — feeds the
+    status bar (always) and the Overview tab's paper-account view. Records a
+    daily NetLiq point for the equity curve."""
     snap = ibkr_snapshot()
     if snap is None:
         return {"offline": True}
@@ -2676,23 +2722,6 @@ def update_ibkr_store(_n):
     except Exception:        # noqa: BLE001 - snapshotting must never break the UI
         pass
     return _json_safe({"offline": False, "account": acct, "positions": positions})
-
-
-@app.callback(
-    Output("hero-strip", "children"),
-    Input("interval", "n_intervals"),
-    Input("ibkr-store", "data"),
-)
-def refresh_topbar(_n, store):
-    positions = ai_positions(load_positions())
-    warm_prices({_yf_symbol(p["ticker"], p.get("asset_type", "stock"))
-                 for p in positions} | {"SPY"})
-    kpis, _ = portfolio_kpis(positions)
-    # S&P tile is YEAR-TO-DATE (since Jan 1 of the current year), labelled
-    # accordingly; per-portfolio 'vs S&P' deltas stay window-matched to each
-    # open date.
-    ytd_spy = spy_return_since(f"{datetime.now(timezone.utc).year}-01-01")
-    return hero_strip(store, kpis, ytd_spy)
 
 
 @app.callback(
@@ -2715,6 +2744,10 @@ def refresh_overview(_n, tab):
     if tab != "overview":
         raise PreventUpdate
     positions = ai_positions(load_positions())
+    # Warm the current-price cache for the leaderboard (the removed hero-strip
+    # callback used to do this on the shared interval).
+    warm_prices({_yf_symbol(p["ticker"], p.get("asset_type", "stock"))
+                 for p in positions} | {"SPY"})
     kpis, _ = portfolio_kpis(positions)
     return overview_figure(positions), leaderboard_table(kpis)
 
@@ -2756,23 +2789,20 @@ def switch_influencer_subtab(account):
 
 
 @app.callback(
-    Output("portfolio-tabs", "children"),
-    Output("portfolio-tabs", "value"),
-    Input("interval", "n_intervals"),
-    State("portfolio-tabs", "children"),
-    State("portfolio-tabs", "value"),
+    Output("selected-pf", "data"),
+    Input({"type": "pf-card", "index": ALL}, "n_clicks"),
+    prevent_initial_call=True,
 )
-def refresh_portfolio_tabs(_n, children, current):
-    """Rebuild the Holdings sub-tabs from positions.json so a new portfolio
-    (e.g. chatgpt) appears without a container restart. Compares against the
-    tabs THIS client is showing (not server state, which would go stale across
-    page loads) and no-ops while unchanged, so the selected tab isn't
-    disturbed."""
-    pfs = portfolios_in(ai_positions(load_positions()))
-    shown = [(c.get("props") or {}).get("value") for c in (children or [])]
-    if pfs == shown:
+def select_pf(_clicks):
+    """Set the active portfolio when a summary card is clicked. The cards are
+    re-rendered every 60s (refresh), which resets their n_clicks to 0 and fires
+    this callback with a 0/None value — those re-render events are ignored so
+    the current selection survives; only a real click (n_clicks >= 1) updates
+    it. ctx.triggered_id is the clicked card's pattern id -> its `index` = pf."""
+    trig = ctx.triggered
+    if not trig or not trig[0].get("value"):
         raise PreventUpdate
-    return portfolio_tab_children(pfs), (current if current in pfs else pfs[0])
+    return ctx.triggered_id["index"]
 
 
 @app.callback(
@@ -2782,15 +2812,20 @@ def refresh_portfolio_tabs(_n, children, current):
     Output("closed-trades", "children"),
     Output("signals-header", "children"),
     Input("interval", "n_intervals"),
-    Input("portfolio-tabs", "value"),
+    Input("selected-pf", "data"),
 )
 def refresh(_n, portfolio):
     df = load_trades()
     positions = ai_positions(load_positions())   # AI views exclude influencers
+    # Fall back to the first card if the stored selection no longer exists
+    # (e.g. a portfolio closed all its positions between refreshes).
+    pfs = portfolios_in(positions)
+    if portfolio not in pfs:
+        portfolio = pfs[0]
     # Batch live-price fetch for every symbol in play (one yf.download).
     warm_prices({_yf_symbol(p["ticker"], p.get("asset_type", "stock"))
                  for p in positions} | {"SPY"})
-    cards = portfolio_cards(positions)   # uses the now-warm price cache
+    cards = portfolio_cards(positions, selected=portfolio)   # warm price cache
     closed = closed_trades_table(positions)
     signals_header = f"{pf_label(portfolio)} — Signals"
 
@@ -2845,10 +2880,13 @@ def refresh(_n, portfolio):
     Output("holdings-pie", "figure"),
     Output("position-detail", "children"),
     Input("interval", "n_intervals"),
-    Input("portfolio-tabs", "value"),
+    Input("selected-pf", "data"),
 )
 def refresh_pie(_n, portfolio):
     positions = load_positions()
+    pfs = portfolios_in(ai_positions(positions))
+    if portfolio not in pfs:             # stale selection -> first card
+        portfolio = pfs[0]
     return (holdings_figure(positions, portfolio),
             position_detail_table(positions, portfolio))
 
