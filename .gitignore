@@ -10,6 +10,11 @@ data/
 *.log
 .monitor_state.json
 .seen_reddit_ids.json
+# Event log + reconciled positions: runtime state written by the pipeline,
+# regenerated from scratch by monitor.py -> reconcile.py (loaders fall back to
+# empty when absent), so not versioned.
+positions.json
+trades.json
 
 # Tweet snapshots (large, regenerable; can contain bulk scraped content)
 tweets_*.json
