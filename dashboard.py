@@ -1798,17 +1798,28 @@ def youtube_section(summaries, limit=5):
 # Hungarian prose, English sentiment enum. NEVER traded. Reuses the YouTube card
 # helpers (_yt_chip / _YT_SENTIMENT) since the visual language is identical.
 TW_SUMMARIES_FILE = os.path.join(DATA_DIR, "twitter_summaries.json")
+JOAO_SUMMARIES_FILE = os.path.join(DATA_DIR, "joao_summaries.json")
 
 
-def load_twitter_summaries():
-    """@ki_young_ju post analyses (written by twitter_digest.py). Missing or
+def _load_summaries(path):
+    """Post analyses written by twitter_digest.py for one feed. Missing or
     corrupt file -> [] (the section just shows 'no data')."""
     try:
-        with open(TW_SUMMARIES_FILE) as f:
+        with open(path) as f:
             data = json.load(f)
         return data if isinstance(data, list) else []
     except (OSError, json.JSONDecodeError):
         return []
+
+
+def load_twitter_summaries():
+    """@ki_young_ju post analyses."""
+    return _load_summaries(TW_SUMMARIES_FILE)
+
+
+def load_joao_summaries():
+    """@joao_wedson (Alphractal) post analyses."""
+    return _load_summaries(JOAO_SUMMARIES_FILE)
 
 
 def _tw_title(text):
@@ -1888,10 +1899,13 @@ def _tw_card(p):
     ])
 
 
-def twitter_section(summaries, limit=8):
-    """Render the most recent `limit` post analyses as cards (newest first)."""
+def twitter_section(summaries, limit=8, who="@ki_young_ju"):
+    """Render the most recent `limit` post analyses as cards (newest first).
+    Account-agnostic: the card helpers read fields off each record, so the same
+    renderer serves every twitter_digest.py feed; `who` only sets the empty
+    state."""
     if not summaries:
-        return [html.Div("No @ki_young_ju posts analyzed yet.",
+        return [html.Div(f"No {who} posts analyzed yet.",
                          style={"color": C["dim"], "fontSize": "0.8rem",
                                 "marginTop": "8px"})]
     ordered = sorted(summaries, key=lambda r: r.get("created_at") or "",
@@ -2408,6 +2422,8 @@ app.layout = html.Div(
                                  style=_TAB_STYLE, selected_style=_TAB_SELECTED),
                          dcc.Tab(label="Ki Young Ju", value="KiYoungJu",
                                  style=_TAB_STYLE, selected_style=_TAB_SELECTED),
+                         dcc.Tab(label="Joao Wedson", value="JoaoWedson",
+                                 style=_TAB_STYLE, selected_style=_TAB_SELECTED),
                      ]),
 
             # Per-influencer header card (handle · win-rate/holdings · open ·
@@ -2485,6 +2501,23 @@ app.layout = html.Div(
                                         "fontSize": "0.8rem"})],
                          style=_SECTION_H),
                 html.Div(id="ki-summaries", style={"marginTop": "4px"}),
+            ]),
+
+            # Joao Wedson view: X/Twitter post analysis cards (analysis only —
+            # Alphractal founder, crypto on-chain/quant; never traded/mirrored).
+            html.Div(id="joao-view", style={"display": "none"}, children=[
+                html.Div(["Twitter Analysis — Joao Wedson (Alphractal)",
+                          html.A("→ @joao_wedson",
+                                 href="https://x.com/joao_wedson",
+                                 target="_blank", rel="noopener noreferrer",
+                                 style={"color": C["blue"], "marginLeft": "14px",
+                                        "textTransform": "none",
+                                        "letterSpacing": "normal",
+                                        "textDecoration": "none",
+                                        "fontWeight": "normal",
+                                        "fontSize": "0.8rem"})],
+                         style=_SECTION_H),
+                html.Div(id="joao-summaries", style={"marginTop": "4px"}),
             ]),
         ]),
 
@@ -2704,6 +2737,7 @@ def _influencer_header(title, account):
     Output("influencer-trade-view", "style"),
     Output("youtube-view", "style"),
     Output("ki-view", "style"),
+    Output("joao-view", "style"),
     Output("influencer-pos-header", "children"),
     Output("influencer-sig-header", "children"),
     Input("influencer-subtabs", "value"),
@@ -2711,10 +2745,12 @@ def _influencer_header(title, account):
 def switch_influencer_subtab(account):
     show, hide = {"display": "block"}, {"display": "none"}
     if account == "BenCowen":           # YouTube analysis view, not a trade view
-        return hide, show, hide, "", ""
+        return hide, show, hide, hide, "", ""
     if account == "KiYoungJu":          # X analysis view, not a trade view
-        return hide, hide, show, "", ""
-    return (show, hide, hide,
+        return hide, hide, show, hide, "", ""
+    if account == "JoaoWedson":         # X analysis view, not a trade view
+        return hide, hide, hide, show, "", ""
+    return (show, hide, hide, hide,
             _influencer_header(f"{account} — Open Positions", account),
             _influencer_header(f"{account} — Signals", account))
 
@@ -2824,16 +2860,20 @@ def refresh_pie(_n, portfolio):
     Output("influencer-winrate", "children"),
     Output("youtube-summaries", "children"),
     Output("ki-summaries", "children"),
+    Output("joao-summaries", "children"),
     Input("interval", "n_intervals"),
     Input("influencer-subtabs", "value"),
 )
 def refresh_influencers(_n, account):
-    # Ben Cowen / Ki Young Ju are analysis-only views, not traders: no header
-    # card / positions / signals — just the summary cards.
+    # Ben Cowen / Ki Young Ju / Joao Wedson are analysis-only views, not traders:
+    # no header card / positions / signals — just the summary cards.
     if account == "BenCowen":
-        return "", [], None, None, youtube_section(load_youtube_summaries()), []
+        return "", [], None, None, youtube_section(load_youtube_summaries()), [], []
     if account == "KiYoungJu":
-        return "", [], None, None, [], twitter_section(load_twitter_summaries())
+        return "", [], None, None, [], twitter_section(load_twitter_summaries()), []
+    if account == "JoaoWedson":
+        return ("", [], None, None, [], [],
+                twitter_section(load_joao_summaries(), who="@joao_wedson"))
     positions = load_positions()
     warm_prices({_yf_symbol(p["ticker"], p.get("asset_type", "stock"))
                  for p in influencer_positions(positions)
@@ -2843,7 +2883,7 @@ def refresh_influencers(_n, account):
             influencer_signals_data(load_trades(), account=account),
             influencer_positions_table(resolutions),
             influencer_winrate_card(resolutions),
-            [], [])
+            [], [], [])
 
 
 # --- background cache warmer -------------------------------------------------

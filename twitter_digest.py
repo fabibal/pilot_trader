@@ -2,33 +2,39 @@
 """
 twitter_digest.py - recurring X/Twitter analysis digest (ANALYSIS ONLY).
 
-Currently configured for @ki_young_ju (Ki Young Ju, founder/CEO of CryptoQuant;
-data-driven Bitcoin on-chain / macro analyst). Mirrors youtube_monitor.py's
+Runs one or more analysis-only feeds. Each feed mirrors youtube_monitor.py's
 "scrape -> LLM -> json" shape, but for tweets instead of video:
 
   GetXAPI posts-only endpoint (no @-replies)        -> recent posts
-   -> filter: drop retweets, Korean-language posts, and contentless posts;
-      dedup by tweet id against the summaries ledger
+   -> filter: drop retweets, replies, configured skip-languages, and
+      contentless posts; dedup by tweet id against the feed's summaries ledger
    -> Claude Sonnet structured analysis (sentiment / market view / levels /
       themes / summary), written IN HUNGARIAN (sentiment enum stays English)
         + optional Sonnet VISION pass on chart image(s) -- same mechanism as
           monitor.py's IncomeSharks chart pass (capped at MAX_VISION_IMAGES) --
           whose read is merged into the record
-   -> data/twitter_summaries.json   (one record per tweet, newest-first)
+   -> the feed's summaries json   (one record per tweet, newest-first)
 
 The summaries file is ALSO the dedup ledger: a tweet_id already present is
-skipped, so reruns / the twice-weekly cron are idempotent (no reprocessing,
-no double LLM spend).
+skipped, so reruns / the daily cron are idempotent (no reprocessing, no double
+LLM spend).
 
-ANALYSIS ONLY: @ki_young_ju is NOT in accounts.ACCOUNTS, is never written to
-trades.json / positions.json, and is never mirrored to IBKR. Surfaced on the
+Feeds (see FEEDS):
+  - ki_young_ju (Ki Young Ju, CryptoQuant founder; BTC on-chain / macro) ->
+      data/twitter_summaries.json. Korean-language posts are skipped.
+  - joao_wedson (Joao Wedson, Alphractal founder; crypto on-chain / quant) ->
+      data/joao_summaries.json.
+
+ANALYSIS ONLY: neither account is in accounts.ACCOUNTS; neither is written to
+trades.json / positions.json; neither is mirrored to IBKR. Surfaced on the
 dashboard Influencers tab next to the Ben Cowen YouTube analysis.
 
-  python twitter_digest.py                 # process any new posts
-  python twitter_digest.py --limit 3       # cap new posts this run (testing)
-  python twitter_digest.py --force ID ...  # (re)process specific tweet ids
-  python twitter_digest.py --dry-run       # analyze + print, do NOT write file
-  python twitter_digest.py --no-vision     # skip the chart vision pass
+  python twitter_digest.py                      # process new posts, ALL feeds
+  python twitter_digest.py --feed joao_wedson   # only this feed
+  python twitter_digest.py --limit 3            # cap new posts/feed (testing)
+  python twitter_digest.py --feed ki_young_ju --force ID ...  # (re)process ids
+  python twitter_digest.py --dry-run            # analyze + print, do NOT write
+  python twitter_digest.py --no-vision          # skip the chart vision pass
 """
 import argparse
 import http.client
@@ -39,6 +45,7 @@ import time
 import traceback
 import urllib.error
 import urllib.parse
+from dataclasses import dataclass
 from datetime import datetime, timezone
 
 import anthropic
@@ -54,29 +61,21 @@ from monitor import (load_env, load_json, notify_telegram, TELEGRAM_ENVS,
                      MAX_VISION_IMAGES, SONNET_INPUT_PER_1M, SONNET_OUTPUT_PER_1M)
 
 # --- config ---------------------------------------------------------------
-ACCOUNT = "ki_young_ju"
-DISPLAY_NAME = "Ki Young Ju"
-
 HOME = "/home/fbazsa/pilot_trader"
 DATA_DIR = os.path.join(HOME, "data")
-SUMMARIES_FILE = os.path.join(DATA_DIR, "twitter_summaries.json")
 
 # Sonnet 4.6 (NOT the tweet-signal pipeline's Haiku): we want a careful read of
 # dense on-chain commentary, and the vision pass needs Sonnet anyway (Haiku can't
 # take images). Same model the Cowen YouTube digest uses.
 MODEL = "claude-sonnet-4-6"
 
-# Fetch buffer. At ~2.5 posts/week and a twice-weekly cron, ~1-3 new posts land
-# per run; 2 posts-only pages (~40) is ample headroom even after a missed run.
-MAX_FETCH = 40
-SKIP_LANGS = {"ko"}                   # requirement: skip Korean-language posts
-
 # --- LLM analysis ---------------------------------------------------------
-ANALYSIS_SYSTEM = (
-    "You analyze a single X/Twitter post by @ki_young_ju (Ki Young Ju), founder "
-    "and CEO of CryptoQuant. He is a data-driven Bitcoin on-chain / macro "
-    "analyst (realized cap, MVRV, holder cohorts, exchange & ETF flows, "
-    "MSTR/Strategy treasury dynamics, market cycles). Extract a concise, "
+# The system prompt is shared across feeds EXCEPT for a 1-2 sentence persona
+# prefix (who the author is + what they cover). build_*_system() prepends the
+# per-feed persona to this shared body so every feed gets identical field
+# definitions and the Hungarian-output contract.
+ANALYSIS_BODY = (
+    "Extract a concise, "
     "structured read of THIS post.\n"
     "Posts range from terse one-line chart captions to long-form essays; when a "
     "post is short, summarize only what it actually says -- never invent levels, "
@@ -117,12 +116,13 @@ ANALYSIS_SCHEMA = {
     "additionalProperties": False,
 }
 
-# Vision pass for attached chart images. His charts are on-chain/price analytics
-# (realized cap, cohorts, MVRV, flows) rather than annotated trade setups, so we
-# ask for a descriptive read, not entry/target/stop levels.
-VISION_SYSTEM = (
-    "You read an on-chain or price chart image attached to a tweet by Ki Young "
-    "Ju (CryptoQuant). Using the chart AND the tweet text, describe only what is "
+# Vision pass for attached chart images. Their charts are on-chain/price
+# analytics (realized cap, cohorts, MVRV, flows, liquidation levels) rather than
+# annotated trade setups, so we ask for a descriptive read, not entry/target/stop
+# levels.
+VISION_BODY = (
+    "Using "
+    "the chart AND the tweet text, describe only what is "
     "actually shown -- the metric/series plotted and the trend it implies. Do not "
     "invent values.\n"
     "Fields:\n"
@@ -144,6 +144,71 @@ VISION_SCHEMA = {
     "required": ["chart_trend", "chart_summary"],
     "additionalProperties": False,
 }
+
+
+# --- feed registry --------------------------------------------------------
+@dataclass(frozen=True)
+class Feed:
+    """One analysis-only X account. The summaries file is its dedup ledger."""
+    key: str
+    account: str
+    display_name: str
+    summaries_file: str
+    analysis_persona: str          # 1-2 sentence "who + what they cover" prefix
+    vision_persona: str            # 1 sentence chart-reader prefix
+    skip_langs: frozenset = frozenset()
+    # Fetch buffer. Daily cron + high-water dedup means a normal run stops early
+    # after a few new posts; this only bounds catch-up after a missed run.
+    max_fetch: int = 40
+
+    @property
+    def analysis_system(self):
+        return self.analysis_persona + " " + ANALYSIS_BODY
+
+    @property
+    def vision_system(self):
+        return self.vision_persona + " " + VISION_BODY
+
+
+FEEDS = {f.key: f for f in [
+    Feed(
+        key="ki_young_ju",
+        account="ki_young_ju",
+        display_name="Ki Young Ju",
+        summaries_file=os.path.join(DATA_DIR, "twitter_summaries.json"),
+        analysis_persona=(
+            "You analyze a single X/Twitter post by @ki_young_ju (Ki Young Ju), "
+            "founder and CEO of CryptoQuant. He is a data-driven Bitcoin on-chain "
+            "/ macro analyst (realized cap, MVRV, holder cohorts, exchange & ETF "
+            "flows, MSTR/Strategy treasury dynamics, market cycles)."),
+        vision_persona=(
+            "You read an on-chain or price chart image attached to a tweet by Ki "
+            "Young Ju (CryptoQuant)."),
+        skip_langs=frozenset({"ko"}),   # requirement: skip Korean-language posts
+        max_fetch=40,                    # ~2.5 posts/week
+    ),
+    Feed(
+        key="joao_wedson",
+        account="joao_wedson",
+        display_name="Joao Wedson",
+        summaries_file=os.path.join(DATA_DIR, "joao_summaries.json"),
+        analysis_persona=(
+            "You analyze a single X/Twitter post by @joao_wedson (Joao Wedson), "
+            "founder of Alphractal, a crypto on-chain & quantitative analytics "
+            "platform. He is a data-driven crypto on-chain / quant analyst (MVRV, "
+            "NUPL, liquidation levels, buy/sell pressure delta, open interest, "
+            "market cycles & fractals, on-chain flows and derivatives across "
+            "Bitcoin and major altcoins)."),
+        vision_persona=(
+            "You read an on-chain, quant, or price chart image attached to a "
+            "tweet by Joao Wedson (Alphractal)."),
+        # He posts in English; the occasional non-English item is a retweet/reply
+        # /bare promo link already dropped by the RT/reply/contentless filters, so
+        # no language is skipped (Sonnet outputs Hungarian regardless of input).
+        skip_langs=frozenset(),
+        max_fetch=60,                    # ~6 posts/day -> ~10 days of headroom
+    ),
+]}
 
 
 # --- GetXAPI fetch --------------------------------------------------------
@@ -178,15 +243,16 @@ def _getxapi_get_retry(url):
     raise last
 
 
-def fetch_posts(seen_ids):
-    """Cursor-paginate the GetXAPI posts-only endpoint for @ki_young_ju. Stops
-    early once a page contains a tweet we've already analyzed (high-water dedup)
-    or once MAX_FETCH raw tweets are collected. Returns (raw_tweets, n_calls).
-    Keeps the RAW GetXAPI payloads (not the normalized shape) because we need the
-    `lang` and retweet flags that _normalize_getxapi drops."""
+def fetch_posts(feed, seen_ids):
+    """Cursor-paginate the GetXAPI posts-only endpoint for the feed's account.
+    Stops early once a page contains a tweet we've already analyzed (high-water
+    dedup) or once feed.max_fetch raw tweets are collected. Returns
+    (raw_tweets, n_calls). Keeps the RAW GetXAPI payloads (not the normalized
+    shape) because we need the `lang` and retweet flags that _normalize_getxapi
+    drops."""
     collected, cursor, calls = [], None, 0
-    while len(collected) < MAX_FETCH:
-        params = {"userName": ACCOUNT}
+    while len(collected) < feed.max_fetch:
+        params = {"userName": feed.account}
         if cursor:
             params["cursor"] = cursor
         data = _getxapi_get_retry(
@@ -205,7 +271,7 @@ def fetch_posts(seen_ids):
         cursor = data.get("next_cursor")
         if not cursor:
             break
-    return collected[:MAX_FETCH], calls
+    return collected[:feed.max_fetch], calls
 
 
 def _is_retweet(tw):
@@ -227,9 +293,9 @@ def _has_analyzable_content(tw):
     return bool(words)
 
 
-def select_candidates(raw, seen_ids):
+def select_candidates(raw, seen_ids, feed):
     """Apply the requirement filters: own posts only, no replies, no retweets,
-    no Korean, has content, not already seen. Newest-first."""
+    no skip-language posts, has content, not already seen. Newest-first."""
     out, batch_seen = [], set()
     for tw in raw:
         tid = str(tw.get("id"))
@@ -239,14 +305,14 @@ def select_candidates(raw, seen_ids):
             continue
         batch_seen.add(tid)
         author = ((tw.get("author") or {}).get("userName") or "").lower()
-        if author and author != ACCOUNT.lower():
+        if author and author != feed.account.lower():
             continue                                  # foreign tweet (safety)
         if tw.get("isReply") is True:
             continue                                  # reply
         if _is_retweet(tw):
             continue                                  # retweet
-        if (tw.get("lang") or "") in SKIP_LANGS:
-            continue                                  # Korean
+        if (tw.get("lang") or "") in feed.skip_langs:
+            continue                                  # skipped language
         if not _has_analyzable_content(tw):
             continue                                  # contentless
         out.append(tw)
@@ -272,15 +338,16 @@ def _usage_in(resp):
             + (resp.usage.cache_creation_input_tokens or 0))
 
 
-def analyze_text(client, account, date, text):
+def analyze_text(client, feed, date, text):
     """Sonnet text analysis. Returns (analysis_dict|None, in_tok, out_tok)."""
-    user = f"Posted by @{account} ({DISPLAY_NAME})\nDate: {date}\nPost:\n{text}"
+    user = (f"Posted by @{feed.account} ({feed.display_name})\n"
+            f"Date: {date}\nPost:\n{text}")
     try:
         resp = client.messages.create(
             # Hungarian is token-heavier than English; his long-form essays need
             # headroom or the JSON truncates and fails to parse (600 was too low).
             model=MODEL, max_tokens=1000,
-            system=[{"type": "text", "text": ANALYSIS_SYSTEM}],
+            system=[{"type": "text", "text": feed.analysis_system}],
             output_config={"format": {"type": "json_schema",
                                       "schema": ANALYSIS_SCHEMA}},
             messages=[{"role": "user", "content": user}],
@@ -291,7 +358,7 @@ def analyze_text(client, account, date, text):
     return _parse_json(resp.content), _usage_in(resp), resp.usage.output_tokens
 
 
-def analyze_chart(client, media_urls, account, date, text):
+def analyze_chart(client, feed, media_urls, date, text):
     """Sonnet vision pass over the post's chart image(s) (capped at
     MAX_VISION_IMAGES, same as the IncomeSharks pass). Returns
     (chart_dict|None, in_tok, out_tok); None if no image could be fetched."""
@@ -304,12 +371,12 @@ def analyze_chart(client, media_urls, account, date, text):
         return None, 0, 0
     content = blocks + [{
         "type": "text",
-        "text": f"Posted by @{account} ({DISPLAY_NAME})\nDate: {date}\n"
+        "text": f"Posted by @{feed.account} ({feed.display_name})\nDate: {date}\n"
                 f"Tweet:\n{text}"}]
     try:
         resp = client.messages.create(
             model=MODEL, max_tokens=400,
-            system=[{"type": "text", "text": VISION_SYSTEM}],
+            system=[{"type": "text", "text": feed.vision_system}],
             output_config={"format": {"type": "json_schema",
                                       "schema": VISION_SCHEMA}},
             messages=[{"role": "user", "content": content}],
@@ -321,7 +388,7 @@ def analyze_chart(client, media_urls, account, date, text):
 
 
 # --- main -----------------------------------------------------------------
-def process(candidates, client, allow_vision=True):
+def process(candidates, client, feed, allow_vision=True):
     """Analyze each candidate tweet; return (records, in_tok, out_tok)."""
     records, total_in, total_out = [], 0, 0
     for tw in candidates:
@@ -331,7 +398,7 @@ def process(candidates, client, allow_vision=True):
         text = n.get("text", "")
         print(f"- {tid}  {text[:70].replace(chr(10), ' ')}")
 
-        analysis, in_t, out_t = analyze_text(client, ACCOUNT, date, text)
+        analysis, in_t, out_t = analyze_text(client, feed, date, text)
         total_in += in_t
         total_out += out_t
         if not analysis:
@@ -342,7 +409,7 @@ def process(candidates, client, allow_vision=True):
         rec = {
             "tweet_id": tid,
             "created_at": n.get("created_at"),
-            "url": tw.get("url") or f"https://x.com/{ACCOUNT}/status/{tid}",
+            "url": tw.get("url") or f"https://x.com/{feed.account}/status/{tid}",
             "text": text,
             "lang": tw.get("lang"),
             "analyzed_at": datetime.now(timezone.utc).isoformat(),
@@ -355,7 +422,7 @@ def process(candidates, client, allow_vision=True):
         }
 
         if media and allow_vision:
-            chart, ci, co = analyze_chart(client, media, ACCOUNT, date, text)
+            chart, ci, co = analyze_chart(client, feed, media, date, text)
             total_in += ci
             total_out += co
             if chart:
@@ -369,25 +436,10 @@ def process(candidates, client, allow_vision=True):
     return records, total_in, total_out
 
 
-def main():
-    ap = argparse.ArgumentParser(description="@ki_young_ju X analysis digest")
-    ap.add_argument("--limit", type=int, default=None,
-                    help="cap how many NEW posts to process this run")
-    ap.add_argument("--force", nargs="+", metavar="TWEET_ID",
-                    help="(re)process these specific tweet ids, ignoring dedup")
-    ap.add_argument("--dry-run", action="store_true",
-                    help="analyze and print, but do not write the summaries file")
-    ap.add_argument("--no-vision", action="store_true",
-                    help="skip the Sonnet chart-image vision pass")
-    args = ap.parse_args()
-
-    for p in TELEGRAM_ENVS:                       # loads ANTHROPIC + GETXAPI + alerts
-        load_env(p)
-    if not os.environ.get("ANTHROPIC_API_KEY") or not os.environ.get("GETXAPI_KEY"):
-        print("Missing ANTHROPIC_API_KEY or GETXAPI_KEY in .env", file=sys.stderr)
-        sys.exit(1)
-
-    summaries = load_json(SUMMARIES_FILE, [])
+def run_feed(feed, client, args):
+    """Process one feed end-to-end: fetch -> filter -> analyze -> write ledger."""
+    print(f"\n=== {feed.display_name} (@{feed.account}) ===")
+    summaries = load_json(feed.summaries_file, [])
     if not isinstance(summaries, list):
         summaries = []
     seen = {str(r.get("tweet_id")) for r in summaries}
@@ -396,7 +448,7 @@ def main():
     # stop-set) so a forced id OLDER than the high-water mark is still reached;
     # the normal run stops early once it hits an already-seen post.
     force_ids = set(args.force or [])
-    raw, calls = fetch_posts(set() if force_ids else seen)
+    raw, calls = fetch_posts(feed, set() if force_ids else seen)
     print(f"Fetched {len(raw)} raw posts in {calls} GetXAPI call(s) "
           f"(${calls * GETXAPI_COST_PER_CALL:.4f})")
 
@@ -408,7 +460,7 @@ def main():
             print(f"  [force] not found in fetch window: {sorted(missing)}",
                   file=sys.stderr)
     else:
-        candidates = select_candidates(raw, seen)
+        candidates = select_candidates(raw, seen, feed)
         if args.limit is not None:
             candidates = candidates[:args.limit]
 
@@ -418,19 +470,18 @@ def main():
 
     print(f"Processing {len(candidates)} post(s)"
           + (" [FORCE]" if force_ids else "") + ":")
-    client = anthropic.Anthropic()
-    records, in_tok, out_tok = process(candidates, client,
+    records, in_tok, out_tok = process(candidates, client, feed,
                                        allow_vision=not args.no_vision)
 
     cost = (in_tok / 1_000_000 * SONNET_INPUT_PER_1M
             + out_tok / 1_000_000 * SONNET_OUTPUT_PER_1M)
-    print(f"\nAnalyzed {len(records)} post(s); "
+    print(f"Analyzed {len(records)} post(s); "
           f"Sonnet tokens in={in_tok} out={out_tok} (${cost:.4f})")
 
     if not records:
         return
     if args.dry_run:
-        print("\n[dry-run] not writing; analysis below:")
+        print("[dry-run] not writing; analysis below:")
         print(json.dumps(records, indent=2, ensure_ascii=False))
         return
 
@@ -441,8 +492,59 @@ def main():
     merged = sorted(by_id.values(),
                     key=lambda r: r.get("created_at") or "", reverse=True)
     os.makedirs(DATA_DIR, exist_ok=True)
-    write_json_atomic(SUMMARIES_FILE, merged)
-    print(f"Wrote {len(merged)} summaries -> {SUMMARIES_FILE}")
+    write_json_atomic(feed.summaries_file, merged)
+    print(f"Wrote {len(merged)} summaries -> {feed.summaries_file}")
+
+
+def main():
+    ap = argparse.ArgumentParser(description="X analysis digest (analysis only)")
+    ap.add_argument("--feed", choices=sorted(FEEDS), default=None,
+                    help="process only this feed (default: all feeds)")
+    ap.add_argument("--limit", type=int, default=None,
+                    help="cap how many NEW posts to process per feed this run")
+    ap.add_argument("--force", nargs="+", metavar="TWEET_ID",
+                    help="(re)process these specific tweet ids, ignoring dedup; "
+                         "requires --feed")
+    ap.add_argument("--dry-run", action="store_true",
+                    help="analyze and print, but do not write the summaries file")
+    ap.add_argument("--no-vision", action="store_true",
+                    help="skip the Sonnet chart-image vision pass")
+    args = ap.parse_args()
+
+    if args.force and not args.feed:
+        ap.error("--force requires --feed (one feed at a time)")
+
+    for p in TELEGRAM_ENVS:                       # loads ANTHROPIC + GETXAPI + alerts
+        load_env(p)
+    if not os.environ.get("ANTHROPIC_API_KEY") or not os.environ.get("GETXAPI_KEY"):
+        print("Missing ANTHROPIC_API_KEY or GETXAPI_KEY in .env", file=sys.stderr)
+        sys.exit(1)
+
+    feeds = [FEEDS[args.feed]] if args.feed else list(FEEDS.values())
+    client = anthropic.Anthropic()
+    failed = []
+    for feed in feeds:
+        try:
+            run_feed(feed, client, args)
+        except (SystemExit, KeyboardInterrupt):
+            raise
+        except Exception as exc:
+            # Single-feed run: hard-fail (the top-level handler pages + exits).
+            # All-feeds run: one feed's transient outage (GetXAPI drop, network
+            # blip mid-LLM) must NOT starve the other feed for the whole 24h cron
+            # tick -- log + page for this feed, keep going, then exit non-zero so
+            # the failure still surfaces.
+            if len(feeds) == 1:
+                raise
+            traceback.print_exc()
+            failed.append(feed.key)
+            try:
+                notify_telegram(f"twitter_digest {feed.key} FAILED: {exc!r}")
+            except Exception:
+                pass
+    if failed:
+        print(f"feeds failed: {', '.join(failed)}", file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == "__main__":
