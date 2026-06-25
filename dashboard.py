@@ -1822,6 +1822,7 @@ def youtube_section(summaries, limit=5):
 # helpers (_yt_chip / _YT_SENTIMENT) since the visual language is identical.
 TW_SUMMARIES_FILE = os.path.join(DATA_DIR, "twitter_summaries.json")
 JOAO_SUMMARIES_FILE = os.path.join(DATA_DIR, "joao_summaries.json")
+KENDRICK_SUMMARIES_FILE = os.path.join(DATA_DIR, "kendrick_summaries.json")
 
 
 def _load_summaries(path):
@@ -1843,6 +1844,11 @@ def load_twitter_summaries():
 def load_joao_summaries():
     """@joao_wedson (Alphractal) post analyses."""
     return _load_summaries(JOAO_SUMMARIES_FILE)
+
+
+def load_kendrick_summaries():
+    """Geoff Kendrick / Standard Chartered topic-search analyses (multi-author)."""
+    return _load_summaries(KENDRICK_SUMMARIES_FILE)
 
 
 def _tw_title(text):
@@ -1873,6 +1879,7 @@ def _tw_card(p):
     sent = (p.get("overall_sentiment") or "neutral").lower()
     color = _YT_SENTIMENT.get(sent, C["dim"])
     date = (p.get("created_at") or "")[:10]
+    author = p.get("author")              # search feeds: the poster (varies)
     levels = p.get("key_levels") or []
     themes = p.get("top_themes") or []
     chart_color = _YT_SENTIMENT.get((p.get("chart_trend") or "neutral").lower(),
@@ -1892,7 +1899,13 @@ def _tw_card(p):
                 "padding": "1px 10px", "fontSize": "0.66rem", "fontWeight": "bold",
                 "whiteSpace": "nowrap", "letterSpacing": "0.04em"}),
         ]),
-        html.Div(f"{date}{'  ·  chart' if p.get('has_chart') else ''}",
+        html.Div(([html.A(f"@{author}", href=f"https://x.com/{author}",
+                          target="_blank", rel="noopener noreferrer",
+                          style={"color": C["blue"], "textDecoration": "none",
+                                 "fontWeight": "bold"}),
+                   html.Span("  ·  ")] if author else [])
+                 + [html.Span(f"{date}"
+                              f"{'  ·  chart' if p.get('has_chart') else ''}")],
                  style={"color": C["dim"], "fontSize": "0.68rem",
                         "marginTop": "3px"}),
         html.Div(p.get("summary") or "", style={"color": C["text"],
@@ -2485,6 +2498,8 @@ app.layout = html.Div(
                                      style=_TAB_STYLE, selected_style=_TAB_SELECTED),
                              dcc.Tab(label="Joao Wedson", value="JoaoWedson",
                                      style=_TAB_STYLE, selected_style=_TAB_SELECTED),
+                             dcc.Tab(label="Geoff Kendrick", value="GeoffKendrick",
+                                     style=_TAB_STYLE, selected_style=_TAB_SELECTED),
                          ])),
 
             # Per-influencer header card (handle · win-rate/holdings · open ·
@@ -2580,6 +2595,25 @@ app.layout = html.Div(
                                         "fontSize": "0.8rem"})],
                          style=_SECTION_H),
                 html.Div(id="joao-summaries", style={"marginTop": "4px"}),
+            ]),
+
+            # Geoff Kendrick view: X/Twitter TOPIC-SEARCH analysis cards (analysis
+            # only — every account's coverage of Standard Chartered's Geoff
+            # Kendrick crypto research; never traded/mirrored). Multi-author, so
+            # each card shows the poster and the header links to the X search.
+            html.Div(id="kendrick-view", style={"display": "none"}, children=[
+                html.Div(["Twitter Analysis — Geoff Kendrick / Standard Chartered",
+                          html.A("→ search",
+                                 href="https://x.com/search?q=%22Geoff%20Kendrick%22&f=live",
+                                 target="_blank", rel="noopener noreferrer",
+                                 style={"color": C["blue"], "marginLeft": "14px",
+                                        "textTransform": "none",
+                                        "letterSpacing": "normal",
+                                        "textDecoration": "none",
+                                        "fontWeight": "normal",
+                                        "fontSize": "0.8rem"})],
+                         style=_SECTION_H),
+                html.Div(id="kendrick-summaries", style={"marginTop": "4px"}),
             ]),
         ]),
 
@@ -2771,6 +2805,7 @@ def _influencer_header(title, account):
     Output("youtube-view", "style"),
     Output("ki-view", "style"),
     Output("joao-view", "style"),
+    Output("kendrick-view", "style"),
     Output("influencer-pos-header", "children"),
     Output("influencer-sig-header", "children"),
     Input("influencer-subtabs", "value"),
@@ -2778,12 +2813,14 @@ def _influencer_header(title, account):
 def switch_influencer_subtab(account):
     show, hide = {"display": "block"}, {"display": "none"}
     if account == "BenCowen":           # YouTube analysis view, not a trade view
-        return hide, show, hide, hide, "", ""
+        return hide, show, hide, hide, hide, "", ""
     if account == "KiYoungJu":          # X analysis view, not a trade view
-        return hide, hide, show, hide, "", ""
+        return hide, hide, show, hide, hide, "", ""
     if account == "JoaoWedson":         # X analysis view, not a trade view
-        return hide, hide, hide, show, "", ""
-    return (show, hide, hide, hide,
+        return hide, hide, hide, show, hide, "", ""
+    if account == "GeoffKendrick":      # X topic-search analysis view
+        return hide, hide, hide, hide, show, "", ""
+    return (show, hide, hide, hide, hide,
             _influencer_header(f"{account} — Open Positions", account),
             _influencer_header(f"{account} — Signals", account))
 
@@ -2899,19 +2936,24 @@ def refresh_pie(_n, portfolio):
     Output("youtube-summaries", "children"),
     Output("ki-summaries", "children"),
     Output("joao-summaries", "children"),
+    Output("kendrick-summaries", "children"),
     Input("interval", "n_intervals"),
     Input("influencer-subtabs", "value"),
 )
 def refresh_influencers(_n, account):
-    # Ben Cowen / Ki Young Ju / Joao Wedson are analysis-only views, not traders:
-    # no header card / positions / signals — just the summary cards.
+    # Ben Cowen / Ki Young Ju / Joao Wedson / Geoff Kendrick are analysis-only
+    # views, not traders: no header card / positions / signals — just the cards.
     if account == "BenCowen":
-        return "", [], None, None, youtube_section(load_youtube_summaries()), [], []
+        return "", [], None, None, youtube_section(load_youtube_summaries()), [], [], []
     if account == "KiYoungJu":
-        return "", [], None, None, [], twitter_section(load_twitter_summaries()), []
+        return "", [], None, None, [], twitter_section(load_twitter_summaries()), [], []
     if account == "JoaoWedson":
         return ("", [], None, None, [], [],
-                twitter_section(load_joao_summaries(), who="@joao_wedson"))
+                twitter_section(load_joao_summaries(), who="@joao_wedson"), [])
+    if account == "GeoffKendrick":
+        return ("", [], None, None, [], [], [],
+                twitter_section(load_kendrick_summaries(),
+                                who="Geoff Kendrick / Standard Chartered"))
     positions = load_positions()
     warm_prices({_yf_symbol(p["ticker"], p.get("asset_type", "stock"))
                  for p in influencer_positions(positions)
@@ -2921,7 +2963,7 @@ def refresh_influencers(_n, account):
             influencer_signals_data(load_trades(), account=account),
             influencer_positions_table(resolutions),
             influencer_winrate_card(resolutions),
-            [], [], [])
+            [], [], [], [])
 
 
 # --- background cache warmer -------------------------------------------------

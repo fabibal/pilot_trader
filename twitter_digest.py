@@ -19,11 +19,21 @@ The summaries file is ALSO the dedup ledger: a tweet_id already present is
 skipped, so reruns / the daily cron are idempotent (no reprocessing, no double
 LLM spend).
 
+A feed is either a USER timeline (one account's posts) or a TOPIC SEARCH (every
+account's posts matching a GetXAPI advanced-search query). Both share the same
+filter -> Sonnet -> ledger path; a search feed just fetches differently, keeps
+any author, and collapses near-identical reposts by content signature.
+
 Feeds (see FEEDS):
   - ki_young_ju (Ki Young Ju, CryptoQuant founder; BTC on-chain / macro) ->
       data/twitter_summaries.json. Korean-language posts are skipped.
   - joao_wedson (Joao Wedson, Alphractal founder; crypto on-chain / quant) ->
       data/joao_summaries.json.
+  - kendrick_sc (TOPIC SEARCH, not a user timeline): every account's coverage of
+      Geoff Kendrick / Standard Chartered crypto research -> data/
+      kendrick_summaries.json. No single account is dedicated to his calls, so we
+      search the topic instead. English only; verbatim reposts of the same
+      headline across accounts are collapsed by content signature.
 
 ANALYSIS ONLY: neither account is in accounts.ACCOUNTS; neither is written to
 trades.json / positions.json; neither is mirrored to IBKR. Surfaced on the
@@ -40,6 +50,7 @@ import argparse
 import http.client
 import json
 import os
+import re
 import sys
 import time
 import traceback
@@ -63,6 +74,11 @@ from monitor import (load_env, load_json, notify_telegram, TELEGRAM_ENVS,
 # --- config ---------------------------------------------------------------
 HOME = "/home/fbazsa/pilot_trader"
 DATA_DIR = os.path.join(HOME, "data")
+
+# GetXAPI advanced-search endpoint, used by TOPIC SEARCH feeds. monitor.py only
+# ever fetches user timelines, so (unlike GETXAPI_POSTS_PATH) this path is not
+# imported from there. $0.001/call, ~20 tweets/page.
+GETXAPI_SEARCH_PATH = "/twitter/tweet/advanced_search"
 
 # Sonnet 4.6 (NOT the tweet-signal pipeline's Haiku): we want a careful read of
 # dense on-chain commentary, and the vision pass needs Sonnet anyway (Haiku can't
@@ -157,9 +173,20 @@ class Feed:
     analysis_persona: str          # 1-2 sentence "who + what they cover" prefix
     vision_persona: str            # 1 sentence chart-reader prefix
     skip_langs: frozenset = frozenset()
+    only_langs: frozenset = frozenset()   # if non-empty, keep ONLY these langs
+    # TOPIC SEARCH feeds set `query` (a GetXAPI advanced-search query) instead of
+    # tracking one account. The feed then ingests EVERY account's posts matching
+    # the query and `account` is unused for fetching. `product` is the search
+    # ordering: 'Latest' (newest-first) is required for the high-water stop.
+    query: str = None
+    product: str = "Latest"
     # Fetch buffer. Daily cron + high-water dedup means a normal run stops early
     # after a few new posts; this only bounds catch-up after a missed run.
     max_fetch: int = 40
+
+    @property
+    def is_search(self):
+        return bool(self.query)
 
     @property
     def analysis_system(self):
@@ -207,6 +234,33 @@ FEEDS = {f.key: f for f in [
         # no language is skipped (Sonnet outputs Hungarian regardless of input).
         skip_langs=frozenset(),
         max_fetch=60,                    # ~6 posts/day -> ~10 days of headroom
+    ),
+    Feed(
+        key="kendrick_sc",
+        account="",                      # topic search: no single timeline
+        display_name="Geoff Kendrick / Standard Chartered",
+        summaries_file=os.path.join(DATA_DIR, "kendrick_summaries.json"),
+        # No account is dedicated to his calls; reputable outlets cover him only
+        # incidentally amid huge volume. So search the TOPIC and let every
+        # account's coverage flow in -- ~100% relevant, ~2-6 unique en posts/day.
+        query=('"Geoff Kendrick" OR ("Standard Chartered" '
+               '(bitcoin OR BTC OR crypto OR XRP OR ethereum OR ETH OR AAVE))'),
+        product="Latest",
+        only_langs=frozenset({"en"}),    # English coverage only (drops the many
+                                         # zh/es/vi/fr reposts of each headline)
+        analysis_persona=(
+            "You analyze a single X/Twitter post about Geoff Kendrick (Head of "
+            "Digital Assets Research at Standard Chartered) and/or Standard "
+            "Chartered's crypto research. Posts come from news outlets, analysts, "
+            "and traders relaying his price targets, forecasts, and research notes "
+            "on Bitcoin, XRP, AAVE, and other digital assets. Read the post as the "
+            "analyst commentary it relays: 'his' below refers to the directional "
+            "view expressed in the post (typically Standard Chartered's / "
+            "Kendrick's call)."),
+        vision_persona=(
+            "You read a price or on-chain chart image attached to a post relaying "
+            "Standard Chartered / Geoff Kendrick crypto research."),
+        max_fetch=60,                    # bursty; bounds catch-up after a gap
     ),
 ]}
 
@@ -274,6 +328,48 @@ def fetch_posts(feed, seen_ids):
     return collected[:feed.max_fetch], calls
 
 
+def fetch_search(feed, seen_ids):
+    """Cursor-paginate the GetXAPI advanced-search endpoint for the feed's query
+    (product=Latest -> newest-first). Same high-water stop as fetch_posts: stop
+    once a page contains an already-analyzed id, or once max_fetch raw tweets are
+    collected. Mirrors fetch_posts; only the path/params differ (q/product vs
+    userName). Returns (raw_tweets, n_calls)."""
+    collected, cursor, calls = [], None, 0
+    while len(collected) < feed.max_fetch:
+        params = {"q": feed.query, "product": feed.product}
+        if cursor:
+            params["cursor"] = cursor
+        data = _getxapi_get_retry(
+            f"{GETXAPI_BASE}{GETXAPI_SEARCH_PATH}?{urllib.parse.urlencode(params)}")
+        calls += 1
+        batch = data.get("tweets", [])
+        if not batch:
+            break
+        hit_seen = False
+        for tw in batch:
+            collected.append(tw)
+            if str(tw.get("id")) in seen_ids:
+                hit_seen = True
+        if hit_seen or not data.get("has_more"):
+            break
+        cursor = data.get("next_cursor")
+        if not cursor:
+            break
+    return collected[:feed.max_fetch], calls
+
+
+def _content_sig(text):
+    """Normalized content fingerprint for collapsing verbatim reposts: drop URLs,
+    @mentions, and an 'RT @x:' prefix, lowercase, strip non-alphanumerics, collapse
+    whitespace, take the first 120 chars. Two accounts relaying the same headline
+    map to the same signature, so the search feed analyzes each story once."""
+    t = re.sub(r"https?://\S+", "", text or "")
+    t = re.sub(r"^\s*RT @\w+:", "", t)
+    t = re.sub(r"@\w+", "", t)
+    t = re.sub(r"[^a-z0-9 ]", " ", t.lower())
+    return re.sub(r"\s+", " ", t).strip()[:120]
+
+
 def _is_retweet(tw):
     """True for a retweet (no original authored text)."""
     if tw.get("isRetweet") is True or tw.get("retweeted") is True:
@@ -293,10 +389,14 @@ def _has_analyzable_content(tw):
     return bool(words)
 
 
-def select_candidates(raw, seen_ids, feed):
-    """Apply the requirement filters: own posts only, no replies, no retweets,
-    no skip-language posts, has content, not already seen. Newest-first."""
-    out, batch_seen = [], set()
+def select_candidates(raw, seen_ids, feed, seen_sigs=frozenset()):
+    """Apply the requirement filters: no replies, no retweets, no skip-language
+    posts (or, if only_langs is set, ONLY those langs), has content, not already
+    seen. User feeds additionally require the post be the account's own; search
+    feeds keep any author but collapse near-identical reposts (the same headline
+    from many accounts) by content signature vs this batch AND the ledger.
+    Newest-first."""
+    out, batch_seen, batch_sigs = [], set(), set()
     for tw in raw:
         tid = str(tw.get("id"))
         # GetXAPI occasionally returns the same tweet twice in one feed; dedup
@@ -305,16 +405,27 @@ def select_candidates(raw, seen_ids, feed):
             continue
         batch_seen.add(tid)
         author = ((tw.get("author") or {}).get("userName") or "").lower()
-        if author and author != feed.account.lower():
+        # User feed: only the account's own posts (a thread can carry foreign
+        # replies). Search feed: any account may match the query.
+        if not feed.is_search and author and author != feed.account.lower():
             continue                                  # foreign tweet (safety)
         if tw.get("isReply") is True:
             continue                                  # reply
         if _is_retweet(tw):
             continue                                  # retweet
-        if (tw.get("lang") or "") in feed.skip_langs:
+        lang = tw.get("lang") or ""
+        if lang in feed.skip_langs:
             continue                                  # skipped language
+        if feed.only_langs and lang not in feed.only_langs:
+            continue                                  # not an allowed language
         if not _has_analyzable_content(tw):
             continue                                  # contentless
+        if feed.is_search:
+            sig = _content_sig(tw.get("text", ""))
+            if sig and (sig in seen_sigs or sig in batch_sigs):
+                continue                              # verbatim repost of a story
+            if sig:                                   # we've already analyzed
+                batch_sigs.add(sig)
         out.append(tw)
     # newest first by numeric id (snowflake ids sort chronologically)
     out.sort(key=lambda t: int(t["id"]) if str(t.get("id")).isdigit() else 0,
@@ -338,9 +449,9 @@ def _usage_in(resp):
             + (resp.usage.cache_creation_input_tokens or 0))
 
 
-def analyze_text(client, feed, date, text):
+def analyze_text(client, feed, date, text, author):
     """Sonnet text analysis. Returns (analysis_dict|None, in_tok, out_tok)."""
-    user = (f"Posted by @{feed.account} ({feed.display_name})\n"
+    user = (f"Posted by @{author} ({feed.display_name})\n"
             f"Date: {date}\nPost:\n{text}")
     try:
         resp = client.messages.create(
@@ -358,7 +469,7 @@ def analyze_text(client, feed, date, text):
     return _parse_json(resp.content), _usage_in(resp), resp.usage.output_tokens
 
 
-def analyze_chart(client, feed, media_urls, date, text):
+def analyze_chart(client, feed, media_urls, date, text, author):
     """Sonnet vision pass over the post's chart image(s) (capped at
     MAX_VISION_IMAGES, same as the IncomeSharks pass). Returns
     (chart_dict|None, in_tok, out_tok); None if no image could be fetched."""
@@ -371,7 +482,7 @@ def analyze_chart(client, feed, media_urls, date, text):
         return None, 0, 0
     content = blocks + [{
         "type": "text",
-        "text": f"Posted by @{feed.account} ({feed.display_name})\nDate: {date}\n"
+        "text": f"Posted by @{author} ({feed.display_name})\nDate: {date}\n"
                 f"Tweet:\n{text}"}]
     try:
         resp = client.messages.create(
@@ -394,11 +505,15 @@ def process(candidates, client, feed, allow_vision=True):
     for tw in candidates:
         n = _normalize_getxapi(tw)               # id, text, created_at(iso), media
         tid = n["id"]
+        # User feed: author == feed.account. Search feed: the actual poster, which
+        # varies per tweet -- thread it into the prompt, url, and record.
+        author = n.get("author") or feed.account
         date = (n.get("created_at") or "")[:10]
         text = n.get("text", "")
-        print(f"- {tid}  {text[:70].replace(chr(10), ' ')}")
+        print(f"- {tid}  {('@' + author + ' ') if feed.is_search else ''}"
+              f"{text[:70].replace(chr(10), ' ')}")
 
-        analysis, in_t, out_t = analyze_text(client, feed, date, text)
+        analysis, in_t, out_t = analyze_text(client, feed, date, text, author)
         total_in += in_t
         total_out += out_t
         if not analysis:
@@ -409,7 +524,7 @@ def process(candidates, client, feed, allow_vision=True):
         rec = {
             "tweet_id": tid,
             "created_at": n.get("created_at"),
-            "url": tw.get("url") or f"https://x.com/{feed.account}/status/{tid}",
+            "url": tw.get("url") or f"https://x.com/{author}/status/{tid}",
             "text": text,
             "lang": tw.get("lang"),
             "analyzed_at": datetime.now(timezone.utc).isoformat(),
@@ -420,9 +535,12 @@ def process(candidates, client, feed, allow_vision=True):
             "chart_summary": None,
             **analysis,
         }
+        if feed.is_search:                     # who posted it + dedup fingerprint
+            rec["author"] = author             # (the ledger's cross-run seen_sigs)
+            rec["text_sig"] = _content_sig(text)
 
         if media and allow_vision:
-            chart, ci, co = analyze_chart(client, feed, media, date, text)
+            chart, ci, co = analyze_chart(client, feed, media, date, text, author)
             total_in += ci
             total_out += co
             if chart:
@@ -438,17 +556,23 @@ def process(candidates, client, feed, allow_vision=True):
 
 def run_feed(feed, client, args):
     """Process one feed end-to-end: fetch -> filter -> analyze -> write ledger."""
-    print(f"\n=== {feed.display_name} (@{feed.account}) ===")
+    where = f"search: {feed.query}" if feed.is_search else f"@{feed.account}"
+    print(f"\n=== {feed.display_name} ({where}) ===")
     summaries = load_json(feed.summaries_file, [])
     if not isinstance(summaries, list):
         summaries = []
     seen = {str(r.get("tweet_id")) for r in summaries}
+    # Search feeds also dedup by content signature (verbatim reposts of a story
+    # under distinct ids); the ledger persists text_sig for cross-run collapse.
+    seen_sigs = ({r.get("text_sig") for r in summaries if r.get("text_sig")}
+                 if feed.is_search else frozenset())
 
     # --force bypasses dedup for the named ids. Scan the full window (empty
     # stop-set) so a forced id OLDER than the high-water mark is still reached;
     # the normal run stops early once it hits an already-seen post.
     force_ids = set(args.force or [])
-    raw, calls = fetch_posts(feed, set() if force_ids else seen)
+    fetch = fetch_search if feed.is_search else fetch_posts
+    raw, calls = fetch(feed, set() if force_ids else seen)
     print(f"Fetched {len(raw)} raw posts in {calls} GetXAPI call(s) "
           f"(${calls * GETXAPI_COST_PER_CALL:.4f})")
 
@@ -460,7 +584,7 @@ def run_feed(feed, client, args):
             print(f"  [force] not found in fetch window: {sorted(missing)}",
                   file=sys.stderr)
     else:
-        candidates = select_candidates(raw, seen, feed)
+        candidates = select_candidates(raw, seen, feed, seen_sigs)
         if args.limit is not None:
             candidates = candidates[:args.limit]
 
