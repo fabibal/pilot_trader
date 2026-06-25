@@ -29,6 +29,7 @@ loaded from ~/pilot_trader/.env. Run with the project venv:
 
 import argparse
 import base64
+import gzip
 import json
 import os
 import re
@@ -722,8 +723,16 @@ def fetch_tweets(uid, since_id=None):
 def getxapi_get(url):
     req = urllib.request.Request(url)
     req.add_header("Authorization", f"Bearer {os.environ['GETXAPI_KEY']}")
+    # Request gzip: the uncompressed body (~25KB w/ Content-Length) is truncated
+    # mid-stream by the upstream Caddy proxy (200 OK headers sent, then the body
+    # connection drops -> IncompleteRead). The gzip body is ~6KB and chunked
+    # (no Content-Length), so it survives the flaky link. Vary: Accept-Encoding.
+    req.add_header("Accept-Encoding", "gzip")
     with urllib.request.urlopen(req) as resp:
-        return json.load(resp)
+        body = resp.read()
+        if resp.headers.get("Content-Encoding") == "gzip":
+            body = gzip.decompress(body)
+    return json.loads(body)
 
 
 def _normalize_getxapi(tw):
