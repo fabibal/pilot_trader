@@ -1,6 +1,10 @@
 # Secrets — NEVER commit
 .env
 
+# Internal ops runbook (Claude context): server IP/URL, account IDs, paths,
+# clientIds, SSH key names — NOT for the public repo.
+CLAUDE.md
+
 # Runtime data / logs / state
 data/
 *.log

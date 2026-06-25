@@ -182,7 +182,7 @@ Proposals:
 ### Desktop — My Paper Account
 ```
 ┌───────────────────────────────────────────────────────────────────────┐
-│ ACCOUNT  DUQ#####     ● connected     [ Refresh now ]                   │
+│ ACCOUNT  DUQxxxxxx     ● connected     [ Refresh now ]                   │
 │ NetLiq $999,076   today +$12   total P&L -$924 (vs baseline $1,000,000)  │
 │ Exposure  ▓▓▓▓▓░░░░░  $3,150 / $10,000      Cash 96%  ◔  Invested 4%      │
 ├───────────────────────────────────────────────────────────────────────┤

@@ -13,7 +13,7 @@ services:
     # source IP) is rejected. With host mode the container shares the host net
     # namespace -> connects as 127.0.0.1 -> trusted. `ports:` is incompatible
     # with host mode (and unnecessary): dashboard.py binds 0.0.0.0:8051 directly
-    # on the host, so it's still LAN-reachable at e.g. <LAN_IP>:8051.
+    # on the host, so it's still reachable at e.g. <LAN_IP>:8051.
     network_mode: host
 
     environment:
@@ -32,9 +32,9 @@ services:
       # start a privileged container). A `:ro` mount would NOT mitigate it
       # (connecting to a unix socket needs write permission, so :ro just
       # breaks the stats too) and a socket proxy is overkill here.
-      # Accepted because: dashboard is LAN-only (no port forwarding), paper
-      # account only, and the container runs only our own code (bind-mounted
-      # repo). Revisit before any WAN exposure.
+      # Accepted for this personal, paper-account setup running only our own
+      # (bind-mounted) code. Harden before exposing the dashboard beyond a
+      # trusted network: put it behind authentication, or drop this mount.
       - /var/run/docker.sock:/var/run/docker.sock
 
     deploy:
