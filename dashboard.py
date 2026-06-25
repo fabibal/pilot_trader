@@ -1246,14 +1246,33 @@ app.index_string = """<!DOCTYPE html>
       html, body { -webkit-text-size-adjust: 100%; }
       @media (max-width: 760px) {
         .root-pad { padding: 12px 12px !important; }
-        /* tab bars: keep a single horizontal row that overflows so the
-           wrapping div scrolls (mobile_breakpoint=0 stops Dash from switching
-           .tab-container to flex-direction:column on phones; without flex:0 0
-           auto the tabs would shrink to fit instead of overflowing). */
-        .tab-container { flex-wrap: nowrap !important; }
-        .tab-container .tab { flex: 0 0 auto !important;
-                              padding: 9px 12px !important; min-height: 40px !important;
-                              font-size: 0.78rem !important; }
+        /* tab + sub-tab bars: make the bar itself a horizontal touch-scroll
+           strip. dcc.Tabs injects (via JS, as inline-equivalent CSS):
+             .tab-parent  { overflow: hidden; }      <- CLIPS the row
+             .tab         { flex: 1 1 0; min-width: 0; } <- tabs shrink, text cut
+           so tabs got squished/clipped with nothing to scroll. We override with
+           !important: stop the parent clipping, let .tab-container scroll-x on
+           touch, and stop tabs shrinking so they overflow and the strip scrolls.
+           Scrollbar hidden (WebKit/FF/IE) but swipe still works. */
+        .tab-parent { overflow: visible !important; }
+        .tab-container {
+          flex-direction: row !important;
+          flex-wrap: nowrap !important;
+          overflow-x: auto !important;
+          overflow-y: hidden !important;
+          -webkit-overflow-scrolling: touch !important;
+          scrollbar-width: none !important;        /* Firefox */
+          -ms-overflow-style: none !important;      /* old Edge/IE */
+        }
+        .tab-container::-webkit-scrollbar { display: none !important;
+                                            width: 0 !important; height: 0 !important; }
+        .tab-container .tab {
+          flex: 0 0 auto !important;
+          min-width: auto !important;
+          white-space: nowrap !important;
+          padding: 9px 12px !important; min-height: 40px !important;
+          font-size: 0.78rem !important;
+        }
         /* portfolio summary cards stack full-width on phones */
         #portfolio-summary > div { min-width: 100% !important;
                                    flex-basis: 100% !important;
@@ -1274,6 +1293,14 @@ app.index_string = """<!DOCTYPE html>
         #status-row-1, #status-row-2 { font-size: 0.62rem !important;
                                        padding: 5px 8px !important;
                                        line-height: 1.45 !important; }
+        /* Kendrick forecast rows: stack on phones so target prices never
+           truncate ("$3,5..." -> full "$3,500"). The summary wraps and the
+           targets take their own full-width line (asset+direction on line 1,
+           targets on line 2, meta below). Desktop keeps the 1-line ellipsis. */
+        .kndr-summary { flex-wrap: wrap !important; row-gap: 5px !important; }
+        .kndr-targets { flex: 1 1 100% !important; min-width: 0 !important;
+                        white-space: normal !important; overflow: visible !important;
+                        text-overflow: clip !important; }
       }
     </style>
   </head>
@@ -1579,7 +1606,7 @@ def portfolio_kpis(positions):
 # --- redesign: components ---------------------------------------------------
 def _sep():
     """Dim ' · ' separator between status-bar segments."""
-    return html.Span("  ·  ", style={"color": C["border"]})
+    return html.Span(" · ", style={"color": C["border"]})
 
 
 def _cost_sums():
@@ -1687,9 +1714,9 @@ def status_row_1(store):
 
 
 def status_row_2():
-    """Status bar row 2: container CPU/RAM + GetXAPI credits + API costs + prices.
-    e.g. 'Dashboard: CPU 0.1% · RAM 278/384MB · GetXAPI: $9.83 credits · API
-    Costs: today $0.80 / mo $4.13 / total $4.13 · Prices as of: 17:44 CEST
+    """Status bar row 2: container CPU/RAM + GetXAPI credits + Reddit/API costs
+    + prices. e.g. 'CPU 0.1% · RAM 278/384MB · GetXAPI: $9.83 credits · Reddit:
+    $0.00/mo · API Costs: today $0.80 / mo $4.13 · Prices as of: 17:44 CEST
     (yfinance, 1h cache)'."""
     cs = container_stat()
     if cs.get("ok"):
@@ -1708,14 +1735,13 @@ def status_row_2():
         bal_txt = f"${bal:,.2f} credits"
         bal_color = C["red"] if bal < CREDITS_LOW_USD else C["green"]
 
-    d, m, t = _cost_sums()
+    d, m, _ = _cost_sums()
     pa = _fetch_state["last"]
     prices_txt = (
         _to_local(datetime.fromtimestamp(pa, timezone.utc), "%H:%M %Z")
         + " (yfinance, 1h cache)" if pa else "not fetched yet")
 
     return [
-        html.Span("Dashboard: ", style={"color": C["dim"]}),
         html.Span(f"CPU {cpu}", style={"color": C["text"]}),
         _sep(),
         html.Span(f"RAM {ram}", style={"color": C["text"]}),
@@ -1724,11 +1750,11 @@ def status_row_2():
         html.Span(bal_txt, style={"color": bal_color, "fontWeight": "bold"}),
         _sep(),
         html.Span("Reddit: ", style={"color": C["dim"]}),
-        html.Span(f"${_reddit_cost_month():.2f} this month",
+        html.Span(f"${_reddit_cost_month():.2f}/mo",
                   style={"color": C["text"]}),
         _sep(),
         html.Span("API Costs: ", style={"color": C["dim"]}),
-        html.Span(f"today ${d:,.2f} / mo ${m:,.2f} / total ${t:,.2f}",
+        html.Span(f"today ${d:,.2f} / mo ${m:,.2f}",
                   style={"color": C["text"]}),
         _sep(),
         html.Span("Prices as of: ", style={"color": C["dim"]}),
@@ -2025,7 +2051,7 @@ def _kendrick_row(f):
     sources = f.get("sources") or []
     n = f.get("source_count") or len(sources)
 
-    summary = html.Summary(style={
+    summary = html.Summary(className="kndr-summary", style={
         "display": "flex", "alignItems": "center", "gap": "10px",
         "cursor": "pointer", "listStyle": "none", "padding": "9px 2px"},
         children=[
@@ -2039,7 +2065,7 @@ def _kendrick_row(f):
             "flex": "0 0 auto"}),
         html.Span(arrow, style={"color": arrow_color, "fontWeight": "bold",
                                "flex": "0 0 auto"}),
-        html.Span(targets, style={
+        html.Span(targets, className="kndr-targets", style={
             "color": C["text"], "fontWeight": "bold", "fontSize": "0.82rem",
             "flex": "1 1 auto", "minWidth": "0", "overflow": "hidden",
             "textOverflow": "ellipsis", "whiteSpace": "nowrap"}),
