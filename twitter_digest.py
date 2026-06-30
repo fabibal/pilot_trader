@@ -72,7 +72,8 @@ from monitor import (load_env, load_json, notify_telegram, TELEGRAM_ENVS,
                      getxapi_get, _normalize_getxapi, _image_block,
                      GETXAPI_BASE, GETXAPI_POSTS_PATH, GETXAPI_COST_PER_CALL,
                      MAX_VISION_IMAGES, SONNET_INPUT_PER_1M, SONNET_OUTPUT_PER_1M,
-                     SONNET_THINKING, HAIKU_INPUT_PER_1M, HAIKU_OUTPUT_PER_1M)
+                     SONNET_THINKING, SONNET_DEEP_THINKING,
+                     HAIKU_INPUT_PER_1M, HAIKU_OUTPUT_PER_1M)
 
 # --- config ---------------------------------------------------------------
 HOME = "/home/fbazsa/pilot_trader"
@@ -256,6 +257,11 @@ class Feed:
     # event into a single forecast row instead of one card per post. See the
     # "forecast-ledger mode" block above and run_forecast_feed().
     forecast_ledger: bool = False
+    # Opt this feed's TEXT analysis into Sonnet 5 adaptive thinking (the chart
+    # vision pass stays disabled regardless). Only worth it for dense, low-volume
+    # reads -- kept off for the high-volume per-tweet feeds (ki/joao) where it adds
+    # cost without much gain. analyze_text gives max_tokens room when this is set.
+    deep_thinking: bool = False
     # Fetch buffer. Daily cron + high-water dedup means a normal run stops early
     # after a few new posts; this only bounds catch-up after a missed run.
     max_fetch: int = 40
@@ -317,6 +323,7 @@ FEEDS = {f.key: f for f in [
         display_name="Geoff Kendrick / Standard Chartered",
         summaries_file=os.path.join(DATA_DIR, "kendrick_forecasts.json"),
         forecast_ledger=True,            # one row per forecast, not per post
+        deep_thinking=True,              # adaptive thinking on the forecast read (dense, low-volume)
         # No account is dedicated to his calls; reputable outlets cover him only
         # incidentally amid huge volume. So search the TOPIC and let every
         # account's coverage flow in -- ~100% relevant, ~2-6 unique en posts/day.
@@ -534,11 +541,15 @@ def analyze_text(client, feed, date, text, author):
     """Sonnet text analysis. Returns (analysis_dict|None, in_tok, out_tok)."""
     user = (f"Posted by @{author} ({feed.display_name})\n"
             f"Date: {date}\nPost:\n{text}")
+    # Hungarian is token-heavier than English; long-form essays need headroom or
+    # the JSON truncates (600 was too low -> 1000). deep_thinking feeds also spend
+    # part of max_tokens on adaptive thinking, so they get a much larger budget.
+    deep = feed.deep_thinking
     try:
         resp = client.messages.create(
-            # Hungarian is token-heavier than English; his long-form essays need
-            # headroom or the JSON truncates and fails to parse (600 was too low).
-            model=MODEL, max_tokens=1000, thinking=SONNET_THINKING,
+            model=MODEL,
+            max_tokens=6000 if deep else 1000,
+            thinking=SONNET_DEEP_THINKING if deep else SONNET_THINKING,
             system=[{"type": "text", "text": feed.analysis_system}],
             output_config={"format": {"type": "json_schema",
                                       "schema": ANALYSIS_SCHEMA}},

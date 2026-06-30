@@ -123,6 +123,11 @@ HAIKU_OUTPUT_PER_1M = 5.00           # $ / 1M output tokens
 # json_schema response truncates.)
 VISION_MODEL = "claude-sonnet-5"
 SONNET_THINKING = {"type": "disabled"}   # Sonnet 5 defaults to adaptive; we don't want it
+# Opt-in adaptive thinking for the dense, low-volume analysis reads where the
+# reasoning pays off (YouTube/Cowen TA, Kendrick forecasts) — NOT vision, NOT the
+# high-volume per-tweet feeds (ki/joao). Callers that use it MUST give max_tokens
+# room for thinking + JSON or the json_schema output truncates.
+SONNET_DEEP_THINKING = {"type": "adaptive"}
 SONNET_INPUT_PER_1M = 3.00           # $ / 1M input tokens (sticker; intro $2 to 2026-08-31)
 SONNET_OUTPUT_PER_1M = 15.00         # $ / 1M output tokens (sticker; intro $10 to 2026-08-31)
 MAX_VISION_IMAGES = 2                # cap images/tweet to bound vision cost

@@ -42,7 +42,8 @@ import anthropic
 from reconcile import write_json_atomic
 # Reuse monitor.py's small, already-tested helpers (env/json loaders, Telegram
 # alerting) so this stays DRY and consistent with the rest of the pipeline.
-from monitor import load_env, load_json, notify_telegram, TELEGRAM_ENVS, SONNET_THINKING
+from monitor import (load_env, load_json, notify_telegram, TELEGRAM_ENVS,
+                     SONNET_DEEP_THINKING)
 
 # --- config ---------------------------------------------------------------
 CHANNEL_ID = "UCRvqjQPSeaWn-uEx-w0XOIg"        # @benjaminjcowen
@@ -55,8 +56,9 @@ SUMMARIES_FILE = os.path.join(DATA_DIR, "youtube_summaries.json")
 
 # Anthropic. Sonnet 5 (NOT the tweet pipeline's Haiku): Cowen's content is dense,
 # multi-level technical analysis, and Sonnet reads it markedly better. The call
-# pins thinking=SONNET_THINKING (disabled) — Sonnet 5 runs adaptive thinking by
-# default, which would eat max_tokens=700 and truncate the json_schema output.
+# uses SONNET_DEEP_THINKING (adaptive) — the reasoning pays off on this dense TA,
+# and it's low volume (~1-2/day). max_tokens is raised so thinking + the JSON
+# output share the budget without truncating the json_schema response.
 MODEL = "claude-sonnet-5"
 INPUT_PER_1M = 3.00                  # $ / 1M input tokens (Sonnet 5 sticker; intro $2 to 2026-08-31)
 OUTPUT_PER_1M = 15.00                # $ / 1M output tokens (Sonnet 5 sticker; intro $10 to 2026-08-31)
@@ -237,8 +239,8 @@ def analyze(client, title, transcript):
     try:
         resp = client.messages.create(
             model=MODEL,
-            max_tokens=700,
-            thinking=SONNET_THINKING,
+            max_tokens=6000,
+            thinking=SONNET_DEEP_THINKING,
             system=[{"type": "text", "text": ANALYSIS_SYSTEM}],
             output_config={"format": {"type": "json_schema",
                                       "schema": ANALYSIS_SCHEMA}},
