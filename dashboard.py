@@ -23,6 +23,7 @@ Run with the project venv:
 import http.client as _http_client
 import json
 import os
+import re
 import socket as _socket
 import threading
 import time
@@ -2026,15 +2027,110 @@ def twitter_section(summaries, limit=8, who="@ki_young_ju"):
 # as a compact, expandable table (one row per forecast) rather than a card stream;
 # the source count IS the signal (how widely the call was picked up).
 def _dedupe_targets(targets):
-    """Collapse target phrasings that differ only by commas/spacing/case so the
-    row doesn't show '$3,500' and '$3500' side by side."""
+    """Collapse target phrasings that mean the same thing so a row never shows a
+    price twice: same normalized value ('$40K'=='$40,000') or differing only by
+    commas/spacing/case ('$3,500'=='$3500'). Keeps the first (headline) phrasing."""
     seen, out = set(), []
     for t in targets or []:
-        k = t.replace(",", "").replace(" ", "").lower()
+        v = _kndr_target_value(t)
+        k = f"p{v:g}" if v is not None else t.replace(",", "").replace(" ", "").lower()
         if k and k not in seen:
             seen.add(k)
             out.append(t)
     return out
+
+
+# Flow/size magnitudes (ETF inflows, AUM, market cap, TVL, "$X billion") are NOT
+# price targets; a row whose headline is one of those (e.g. "XRP $4-$8 billion in
+# ETF inflows") is hidden from the price table. Mirrors twitter_digest's keys so
+# this render-time merge is a no-op once the ledger has been re-clustered.
+_KNDR_NONPRICE_RE = re.compile(
+    r"inflow|outflow|aum|tvl|market\s*cap|mcap|\bvolume\b|liquidity|"
+    r"trillion|billion|\bbn\b", re.I)
+_KNDR_PRICE_MULT = {"k": 1e3, "m": 1e6}    # thousand/million can be a price
+_KNDR_SIZE_SUFFIX = {"b", "bn", "t"}       # billion/trillion = cap/flow, not price
+
+
+def _kndr_target_value(t):
+    """Float magnitude of a per-coin price target, or None if it is not a plain
+    price (mirror of twitter_digest._target_value, so the render-time merge is a
+    no-op once the ledger has been re-clustered). The number is read from the
+    START (after an optional '$') so 'Q4 2025' is not a price; flow/size phrases,
+    billion/trillion magnitudes ('$2.7T', '$5bn') and '50x' -> None;
+    '$40k'/'$40,000' -> 40000; '$.5' -> 0.5."""
+    s = (t or "").strip().lower()
+    if not s or _KNDR_NONPRICE_RE.search(s):
+        return None
+    m = re.match(r"\$?\s*(\d[\d,]*(?:\.\d+)?|\.\d+)\s*(bn|[kmbt])?", s)
+    if not m:
+        return None
+    suf = m.group(2)
+    if suf in _KNDR_SIZE_SUFFIX:
+        return None
+    try:
+        v = float(m.group(1).replace(",", ""))
+    except ValueError:
+        return None
+    if suf:
+        v *= _KNDR_PRICE_MULT[suf]
+    elif re.search(r"\dx\b", s):
+        return None
+    return v
+
+
+def _kndr_headline(f):
+    return next((t for t in (f.get("targets") or []) if t and t.strip()), "")
+
+
+def _is_price_forecast(f):
+    """True if the row's headline target is a parseable PRICE (flow/size calls
+    such as ETF-inflow estimates are excluded from the price table)."""
+    return _kndr_target_value(_kndr_headline(f)) is not None
+
+
+def _kndr_identity(f):
+    """Asset + normalized headline price target -- same scheme as twitter_digest's
+    _forecast_identity so legacy split rows ('$40K' vs '$40,000') collapse."""
+    asset = (f.get("asset") or "?").upper()
+    h = _kndr_headline(f)
+    v = _kndr_target_value(h)
+    if v is not None:
+        return f"{asset}|p{v:g}"
+    tok = h.strip().lower().replace(" ", "")[:16]
+    return f"{asset}|{tok}" if tok else f"{asset}|d{(f.get('direction') or 'na')}"
+
+
+def _merge_kndr_rows(forecasts):
+    """Collapse rows that are the same asset+price target (a legacy ledger splits
+    one call across '2030'/'unspecified' timeframes). Reach (source_count) is
+    summed minus observable overlap; the most-reported row supplies the narrative."""
+    by = {}
+    for f in sorted(forecasts, key=lambda r: r.get("source_count") or 0,
+                    reverse=True):
+        k = _kndr_identity(f)
+        d = by.get(k)
+        if d is None:
+            d = dict(f)
+            d["targets"] = list(f.get("targets") or [])
+            by[k] = d
+            continue
+        ids = {s.get("tweet_id") for s in d.get("sources") or []}
+        overlap = sum(1 for s in (f.get("sources") or [])
+                      if s.get("tweet_id") in ids)
+        d["source_count"] = ((d.get("source_count") or 0)
+                             + (f.get("source_count") or 0) - overlap)
+        for t in f.get("targets") or []:
+            if t not in d["targets"]:
+                d["targets"].append(t)
+        if (f.get("last_seen") or "") > (d.get("last_seen") or ""):
+            d["last_seen"] = f.get("last_seen")
+        if f.get("first_seen") and (not d.get("first_seen")
+                                    or f["first_seen"] < d["first_seen"]):
+            d["first_seen"] = f["first_seen"]
+        if d.get("timeframe") in (None, "", "unspecified") \
+                and f.get("timeframe") not in (None, "", "unspecified"):
+            d["timeframe"] = f["timeframe"]
+    return list(by.values())
 
 
 def _kendrick_row(f):
@@ -2129,16 +2225,34 @@ def _kendrick_row(f):
         "padding": "0 12px", "marginTop": "8px"}, children=[summary, body])
 
 
-def kendrick_forecast_section(forecasts, limit=30):
-    """Render the SC / Kendrick forecast ledger as a compact, newest-first list
-    of expandable rows (one per forecast, not per post)."""
+def kendrick_forecast_section(forecasts, limit=12):
+    """Render the SC / Kendrick forecast ledger as a compact list of expandable
+    rows, one per PRICE forecast. Near-identical calls are collapsed (asset +
+    normalized target), pure flow/size calls (ETF inflows, AUM, market cap) are
+    hidden, and rows are ranked by reach so only the most widely reported calls
+    show. A footer notes anything hidden so the cap is never silent."""
     if not forecasts:
         return [html.Div("No Standard Chartered / Kendrick forecasts captured "
                          "yet.", style={"color": C["dim"], "fontSize": "0.8rem",
                                         "marginTop": "8px"})]
-    ordered = sorted(forecasts, key=lambda f: (f.get("last_seen")
-                     or f.get("first_seen") or ""), reverse=True)[:limit]
-    return [html.Div([_kendrick_row(f) for f in ordered])]
+    rows = _merge_kndr_rows(forecasts)
+    price = [f for f in rows if _is_price_forecast(f)]
+    flow_hidden = len(rows) - len(price)
+    price.sort(key=lambda f: (f.get("source_count") or 0,
+                              f.get("last_seen") or f.get("first_seen") or ""),
+               reverse=True)
+    shown, extra = price[:limit], max(0, len(price) - limit)
+    children = [_kendrick_row(f) for f in shown]
+    notes = []
+    if extra:
+        notes.append(f"+{extra} kevésbé jegyzett előrejelzés elrejtve")
+    if flow_hidden:
+        notes.append(f"{flow_hidden} flow/méret-becslés (pl. ETF-beáramlás) kihagyva")
+    if notes:
+        children.append(html.Div(" · ".join(notes), style={
+            "color": C["dim"], "fontSize": "0.7rem", "marginTop": "10px",
+            "textAlign": "center"}))
+    return [html.Div(children)]
 
 
 # --- Reddit trading-strategy miner output ---------------------------------

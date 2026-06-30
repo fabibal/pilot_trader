@@ -34,7 +34,7 @@ Feeds (see FEEDS):
       data/kendrick_forecasts.json ({seen_ids, forecasts}). No single account is
       dedicated to his calls and each call is echoed by 20-30 outlets, so we
       search the topic, Haiku-triage each post into (asset, direction, target,
-      timeframe), cluster echoes by (asset, timeframe), and Sonnet-read only one
+      timeframe), cluster echoes by (asset, normalized price target), and Sonnet-read one
       representative per new forecast. English only; source count = reach.
 
 ANALYSIS ONLY: neither account is in accounts.ACCOUNTS; neither is written to
@@ -170,7 +170,9 @@ VISION_SCHEMA = {
 # Geoff Kendrick price call) is echoed by 20-30 outlets. Per-post cards would be
 # 20-30 near-duplicates, so this feed runs in FORECAST-LEDGER mode: a cheap Haiku
 # triage extracts the forecast(s) from each new post, posts are CLUSTERED by
-# (asset, timeframe), and only a genuinely NEW forecast triggers the (expensive)
+# (asset, normalized price target -- so '$40K' and '$40,000' are one row while
+# ETH $4,000 vs $40,000 stay distinct), and only a genuinely NEW forecast
+# triggers the (expensive)
 # Sonnet read of one representative post. Echoes of a known forecast just append a
 # source + bump the count. One ledger row per forecast; the source count IS the
 # signal (how widely the call was picked up). Dedup is semantic (the forecast),
@@ -642,6 +644,65 @@ def _norm_timeframe(tf):
     return m.group(1) if m else s[:16]
 
 
+# Flow/size magnitudes (ETF inflows, AUM, market cap, TVL, "$X billion") are NOT
+# price targets and must not seed -- or key -- a row in this PRICE-forecast
+# ledger: "XRP $4-$8 billion in ETF inflows" is reach, not a price call.
+_NONPRICE_RE = re.compile(
+    r"inflow|outflow|aum|tvl|market\s*cap|mcap|\bvolume\b|liquidity|"
+    r"trillion|billion|\bbn\b", re.I)
+_PRICE_MULT = {"k": 1e3, "m": 1e6}     # thousand/million CAN be a per-coin price
+_SIZE_SUFFIX = {"b", "bn", "t"}        # billion/trillion = cap/flow, never a price
+
+
+def _target_value(t):
+    """Parse a price-target string to a float magnitude for clustering, or None
+    when it is not a plain per-coin price. The number is read from the START of
+    the string (after an optional '$') so timeframes like 'Q4 2025' don't parse
+    as a price; flow/size phrases and billion/trillion magnitudes ('$2.7T',
+    '$5bn') and '50x' all -> None; a range -> its first number;
+    '$40k'/'$40,000' -> 40000.0; sub-dollar '$.5' -> 0.5."""
+    s = (t or "").strip().lower()
+    if not s or _NONPRICE_RE.search(s):
+        return None
+    m = re.match(r"\$?\s*(\d[\d,]*(?:\.\d+)?|\.\d+)\s*(bn|[kmbt])?", s)
+    if not m:
+        return None
+    suf = m.group(2)
+    if suf in _SIZE_SUFFIX:          # billion/trillion is a size, not a price
+        return None
+    try:
+        v = float(m.group(1).replace(",", ""))
+    except ValueError:
+        return None
+    if suf:
+        v *= _PRICE_MULT[suf]
+    elif re.search(r"\dx\b", s):     # "50x" is a multiplier, not a price level
+        return None
+    return v
+
+
+def _forecast_identity(asset, target, direction=None):
+    """Cluster identity for an SC/Kendrick call: ASSET + its NORMALIZED price
+    target, so '$40K' and '$40,000' collapse into one row while ETH $4,000 and
+    ETH $40,000 stay distinct. Timeframe is deliberately NOT in the key -- the
+    same call is relayed with inconsistent horizons ('2030' vs 'unspecified'),
+    which is exactly what split near-identical forecasts across rows. Non-price
+    targets fall back to a text token; a target-less call to asset+direction."""
+    v = _target_value(target)
+    if v is not None:
+        return f"{asset}|p{v:g}"
+    tok = (target or "").strip().lower().replace(" ", "")[:16]
+    return f"{asset}|{tok}" if tok else f"{asset}|d{(direction or 'na')}"
+
+
+def _row_identity(f):
+    """Identity for an EXISTING ledger row: asset + its headline (first) target."""
+    targets = f.get("targets") or []
+    headline = next((t for t in targets if t and t.strip()), "")
+    return _forecast_identity((f.get("asset") or "").upper().strip(),
+                              headline, f.get("direction"))
+
+
 def _authority(tw):
     """Sort key for picking the most authoritative source in a cluster: verified
     first, then followers, then longer (more detailed) text."""
@@ -747,14 +808,84 @@ def _load_forecast_ledger(path):
     return data
 
 
+def _merge_into(dst, src):
+    """Fold forecast row `src` into `dst` (same identity). Callers fold the
+    lower-reach row into the higher-reach one, so dst's narrative survives;
+    src's sources/targets are absorbed, the seen window widened, and gaps filled.
+    source_count stays a reach total: dst + src minus the overlap we can see."""
+    before = dst.get("source_count", 0)
+    have = {s["tweet_id"] for s in dst.get("sources") or []}
+    overlap = sum(1 for s in (src.get("sources") or []) if s.get("tweet_id") in have)
+    _merge_sources(dst, src.get("sources") or [], src.get("targets") or [])
+    dst["source_count"] = before + (src.get("source_count", 0) - overlap)
+    if src.get("first_seen") and (not dst.get("first_seen")
+                                  or src["first_seen"] < dst["first_seen"]):
+        dst["first_seen"] = src["first_seen"]
+    if src.get("last_seen") and (not dst.get("last_seen")
+                                 or src["last_seen"] > dst["last_seen"]):
+        dst["last_seen"] = src["last_seen"]
+    if dst.get("timeframe") in (None, "", "unspecified") \
+            and src.get("timeframe") not in (None, "", "unspecified"):
+        dst["timeframe"] = src["timeframe"]
+    for k in ("market_view", "summary", "overall_sentiment", "chart_trend",
+              "chart_summary", "rep_author", "analyzed_at"):
+        if not dst.get(k) and src.get(k):
+            dst[k] = src[k]
+    if not dst.get("has_chart") and src.get("has_chart"):
+        dst["has_chart"] = True
+        dst["media"] = dst.get("media") or src.get("media") or []
+    for k in ("key_levels", "top_themes"):
+        cur = dst.setdefault(k, list(dst.get(k) or []))
+        for x in src.get(k) or []:
+            if x not in cur:
+                cur.append(x)
+
+
+def _recluster_forecasts(rows):
+    """Re-key existing rows onto the current identity scheme (asset + normalized
+    price target) and MERGE any that now collide -- migrates a legacy
+    {asset|timeframe} ledger and is idempotent on already-clean data. Returns a
+    dict keyed by identity; the highest-reach row in each group is the base, so
+    its narrative is kept."""
+    out = {}
+    for f in sorted(rows, key=lambda r: r.get("source_count") or 0, reverse=True):
+        key = _row_identity(f)
+        if key in out:
+            _merge_into(out[key], f)
+        else:
+            g = dict(f)
+            g["key"] = key
+            # own copies of the lists _merge_into appends to, so folding a later
+            # row never mutates the original input row's shared lists.
+            for lk in ("sources", "targets", "key_levels", "top_themes", "media"):
+                if g.get(lk) is not None:
+                    g[lk] = list(g[lk])
+            out[key] = g
+    return out
+
+
+def _write_forecast_ledger(feed, ledger, forecasts, seen):
+    """Persist the forecast ledger newest-first with a capped seen-id high-water."""
+    ledger["forecasts"] = sorted(forecasts.values(),
+                                 key=lambda f: f.get("last_seen") or "",
+                                 reverse=True)
+    ledger["seen_ids"] = sorted(
+        seen, key=lambda x: int(x) if x.isdigit() else 0)[-SEEN_IDS_CAP:]
+    os.makedirs(DATA_DIR, exist_ok=True)
+    write_json_atomic(feed.summaries_file, ledger)
+
+
 def run_forecast_feed(feed, client, args):
-    """kendrick_sc pipeline: Haiku triage -> cluster by (asset, timeframe) ->
+    """kendrick_sc pipeline: Haiku triage -> cluster by (asset, price target) ->
     Sonnet read of one representative per NEW forecast; echoes just add a source.
     One ledger row per forecast (vs one per post)."""
     print(f"\n=== {feed.display_name} (forecast ledger; search) ===")
     ledger = _load_forecast_ledger(feed.summaries_file)
     seen = set(map(str, ledger["seen_ids"]))
-    forecasts = {f["key"]: f for f in ledger["forecasts"] if f.get("key")}
+    # Re-cluster on load: migrates a legacy {asset|timeframe} ledger onto the
+    # current asset+price-target identity and collapses any rows that now merge.
+    forecasts = _recluster_forecasts(ledger["forecasts"])
+    migrated = len(forecasts) != len(ledger["forecasts"])
 
     force_ids = set(args.force or [])
     raw, calls = fetch_search(feed, set() if force_ids else seen)
@@ -770,6 +901,9 @@ def run_forecast_feed(feed, client, args):
             candidates = candidates[:args.limit]
     if not candidates:
         print("No new posts to process.")
+        if migrated and not args.dry_run:   # persist the on-load re-cluster
+            _write_forecast_ledger(feed, ledger, forecasts, seen)
+            print(f"Re-clustered ledger -> {len(forecasts)} forecasts")
         return
 
     # 1) Haiku triage every new post; record ALL as seen (don't re-triage).
@@ -784,22 +918,25 @@ def run_forecast_feed(feed, client, args):
             triaged.append((tw, n, res["forecasts"]))
     print(f"Triaged {len(candidates)} (Haiku); {len(triaged)} carry a forecast")
 
-    # 2) cluster by (asset, timeframe)
+    # 2) cluster echoes of one call by (asset + normalized price target); the
+    #    timeframe is kept only for display, never for keying (it is too noisy).
     clusters = {}
     for tw, n, fcs in triaged:
         for fc in fcs:
             asset = (fc.get("asset") or "").upper().strip()
             if not asset:
                 continue
+            t = (fc.get("target") or "").strip()
+            key = _forecast_identity(asset, t, fc.get("direction"))
             tf = _norm_timeframe(fc.get("timeframe"))
-            key = f"{asset}|{tf}"
             c = clusters.setdefault(key, {"asset": asset,
                                           "direction": fc.get("direction"),
                                           "timeframe": tf, "targets": [],
                                           "tweets": []})
-            t = (fc.get("target") or "").strip()
             if t and t not in c["targets"]:
                 c["targets"].append(t)
+            if c["timeframe"] in ("", "unspecified") and tf not in ("", "unspecified"):
+                c["timeframe"] = tf      # prefer a concrete year for display
             c["tweets"].append((tw, n))
 
     # 3) new forecast -> Sonnet a representative; known forecast -> add sources
@@ -838,18 +975,14 @@ def run_forecast_feed(feed, client, args):
           f"Analysis Sonnet in={ana_in} out={ana_out} (${scost:.4f}); "
           f"{len(new_keys)} new, {len(upd_keys)} updated")
 
-    ordered = sorted(forecasts.values(),
-                     key=lambda f: f.get("last_seen") or "", reverse=True)
     if args.dry_run:
+        ordered = sorted(forecasts.values(),
+                         key=lambda f: f.get("last_seen") or "", reverse=True)
         print("[dry-run] not writing; ledger preview (newest first):")
         print(json.dumps(ordered, indent=2, ensure_ascii=False)[:5000])
         return
-    ledger["forecasts"] = ordered
-    ledger["seen_ids"] = sorted(
-        seen, key=lambda x: int(x) if x.isdigit() else 0)[-SEEN_IDS_CAP:]
-    os.makedirs(DATA_DIR, exist_ok=True)
-    write_json_atomic(feed.summaries_file, ledger)
-    print(f"Wrote {len(ledger['forecasts'])} forecasts -> {feed.summaries_file}")
+    _write_forecast_ledger(feed, ledger, forecasts, seen)
+    print(f"Wrote {len(forecasts)} forecasts -> {feed.summaries_file}")
 
 
 def run_feed(feed, client, args):
