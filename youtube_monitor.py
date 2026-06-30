@@ -42,7 +42,7 @@ import anthropic
 from reconcile import write_json_atomic
 # Reuse monitor.py's small, already-tested helpers (env/json loaders, Telegram
 # alerting) so this stays DRY and consistent with the rest of the pipeline.
-from monitor import load_env, load_json, notify_telegram, TELEGRAM_ENVS
+from monitor import load_env, load_json, notify_telegram, TELEGRAM_ENVS, SONNET_THINKING
 
 # --- config ---------------------------------------------------------------
 CHANNEL_ID = "UCRvqjQPSeaWn-uEx-w0XOIg"        # @benjaminjcowen
@@ -53,11 +53,13 @@ HOME = "/home/fbazsa/pilot_trader"
 DATA_DIR = os.path.join(HOME, "data")
 SUMMARIES_FILE = os.path.join(DATA_DIR, "youtube_summaries.json")
 
-# Anthropic. Sonnet 4.6 (NOT the tweet pipeline's Haiku): Cowen's content is
-# dense, multi-level technical analysis, and Sonnet reads it markedly better.
-MODEL = "claude-sonnet-4-6"
-INPUT_PER_1M = 3.00                  # $ / 1M input tokens (Sonnet 4.6)
-OUTPUT_PER_1M = 15.00                # $ / 1M output tokens (Sonnet 4.6)
+# Anthropic. Sonnet 5 (NOT the tweet pipeline's Haiku): Cowen's content is dense,
+# multi-level technical analysis, and Sonnet reads it markedly better. The call
+# pins thinking=SONNET_THINKING (disabled) — Sonnet 5 runs adaptive thinking by
+# default, which would eat max_tokens=700 and truncate the json_schema output.
+MODEL = "claude-sonnet-5"
+INPUT_PER_1M = 3.00                  # $ / 1M input tokens (Sonnet 5 sticker; intro $2 to 2026-08-31)
+OUTPUT_PER_1M = 15.00                # $ / 1M output tokens (Sonnet 5 sticker; intro $10 to 2026-08-31)
 # Cap transcript length sent to the model. Cowen videos run ~10-30k chars; a long
 # stream could be far bigger. ~60k chars ~= 15k tokens, a safe per-video bound.
 MAX_TRANSCRIPT_CHARS = 60_000
@@ -236,6 +238,7 @@ def analyze(client, title, transcript):
         resp = client.messages.create(
             model=MODEL,
             max_tokens=700,
+            thinking=SONNET_THINKING,
             system=[{"type": "text", "text": ANALYSIS_SYSTEM}],
             output_config={"format": {"type": "json_schema",
                                       "schema": ANALYSIS_SCHEMA}},

@@ -72,7 +72,7 @@ from monitor import (load_env, load_json, notify_telegram, TELEGRAM_ENVS,
                      getxapi_get, _normalize_getxapi, _image_block,
                      GETXAPI_BASE, GETXAPI_POSTS_PATH, GETXAPI_COST_PER_CALL,
                      MAX_VISION_IMAGES, SONNET_INPUT_PER_1M, SONNET_OUTPUT_PER_1M,
-                     HAIKU_INPUT_PER_1M, HAIKU_OUTPUT_PER_1M)
+                     SONNET_THINKING, HAIKU_INPUT_PER_1M, HAIKU_OUTPUT_PER_1M)
 
 # --- config ---------------------------------------------------------------
 HOME = "/home/fbazsa/pilot_trader"
@@ -83,10 +83,12 @@ DATA_DIR = os.path.join(HOME, "data")
 # imported from there. $0.001/call, ~20 tweets/page.
 GETXAPI_SEARCH_PATH = "/twitter/tweet/advanced_search"
 
-# Sonnet 4.6 (NOT the tweet-signal pipeline's Haiku): we want a careful read of
+# Sonnet 5 (NOT the tweet-signal pipeline's Haiku): we want a careful read of
 # dense on-chain commentary, and the vision pass needs Sonnet anyway (Haiku can't
-# take images). Same model the Cowen YouTube digest uses.
-MODEL = "claude-sonnet-4-6"
+# take images). Same model the Cowen YouTube digest uses. Both Sonnet calls pin
+# thinking=SONNET_THINKING (disabled) — Sonnet 5 runs adaptive thinking by default,
+# which would eat the tight max_tokens and truncate the json_schema output.
+MODEL = "claude-sonnet-5"
 
 # --- LLM analysis ---------------------------------------------------------
 # The system prompt is shared across feeds EXCEPT for a 1-2 sentence persona
@@ -536,7 +538,7 @@ def analyze_text(client, feed, date, text, author):
         resp = client.messages.create(
             # Hungarian is token-heavier than English; his long-form essays need
             # headroom or the JSON truncates and fails to parse (600 was too low).
-            model=MODEL, max_tokens=1000,
+            model=MODEL, max_tokens=1000, thinking=SONNET_THINKING,
             system=[{"type": "text", "text": feed.analysis_system}],
             output_config={"format": {"type": "json_schema",
                                       "schema": ANALYSIS_SCHEMA}},
@@ -565,7 +567,7 @@ def analyze_chart(client, feed, media_urls, date, text, author):
                 f"Tweet:\n{text}"}]
     try:
         resp = client.messages.create(
-            model=MODEL, max_tokens=400,
+            model=MODEL, max_tokens=400, thinking=SONNET_THINKING,
             system=[{"type": "text", "text": feed.vision_system}],
             output_config={"format": {"type": "json_schema",
                                       "schema": VISION_SCHEMA}},

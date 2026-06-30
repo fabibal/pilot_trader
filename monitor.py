@@ -115,11 +115,16 @@ HAIKU_OUTPUT_PER_1M = 5.00           # $ / 1M output tokens
 # Vision model for chart-image analysis (Haiku 4.5 does NOT accept images).
 # Only used for influencer tweets that carry a chart photo. Pricier per token,
 # so it runs as an ADD-ON to the cheap Haiku text pass, never as a replacement.
-# (claude-sonnet-4-20250514 is retired on this account; sonnet-4-6 is the
-# current vision-capable Sonnet at the same $3/$15 per-MTok pricing.)
-VISION_MODEL = "claude-sonnet-4-6"
-SONNET_INPUT_PER_1M = 3.00           # $ / 1M input tokens
-SONNET_OUTPUT_PER_1M = 15.00         # $ / 1M output tokens
+# (claude-sonnet-4-20250514 is retired on this account; Sonnet 5 is the current
+# vision-capable Sonnet — same $3/$15 sticker as 4-6, intro $2/$10 through
+# 2026-08-31. ⚠️ Sonnet 5 runs ADAPTIVE THINKING by default when `thinking` is
+# unset; every Sonnet call pins `thinking=SONNET_THINKING` (disabled) to keep the
+# tight max_tokens budgets for JSON only — else thinking eats the budget and the
+# json_schema response truncates.)
+VISION_MODEL = "claude-sonnet-5"
+SONNET_THINKING = {"type": "disabled"}   # Sonnet 5 defaults to adaptive; we don't want it
+SONNET_INPUT_PER_1M = 3.00           # $ / 1M input tokens (sticker; intro $2 to 2026-08-31)
+SONNET_OUTPUT_PER_1M = 15.00         # $ / 1M output tokens (sticker; intro $10 to 2026-08-31)
 MAX_VISION_IMAGES = 2                # cap images/tweet to bound vision cost
 
 # Batch API (--batch live runs + --backfill-batch). 50% cheaper than real-time,
@@ -384,6 +389,7 @@ class Interpreter:
             resp = self.client.messages.create(
                 model=VISION_MODEL,
                 max_tokens=300,
+                thinking=SONNET_THINKING,
                 system=[{"type": "text", "text": VISION_SYSTEM}],
                 output_config={"format": {"type": "json_schema",
                                           "schema": CHART_SCHEMA}},
