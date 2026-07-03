@@ -935,7 +935,20 @@ def collect_live_batch(interp, candidates):
         requests=_build_batch_requests(candidates))
     print(f"Submitted batch {batch.id}: {len(candidates)} requests. "
           f"Polling (max {BATCH_MAX_WAIT_S // 60} min)...")
-    if not _poll_batch(interp, batch.id, BATCH_MAX_WAIT_S):
+    try:
+        ended = _poll_batch(interp, batch.id, BATCH_MAX_WAIT_S)
+    except Exception:
+        # A transient API failure mid-poll must not strand the submitted batch:
+        # this run dies (state unwritten -> retried), and without a cancel the
+        # next run would submit a fresh batch while this one still bills.
+        try:
+            interp.client.messages.batches.cancel(batch.id)
+            print(f"  (cancelled batch {batch.id} after poll failure)",
+                  file=sys.stderr)
+        except Exception as e:                      # noqa: BLE001 - best-effort
+            print(f"  (cancel after poll failure failed: {e})", file=sys.stderr)
+        raise
+    if not ended:
         # Cancel the abandoned batch: the next run re-fetches these tweets and
         # submits a FRESH batch, so letting the old one run to completion would
         # bill the same tokens twice (its results are never collected).
@@ -1001,7 +1014,14 @@ def backfill_batch(interp):
         requests=_build_batch_requests(candidates))
     print(f"Submitted batch {batch.id}: {len(candidates)} requests "
           f"({skipped} replies skipped). Polling...")
-    _poll_batch(interp, batch.id)                 # backfill: wait as long as needed
+    try:
+        _poll_batch(interp, batch.id)             # backfill: wait as long as needed
+    except Exception:
+        try:                    # don't strand the batch if the poll dies
+            interp.client.messages.batches.cancel(batch.id)
+        except Exception as e:                      # noqa: BLE001 - best-effort
+            print(f"  (cancel after poll failure failed: {e})", file=sys.stderr)
+        raise
 
     # Backfill stays TEXT-only (no vision pass), matching the prior behaviour.
     parsed, errored = _collect_batch(interp, batch.id, lookup)

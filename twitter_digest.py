@@ -500,7 +500,10 @@ def select_candidates(raw, seen_ids, feed, seen_sigs=frozenset()):
         lang = tw.get("lang") or ""
         if lang in feed.skip_langs:
             continue                                  # skipped language
-        if feed.only_langs and lang not in feed.only_langs:
+        # Language-agnostic tags stay: Twitter marks media-only posts 'qme',
+        # short ticker/number-heavy text 'und'/'zxx' -- often English content.
+        if (feed.only_langs and lang not in feed.only_langs
+                and lang not in ("", "und", "qme", "zxx")):
             continue                                  # not an allowed language
         if not _has_analyzable_content(tw):
             continue                                  # contentless
@@ -681,6 +684,13 @@ def _target_value(t):
     if not m:
         return None
     suf = m.group(2)
+    if not suf:
+        # '$150-200k': the magnitude suffix trails the SECOND bound but applies
+        # to both -- without this a $150,000-$200,000 range would read as $150.
+        m2 = re.match(r"\$?\s*[\d.,]+\s*(?:-|–|—|to)\s*\$?\s*[\d.,]+\s*"
+                      r"(bn|[kmbt])\b", s)
+        if m2:
+            suf = m2.group(1)
     if suf in _SIZE_SUFFIX:          # billion/trillion is a size, not a price
         return None
     try:
@@ -810,10 +820,22 @@ def _new_forecast(key, cluster, sources, rep, analysis, chart):
     return rec
 
 
+def _load_ledger_strict(path, default):
+    """Ledger loader for the dedup-critical files: an ABSENT file is a fresh
+    start, but a file that exists yet fails to read/parse must abort the feed
+    (the per-feed isolation handler pages Telegram) -- silently proceeding with
+    an empty ledger would re-analyze everything and the next atomic write would
+    permanently erase all prior history."""
+    if not os.path.exists(path):
+        return default
+    with open(path, encoding="utf-8") as f:      # raises on unreadable/corrupt
+        return json.load(f)
+
+
 def _load_forecast_ledger(path):
     """Forecast ledger file is a dict {seen_ids, forecasts} (NOT a bare list like
-    the post-feed ledgers). Missing/corrupt -> empty skeleton."""
-    data = load_json(path, {})
+    the post-feed ledgers). Missing -> empty skeleton; corrupt -> raises."""
+    data = _load_ledger_strict(path, {})
     if not isinstance(data, dict):
         data = {}
     data.setdefault("seen_ids", [])
@@ -829,7 +851,14 @@ def _merge_into(dst, src):
     before = dst.get("source_count", 0)
     have = {s["tweet_id"] for s in dst.get("sources") or []}
     overlap = sum(1 for s in (src.get("sources") or []) if s.get("tweet_id") in have)
-    _merge_sources(dst, src.get("sources") or [], src.get("targets") or [])
+    # Only absorb src targets that normalize to dst's own identity -- a legacy
+    # row can carry foreign strings (a '$150K' bull target on a $60K bear row)
+    # that must not leak into the merged row's displayed targets.
+    dkey = dst.get("key") or _row_identity(dst)
+    dasset = (dst.get("asset") or "").upper().strip()
+    keep = [t for t in (src.get("targets") or [])
+            if _forecast_identity(dasset, t, dst.get("direction")) == dkey]
+    _merge_sources(dst, src.get("sources") or [], keep)
     dst["source_count"] = before + (src.get("source_count", 0) - overlap)
     if src.get("first_seen") and (not dst.get("first_seen")
                                   or src["first_seen"] < dst["first_seen"]):
@@ -919,15 +948,19 @@ def run_forecast_feed(feed, client, args):
             print(f"Re-clustered ledger -> {len(forecasts)} forecasts")
         return
 
-    # 1) Haiku triage every new post; record ALL as seen (don't re-triage).
+    # 1) Haiku triage every new post; a post is marked seen only once triage
+    #    SUCCEEDED -- a transient API/parse failure leaves the id unseen so the
+    #    next daily run re-triages it (the fetch window covers a 24h retry).
     triaged, tri_in, tri_out = [], 0, 0
     for tw in candidates:
         n = _normalize_getxapi(tw)
-        seen.add(n["id"])
         res, i_t, o_t = triage_forecasts(client, n.get("text", ""))
         tri_in += i_t
         tri_out += o_t
-        if res and res.get("relevant") and res.get("forecasts"):
+        if res is None:
+            continue
+        seen.add(n["id"])
+        if res.get("relevant") and res.get("forecasts"):
             triaged.append((tw, n, res["forecasts"]))
     print(f"Triaged {len(candidates)} (Haiku); {len(triaged)} carry a forecast")
 
@@ -937,7 +970,10 @@ def run_forecast_feed(feed, client, args):
     for tw, n, fcs in triaged:
         for fc in fcs:
             asset = (fc.get("asset") or "").upper().strip()
-            if not asset:
+            # Haiku occasionally returns a contract address or a phrase instead
+            # of a ticker; a 42-char hex "asset" must not become a public row.
+            if (not asset or len(asset) > 12
+                    or re.match(r"0X[0-9A-F]{6,}", asset)):
                 continue
             t = (fc.get("target") or "").strip()
             key = _forecast_identity(asset, t, fc.get("direction"))
@@ -961,6 +997,20 @@ def run_forecast_feed(feed, client, args):
             _merge_sources(forecasts[key], sources, c["targets"])
             upd_keys.append(key)
             continue
+        # A non-price-keyed cluster ('50x', a range rephrase) whose raw target
+        # already sits on an existing row of the same asset is an ECHO of that
+        # call, not a new forecast -- credit its reach there instead of minting
+        # a duplicate row and paying a duplicate Sonnet read.
+        if c["targets"] and _target_value(c["targets"][0]) is None:
+            norm = {t.strip().lower().replace(" ", "") for t in c["targets"]}
+            alt = next((k for k, f in forecasts.items()
+                        if f.get("asset") == c["asset"] and any(
+                            (t or "").strip().lower().replace(" ", "") in norm
+                            for t in f.get("targets") or [])), None)
+            if alt:
+                _merge_sources(forecasts[alt], sources, [])
+                upd_keys.append(alt)
+                continue
         rep_tw, rep = max(c["tweets"], key=lambda p: _authority(p[0]))
         date = (rep.get("created_at") or "")[:10]
         analysis, a_i, a_o = analyze_text(client, feed, date,
@@ -968,6 +1018,14 @@ def run_forecast_feed(feed, client, args):
                                           rep.get("author") or "")
         ana_in += a_i
         ana_out += a_o
+        if analysis is None:
+            # Transient Sonnet failure: creating the row now would freeze it
+            # narrative-less forever (echoes never re-read). Un-see the
+            # cluster's posts so the next run re-triages and re-reads it.
+            for _, nn in c["tweets"]:
+                seen.discard(nn["id"])
+            print(f"  SKIP {key}: analysis failed, retrying next run")
+            continue
         chart, media = None, rep.get("media") or []
         if media and not args.no_vision:
             chart, ci, co = analyze_chart(client, feed, media, date,
@@ -1004,7 +1062,7 @@ def run_feed(feed, client, args):
         return run_forecast_feed(feed, client, args)
     where = f"search: {feed.query}" if feed.is_search else f"@{feed.account}"
     print(f"\n=== {feed.display_name} ({where}) ===")
-    summaries = load_json(feed.summaries_file, [])
+    summaries = _load_ledger_strict(feed.summaries_file, [])
     if not isinstance(summaries, list):
         summaries = []
     seen = {str(r.get("tweet_id")) for r in summaries}

@@ -135,6 +135,9 @@ def get_getxapi_credits():
     fa = _credits_cache["fetched_at"]
     if fa is not None and now - fa < CREDITS_REFRESH_MS / 1000:
         return _credits_cache
+    # Claim the refresh slot up front: concurrent callbacks landing during a
+    # slow 15s fetch then serve the cached value instead of stampeding GetXAPI.
+    _credits_cache["fetched_at"] = now
     key = os.environ.get("GETXAPI_KEY")
     if not key:
         _credits_cache.update(fetched_at=now, ok=False)
@@ -262,15 +265,19 @@ def _load_hist_persist():
 
 
 _hist_persist = _load_hist_persist()   # "TICKER|DATE" -> close (float)
+# Warmer thread and request threads both mutate/dump the dict; without the lock
+# json.dump can hit "dictionary changed size during iteration" (not an OSError).
+_hist_lock = threading.Lock()
 
 
 def _save_hist_persist():
     try:
         os.makedirs(DATA_DIR, exist_ok=True)
         tmp = PRICE_CACHE_FILE + ".tmp"
-        with open(tmp, "w") as f:
-            json.dump(_hist_persist, f)
-        os.replace(tmp, PRICE_CACHE_FILE)
+        with _hist_lock:
+            with open(tmp, "w") as f:
+                json.dump(_hist_persist, f)
+            os.replace(tmp, PRICE_CACHE_FILE)
     except OSError:
         pass
 
@@ -337,7 +344,8 @@ def get_hist_close(ticker, date_str):
     # Persist only resolved closes for dates strictly in the past (immutable).
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     if price is not None and date_str < today:
-        _hist_persist[pkey] = price
+        with _hist_lock:
+            _hist_persist[pkey] = price
         _save_hist_persist()
     return price
 
@@ -377,7 +385,9 @@ def warm_prices(symbols):
 # --- return computation ------------------------------------------------------
 def estimate_entry(ticker, entry_price, trade_date, fallback_date,
                    asset_type="stock"):
-    if entry_price:
+    # NaN-guard: pandas coerces a JSON null entry_price to truthy NaN, which
+    # must not short-circuit the estimated-entry fallback.
+    if entry_price and entry_price == entry_price:
         return entry_price, False
     date = trade_date or (fallback_date or "")[:10]
     return get_hist_close(_yf_symbol(ticker, asset_type), date), True
@@ -594,21 +604,24 @@ def portfolio_cards(positions, selected=None):
         if pf == "unknown":          # unattributed umbrella tweets: no model card
             continue
         ps = by_pf[pf]
-        rets, dates = [], []
+        rets, spy_rets = [], []
         for p in ps:
             r = compute_return(p["ticker"], p.get("entry_price"),
                                p.get("trade_date"),
                                (p.get("opened_at") or "")[:10],
                                p.get("asset_type", "stock"))
             d = p.get("trade_date") or (p.get("opened_at") or "")[:10]
-            if d:
-                dates.append(d)
             if r:
                 rets.append((p["ticker"], r["val"]))
+                # Benchmark SPY over the SAME window as this position's return;
+                # a single min-date window overstates SPY for later entries.
+                s = spy_return_since(d) if d else None
+                if s is not None:
+                    spy_rets.append(s)
         avg = round(sum(v for _, v in rets) / len(rets), 1) if rets else None
         best = max(rets, key=lambda x: x[1]) if rets else None
         worst = min(rets, key=lambda x: x[1]) if rets else None
-        spy = spy_return_since(min(dates)) if dates else None
+        spy = round(sum(spy_rets) / len(spy_rets), 1) if spy_rets else None
         label = pf_label(pf)
 
         sel = (pf == selected)
@@ -1582,19 +1595,23 @@ def portfolio_kpis(positions):
     for pf in sorted(by):
         if pf == "unknown":          # unattributed umbrella tweets: skip KPI row
             continue
-        ps, rets, dates = by[pf], [], []
+        ps, rets, spy_rets = by[pf], [], []
         for p in ps:
             r = compute_return(p["ticker"], p.get("entry_price"),
                                p.get("trade_date"), (p.get("opened_at") or "")[:10],
                                p.get("asset_type", "stock"))
             d = p.get("trade_date") or (p.get("opened_at") or "")[:10]
             if d:
-                dates.append(d)
                 all_dates.append(d)
             if r:
                 rets.append((p["ticker"], r["val"]))
+                # Benchmark SPY over the SAME window as this position's return;
+                # a single min-date window overstates SPY for later entries.
+                s = spy_return_since(d) if d else None
+                if s is not None:
+                    spy_rets.append(s)
         avg = round(sum(v for _, v in rets) / len(rets), 1) if rets else None
-        spy = spy_return_since(min(dates)) if dates else None
+        spy = round(sum(spy_rets) / len(spy_rets), 1) if spy_rets else None
         delta = (round(avg - spy, 1)
                  if (avg is not None and spy is not None) else None)
         top = max(rets, key=lambda x: x[1])[0] if rets else None
@@ -1929,10 +1946,18 @@ def _tw_title(text):
     return (line[:90] + "…") if len(line) > 90 else (line or "post")
 
 
+def _safe_href(u):
+    """Hrefs/srcs sourced from ledgers or third-party APIs render on a PUBLIC
+    page -- allow only web URLs so a poisoned field can't become javascript:."""
+    return u if (isinstance(u, str)
+                 and u.startswith(("http://", "https://"))) else None
+
+
 def _tw_images(media):
     """Inline chart thumbnail(s) for a post. Small/medium (capped width, not full
     width); loads Twitter's lightweight `?name=small` variant and links to the
     full-res image. Empty span when the post had no images (card unchanged)."""
+    media = [u for u in (media or []) if _safe_href(u)]
     if not media:
         return html.Span()
     return html.Div([
@@ -1962,7 +1987,7 @@ def _tw_card(p):
         "padding": "12px 16px", "marginTop": "10px"}, children=[
         html.Div(style={"display": "flex", "justifyContent": "space-between",
                         "alignItems": "flex-start", "gap": "12px"}, children=[
-            html.A(_tw_title(p.get("text")), href=p.get("url"),
+            html.A(_tw_title(p.get("text")), href=_safe_href(p.get("url")),
                    target="_blank", rel="noopener noreferrer",
                    style={"color": C["text"], "fontWeight": "bold",
                           "fontSize": "0.9rem", "textDecoration": "none"}),
@@ -2065,6 +2090,13 @@ def _kndr_target_value(t):
     if not m:
         return None
     suf = m.group(2)
+    if not suf:
+        # '$150-200k': the magnitude suffix trails the SECOND bound but applies
+        # to both -- without this a $150,000-$200,000 range would read as $150.
+        m2 = re.match(r"\$?\s*[\d.,]+\s*(?:-|–|—|to)\s*\$?\s*[\d.,]+\s*"
+                      r"(bn|[kmbt])\b", s)
+        if m2:
+            suf = m2.group(1)
     if suf in _KNDR_SIZE_SUFFIX:
         return None
     try:
@@ -2083,9 +2115,12 @@ def _kndr_headline(f):
 
 
 def _is_price_forecast(f):
-    """True if the row's headline target is a parseable PRICE (flow/size calls
-    such as ETF-inflow estimates are excluded from the price table)."""
-    return _kndr_target_value(_kndr_headline(f)) is not None
+    """True if ANY of the row's targets is a parseable PRICE -- a mixed legacy
+    row can lead with a flow phrase yet still carry genuine price calls (the
+    6-source XRP row: inflow headline + '$8–$12.50'). Pure flow/size rows
+    (ETF-inflow estimates etc.) stay excluded from the price table."""
+    return any(_kndr_target_value(t) is not None
+               for t in (f.get("targets") or []))
 
 
 def _kndr_identity(f):
@@ -2141,7 +2176,17 @@ def _kendrick_row(f):
     arrow_color = (C["green"] if direction == "up"
                    else C["red"] if direction == "down" else C["dim"])
     asset = f.get("asset") or "?"
-    targets = "  ·  ".join(_dedupe_targets(f.get("targets"))) or "—"
+    # Show only targets consistent with the row's own identity: a price-keyed
+    # row hides stray foreign levels a legacy merge baked in ('$150K' on the
+    # $60K bear row); a flow-headlined row shown for its price calls displays
+    # exactly those price targets.
+    tlist = _dedupe_targets(f.get("targets"))
+    hv = _kndr_target_value(_kndr_headline(f))
+    if hv is not None:
+        tlist = [t for t in tlist if _kndr_target_value(t) == hv] or tlist
+    else:
+        tlist = [t for t in tlist if _kndr_target_value(t) is not None] or tlist
+    targets = "  ·  ".join(tlist) or "—"
     tf = f.get("timeframe") or "—"
     first = (f.get("first_seen") or "")[:10]
     sources = f.get("sources") or []
@@ -2184,7 +2229,7 @@ def _kendrick_row(f):
     themes = f.get("top_themes") or []
     src_links = []
     for s in sources[:12]:
-        src_links.append(html.A(f"@{s.get('author')}", href=s.get("url"),
+        src_links.append(html.A(f"@{s.get('author')}", href=_safe_href(s.get("url")),
             target="_blank", rel="noopener noreferrer",
             style={"color": C["blue"], "textDecoration": "none",
                    "fontSize": "0.72rem", "marginRight": "12px"}))
@@ -2363,7 +2408,7 @@ def _reddit_row(rec):
 
     cells = [
         _reddit_badge(rec.get("subreddit") or "?"),
-        html.A(title, href=rec.get("url"), target="_blank",
+        html.A(title, href=_safe_href(rec.get("url")), target="_blank",
                rel="noopener noreferrer", style={
                    "color": C["text"], "textDecoration": "none",
                    "display": "block", "overflow": "hidden",
@@ -3198,11 +3243,16 @@ def refresh(_n, portfolio):
         tks = r.get("tickers")
         if not (isinstance(tks, list) and len(tks) == 1):
             return ("", None)
-        if not r.get("entry_price") and r.get("signal_type") != "buy":
+        # DataFrame rows carry NaN where trades.json had null -- coerce back to
+        # None so the guards and the estimated-entry (*) fallback behave.
+        ep = r.get("entry_price")
+        ep = None if (ep is None or ep != ep) else ep
+        td = r.get("trade_date")
+        td = td if isinstance(td, str) and td else None
+        if not ep and r.get("signal_type") != "buy":
             return ("", None)
         at = r.get("asset_type")
-        res = compute_return(tks[0], r.get("entry_price"),
-                             r.get("trade_date"), r["timestamp"][:10],
+        res = compute_return(tks[0], ep, td, r["timestamp"][:10],
                              at if isinstance(at, str) else "stock")
         if not res:
             return ("", None)
