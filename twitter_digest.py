@@ -33,7 +33,7 @@ Feeds (see FEEDS):
       Kendrick crypto price calls, deduplicated into one row per forecast ->
       data/kendrick_forecasts.json ({seen_ids, forecasts}). No single account is
       dedicated to his calls and each call is echoed by 20-30 outlets, so we
-      search the topic, Haiku-triage each post into (asset, direction, target,
+      search the topic, Gemini-triage each post into (asset, direction, target,
       timeframe), cluster echoes by (asset, normalized price target), and Gemini-read one
       representative per new forecast. English only; source count = reach.
 
@@ -61,7 +61,6 @@ import urllib.parse
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-import anthropic
 from google import genai
 from google.genai import types as genai_types
 from google.genai import errors as genai_errors
@@ -76,7 +75,8 @@ from monitor import (load_env, load_json, notify_telegram, TELEGRAM_ENVS,
                      GETXAPI_BASE, GETXAPI_POSTS_PATH, GETXAPI_COST_PER_CALL,
                      MAX_VISION_IMAGES, GEMINI_INPUT_PER_1M, GEMINI_OUTPUT_PER_1M,
                      GEMINI_THINKING, GEMINI_DEEP_THINKING,
-                     HAIKU_INPUT_PER_1M, HAIKU_OUTPUT_PER_1M)
+                     MODEL as EXTRACT_MODEL, EXTRACT_INPUT_PER_1M,
+                     EXTRACT_OUTPUT_PER_1M, EXTRACT_THINKING)
 
 # --- config ---------------------------------------------------------------
 HOME = "/home/fbazsa/pilot_trader"
@@ -87,9 +87,10 @@ DATA_DIR = os.path.join(HOME, "data")
 # imported from there. $0.001/call, ~20 tweets/page.
 GETXAPI_SEARCH_PATH = "/twitter/tweet/advanced_search"
 
-# Gemini 3.5 Flash (NOT the tweet-signal pipeline's Haiku): we want a careful read
-# of dense on-chain commentary, and the vision pass needs a multimodal model anyway
-# (Haiku can't take images). Same model the Cowen YouTube digest uses. Both calls
+# Gemini 3.5 Flash (a step up from the cheap gemini-2.5-flash-lite the
+# tweet-signal pipeline and this file's own Kendrick triage use): we want a
+# careful read of dense on-chain commentary, and the vision pass needs a
+# multimodal model anyway. Same model the Cowen YouTube digest uses. Both calls
 # pin thinking_config=GEMINI_THINKING (budget 0) — Gemini 3.5 Flash thinks by
 # default, which would eat the tight max_output_tokens and truncate the JSON output.
 MODEL = "gemini-3.5-flash"
@@ -174,7 +175,7 @@ VISION_SCHEMA = {
 # --- forecast-ledger mode (kendrick_sc) -----------------------------------
 # kendrick_sc is a TOPIC SEARCH where ONE research event (a Standard Chartered /
 # Geoff Kendrick price call) is echoed by 20-30 outlets. Per-post cards would be
-# 20-30 near-duplicates, so this feed runs in FORECAST-LEDGER mode: a cheap Haiku
+# 20-30 near-duplicates, so this feed runs in FORECAST-LEDGER mode: a cheap Gemini
 # triage extracts the forecast(s) from each new post, posts are CLUSTERED by
 # (asset, normalized price target -- so '$40K' and '$40,000' are one row while
 # ETH $4,000 vs $40,000 stay distinct), and only a genuinely NEW forecast
@@ -183,7 +184,8 @@ VISION_SCHEMA = {
 # source + bump the count. One ledger row per forecast; the source count IS the
 # signal (how widely the call was picked up). Dedup is semantic (the forecast),
 # not textual (text_sig), so differently-worded reports of one call still merge.
-TRIAGE_MODEL = "claude-haiku-4-5-20251001"   # cheap gate; Gemini only on new ones
+TRIAGE_MODEL = EXTRACT_MODEL          # cheap gate (gemini-2.5-flash-lite); the
+                                     # analysis-tier MODEL is only used for new forecasts
 
 TRIAGE_BODY = (
     "You triage a single X/Twitter post for whether it states or relays a "
@@ -528,21 +530,6 @@ def select_candidates(raw, seen_ids, feed, seen_sigs=frozenset()):
 
 
 # --- LLM calls ------------------------------------------------------------
-def _parse_json(content_blocks):
-    block = next((b.text for b in content_blocks if b.type == "text"), None)
-    if not block:
-        return None
-    try:
-        return json.loads(block)
-    except json.JSONDecodeError:
-        return None
-
-
-def _usage_in(resp):
-    return (resp.usage.input_tokens + (resp.usage.cache_read_input_tokens or 0)
-            + (resp.usage.cache_creation_input_tokens or 0))
-
-
 def _parse_gemini_json(resp):
     try:
         return json.loads(resp.text)
@@ -765,21 +752,26 @@ def _source_of(tw, n):
     }
 
 
-def triage_forecasts(client, text):
-    """Haiku gate: does this post relay an SC/Kendrick crypto forecast, and which?
-    Returns (result_dict|None, in_tok, out_tok)."""
+def triage_forecasts(gemini_client, text):
+    """Gemini gate: does this post relay an SC/Kendrick crypto forecast, and
+    which? Returns (result_dict|None, in_tok, out_tok)."""
     try:
-        resp = client.messages.create(
-            model=TRIAGE_MODEL, max_tokens=600,
-            system=[{"type": "text", "text": TRIAGE_BODY}],
-            output_config={"format": {"type": "json_schema",
-                                      "schema": TRIAGE_SCHEMA}},
-            messages=[{"role": "user", "content": text}],
+        resp = gemini_client.models.generate_content(
+            model=TRIAGE_MODEL,
+            contents=text,
+            config=genai_types.GenerateContentConfig(
+                system_instruction=TRIAGE_BODY,
+                response_mime_type="application/json",
+                response_json_schema=TRIAGE_SCHEMA,
+                thinking_config=EXTRACT_THINKING,
+                max_output_tokens=600,
+            ),
         )
-    except anthropic.APIError as e:
+    except genai_errors.APIError as e:
         print(f"  [triage error] {type(e).__name__}: {e}", file=sys.stderr)
         return None, 0, 0
-    return _parse_json(resp.content), _usage_in(resp), resp.usage.output_tokens
+    in_tok, out_tok = _gemini_usage(resp)
+    return _parse_gemini_json(resp), in_tok, out_tok
 
 
 def _merge_sources(rec, sources, targets):
@@ -936,8 +928,8 @@ def _write_forecast_ledger(feed, ledger, forecasts, seen):
     write_json_atomic(feed.summaries_file, ledger)
 
 
-def run_forecast_feed(feed, client, gemini_client, args):
-    """kendrick_sc pipeline: Haiku triage -> cluster by (asset, price target) ->
+def run_forecast_feed(feed, gemini_client, args):
+    """kendrick_sc pipeline: Gemini triage -> cluster by (asset, price target) ->
     Gemini read of one representative per NEW forecast; echoes just add a source.
     One ledger row per forecast (vs one per post)."""
     print(f"\n=== {feed.display_name} (forecast ledger; search) ===")
@@ -967,13 +959,13 @@ def run_forecast_feed(feed, client, gemini_client, args):
             print(f"Re-clustered ledger -> {len(forecasts)} forecasts")
         return
 
-    # 1) Haiku triage every new post; a post is marked seen only once triage
+    # 1) Gemini triage every new post; a post is marked seen only once triage
     #    SUCCEEDED -- a transient API/parse failure leaves the id unseen so the
     #    next daily run re-triages it (the fetch window covers a 24h retry).
     triaged, tri_in, tri_out = [], 0, 0
     for tw in candidates:
         n = _normalize_getxapi(tw)
-        res, i_t, o_t = triage_forecasts(client, n.get("text", ""))
+        res, i_t, o_t = triage_forecasts(gemini_client, n.get("text", ""))
         tri_in += i_t
         tri_out += o_t
         if res is None:
@@ -981,7 +973,7 @@ def run_forecast_feed(feed, client, gemini_client, args):
         seen.add(n["id"])
         if res.get("relevant") and res.get("forecasts"):
             triaged.append((tw, n, res["forecasts"]))
-    print(f"Triaged {len(candidates)} (Haiku); {len(triaged)} carry a forecast")
+    print(f"Triaged {len(candidates)} (Gemini); {len(triaged)} carry a forecast")
 
     # 2) cluster echoes of one call by (asset + normalized price target); the
     #    timeframe is kept only for display, never for keying (it is too noisy).
@@ -989,7 +981,7 @@ def run_forecast_feed(feed, client, gemini_client, args):
     for tw, n, fcs in triaged:
         for fc in fcs:
             asset = (fc.get("asset") or "").upper().strip()
-            # Haiku occasionally returns a contract address or a phrase instead
+            # Gemini occasionally returns a contract address or a phrase instead
             # of a ticker; a 42-char hex "asset" must not become a public row.
             if (not asset or len(asset) > 12
                     or re.match(r"0X[0-9A-F]{6,}", asset)):
@@ -1059,9 +1051,9 @@ def run_forecast_feed(feed, client, gemini_client, args):
     for key in upd_keys:
         print(f"  +src {key}: now {forecasts[key]['source_count']}")
 
-    hcost = tri_in / 1e6 * HAIKU_INPUT_PER_1M + tri_out / 1e6 * HAIKU_OUTPUT_PER_1M
+    hcost = tri_in / 1e6 * EXTRACT_INPUT_PER_1M + tri_out / 1e6 * EXTRACT_OUTPUT_PER_1M
     scost = ana_in / 1e6 * GEMINI_INPUT_PER_1M + ana_out / 1e6 * GEMINI_OUTPUT_PER_1M
-    print(f"Triage Haiku in={tri_in} out={tri_out} (${hcost:.4f}); "
+    print(f"Triage Gemini in={tri_in} out={tri_out} (${hcost:.4f}); "
           f"Analysis Gemini in={ana_in} out={ana_out} (${scost:.4f}); "
           f"{len(new_keys)} new, {len(upd_keys)} updated")
 
@@ -1075,10 +1067,10 @@ def run_forecast_feed(feed, client, gemini_client, args):
     print(f"Wrote {len(forecasts)} forecasts -> {feed.summaries_file}")
 
 
-def run_feed(feed, client, gemini_client, args):
+def run_feed(feed, gemini_client, args):
     """Process one feed end-to-end: fetch -> filter -> analyze -> write ledger."""
     if feed.forecast_ledger:                 # kendrick_sc: forecast rows, not posts
-        return run_forecast_feed(feed, client, gemini_client, args)
+        return run_forecast_feed(feed, gemini_client, args)
     where = f"search: {feed.query}" if feed.is_search else f"@{feed.account}"
     print(f"\n=== {feed.display_name} ({where}) ===")
     summaries = _load_ledger_strict(feed.summaries_file, [])
@@ -1161,22 +1153,18 @@ def main():
     if args.force and not args.feed:
         ap.error("--force requires --feed (one feed at a time)")
 
-    for p in TELEGRAM_ENVS:                       # loads ANTHROPIC + GETXAPI + alerts
+    for p in TELEGRAM_ENVS:                       # loads GOOGLE + GETXAPI + alerts
         load_env(p)
-    if not os.environ.get("ANTHROPIC_API_KEY") or not os.environ.get("GETXAPI_KEY"):
-        print("Missing ANTHROPIC_API_KEY or GETXAPI_KEY in .env", file=sys.stderr)
-        sys.exit(1)
-    if not os.environ.get("GOOGLE_API_KEY"):
-        print("Missing GOOGLE_API_KEY in .env", file=sys.stderr)
+    if not os.environ.get("GOOGLE_API_KEY") or not os.environ.get("GETXAPI_KEY"):
+        print("Missing GOOGLE_API_KEY or GETXAPI_KEY in .env", file=sys.stderr)
         sys.exit(1)
 
     feeds = [FEEDS[args.feed]] if args.feed else list(FEEDS.values())
-    client = anthropic.Anthropic()
     gemini_client = genai.Client()
     failed = []
     for feed in feeds:
         try:
-            run_feed(feed, client, gemini_client, args)
+            run_feed(feed, gemini_client, args)
         except (SystemExit, KeyboardInterrupt):
             raise
         except Exception as exc:

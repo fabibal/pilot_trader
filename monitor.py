@@ -4,8 +4,8 @@ Multi-account trade-signal monitor for X portfolio bots, with LLM interpretation
 
 Pipeline per tweet:
   1. Skip @-replies (almost never the account's own new trade) — saves API cost.
-  2. Every remaining tweet is sent to the Anthropic API (claude-haiku-4-5-20251001)
-     which extracts ticker / action / size / entry price / trade date / portfolio
+  2. Every remaining tweet is sent to Gemini (gemini-2.5-flash-lite) which
+     extracts ticker / action / size / entry price / trade date / portfolio
      / confidence as schema-constrained JSON (always valid).
   3. Signals with action == "none" or a null ticker are discarded.
   4. Kept signals are tagged with their source account, written to
@@ -22,7 +22,7 @@ Run modes:
   python monitor.py --backfill      # re-interpret local snapshots (no fetch)
   python monitor.py --dry-run       # fetch + analyze, write nothing
 
-Requires ANTHROPIC_API_KEY + the source's key (GETXAPI_KEY or X_BEARER_TOKEN),
+Requires GOOGLE_API_KEY + the source's key (GETXAPI_KEY or X_BEARER_TOKEN),
 loaded from ~/pilot_trader/.env. Run with the project venv:
 /home/fbazsa/pilot_trader/.venv/bin/python monitor.py
 """
@@ -42,9 +42,6 @@ import urllib.request
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 
-import anthropic
-from anthropic.types.message_create_params import MessageCreateParamsNonStreaming
-from anthropic.types.messages.batch_create_params import Request
 from google import genai
 from google.genai import types as genai_types
 from google.genai import errors as genai_errors
@@ -108,11 +105,16 @@ GETXAPI_TWEETS_PATH = "/twitter/user/tweets_and_replies"
 GETXAPI_POSTS_PATH = "/twitter/user/tweets"
 GETXAPI_COST_PER_CALL = 0.001        # $/call (~20 tweets/page)
 
-# Anthropic
-MODEL = "claude-haiku-4-5-20251001"
+# Text extraction. gemini-2.5-flash-lite replaced Haiku here 2026-07 (Anthropic
+# credit balance depleted): cheap, stable (not the shut-down preview variant),
+# and schema-constrained JSON via response_json_schema works the same way.
+# thinking_budget=0 is explicit even though 2.5 Flash-Lite defaults to thinking
+# off, so a future Google default change can't silently eat max_output_tokens.
+MODEL = "gemini-2.5-flash-lite"
+EXTRACT_THINKING = genai_types.ThinkingConfig(thinking_budget=0)
 TWITTER_COST_PER_TWEET = 0.005       # X API read
-HAIKU_INPUT_PER_1M = 1.00            # $ / 1M input tokens
-HAIKU_OUTPUT_PER_1M = 5.00           # $ / 1M output tokens
+EXTRACT_INPUT_PER_1M = 0.10          # $ / 1M input tokens (gemini-2.5-flash-lite)
+EXTRACT_OUTPUT_PER_1M = 0.40         # $ / 1M output tokens
 
 # Vision model for chart-image analysis (Haiku 4.5 does NOT accept images).
 # Only used for influencer tweets that carry a chart photo. Pricier per token,
@@ -132,12 +134,6 @@ GEMINI_DEEP_THINKING = genai_types.ThinkingConfig(thinking_budget=-1)   # dynami
 GEMINI_INPUT_PER_1M = 1.50           # $ / 1M input tokens (gemini-3.5-flash)
 GEMINI_OUTPUT_PER_1M = 9.00          # $ / 1M output tokens, incl. thinking tokens
 MAX_VISION_IMAGES = 2                # cap images/tweet to bound vision cost
-
-# Batch API (--batch live runs + --backfill-batch). 50% cheaper than real-time,
-# but asynchronous: a live run SUBMITS one job and blocks-polls it to completion.
-BATCH_POLL_INTERVAL_S = 20           # seconds between batch status polls
-BATCH_MAX_WAIT_S = 55 * 60           # live runs defer to next cron if it exceeds
-                                     # this (cron spacing is 4h, user accepts <=60m)
 
 # --- LLM extraction --------------------------------------------------------
 # No pre-filter: every tweet is sent to Claude, which decides what is a signal.
@@ -294,24 +290,6 @@ CHART_SCHEMA = {
 }
 
 
-# Shared request shape for both the real-time and Batch API paths.
-# NOTE: Haiku 4.5's minimum cacheable prefix is 4096 tokens; this system prompt
-# is smaller, so the cache_control marker is harmless future-proofing only.
-def _system_blocks():
-    return [{"type": "text", "text": EXTRACTION_SYSTEM,
-             "cache_control": {"type": "ephemeral"}}]
-
-
-def _output_config():
-    return {"format": {"type": "json_schema", "schema": SIGNAL_SCHEMA}}
-
-
-def _user_message(account, text, tweet_date):
-    return {"role": "user",
-            "content": f"Posted by @{account}\nTweet date: {tweet_date}\n"
-                       f"Tweet:\n{text}"}
-
-
 def _image_block(url):
     """Download a Twitter media photo and return a Gemini image Part, or None
     on any failure. `name=small` keeps the download (and the vision token cost)
@@ -341,53 +319,44 @@ def _gemini_usage(resp):
             (u.candidates_token_count or 0) + (u.thoughts_token_count or 0))
 
 
-def _parse_json_text(content_blocks):
-    text_block = next((b.text for b in content_blocks if b.type == "text"), None)
-    if not text_block:
-        return None
-    try:
-        return json.loads(text_block)
-    except json.JSONDecodeError:
-        return None
-
-
 class Interpreter:
-    """Wraps the Anthropic client and tracks token usage for cost reporting."""
+    """Wraps the Gemini client and tracks token usage for cost reporting."""
 
     def __init__(self):
-        self.client = anthropic.Anthropic()   # reads ANTHROPIC_API_KEY from env
         self.gemini_client = genai.Client()   # reads GOOGLE_API_KEY from env
         self.calls = 0
         self.input_tokens = 0
         self.output_tokens = 0
-        # Vision (Gemini) usage tracked separately for cost reporting.
+        # Vision usage tracked separately for cost reporting (different model).
         self.vision_calls = 0
         self.vision_input_tokens = 0
         self.vision_output_tokens = 0
-        # Batch API (Haiku) usage — billed at 50%, tracked apart from real-time.
-        self.batch_input_tokens = 0
-        self.batch_output_tokens = 0
 
     def extract(self, text, account, tweet_date):
         """Return the parsed signal dict, or None on API/parse error."""
+        user = (f"Posted by @{account}\nTweet date: {tweet_date}\n"
+                f"Tweet:\n{text}")
         try:
-            resp = self.client.messages.create(
+            resp = self.gemini_client.models.generate_content(
                 model=MODEL,
-                max_tokens=300,
-                system=_system_blocks(),
-                output_config=_output_config(),
-                messages=[_user_message(account, text, tweet_date)],
+                contents=user,
+                config=genai_types.GenerateContentConfig(
+                    system_instruction=EXTRACTION_SYSTEM,
+                    response_mime_type="application/json",
+                    response_json_schema=SIGNAL_SCHEMA,
+                    thinking_config=EXTRACT_THINKING,
+                    max_output_tokens=300,
+                ),
             )
-        except anthropic.APIError as e:
+        except genai_errors.APIError as e:
             print(f"  [llm error] {type(e).__name__}: {e}", file=sys.stderr)
             return None
 
         self.calls += 1
-        self.input_tokens += resp.usage.input_tokens + \
-            (resp.usage.cache_read_input_tokens or 0) + \
-            (resp.usage.cache_creation_input_tokens or 0)
-        self.output_tokens += resp.usage.output_tokens
-        return _parse_json_text(resp.content)
+        in_tok, out_tok = _gemini_usage(resp)
+        self.input_tokens += in_tok
+        self.output_tokens += out_tok
+        return _parse_gemini_json(resp)
 
     def extract_chart(self, media_urls, text, account, tweet_date):
         """Run a Gemini vision pass over the tweet's chart image(s). Returns the
@@ -420,22 +389,18 @@ class Interpreter:
         return _parse_gemini_json(resp)
 
     def cost(self):
-        return (self.input_tokens / 1_000_000 * HAIKU_INPUT_PER_1M
-                + self.output_tokens / 1_000_000 * HAIKU_OUTPUT_PER_1M)
+        return (self.input_tokens / 1_000_000 * EXTRACT_INPUT_PER_1M
+                + self.output_tokens / 1_000_000 * EXTRACT_OUTPUT_PER_1M)
 
     def vision_cost(self):
         return (self.vision_input_tokens / 1_000_000 * GEMINI_INPUT_PER_1M
                 + self.vision_output_tokens / 1_000_000 * GEMINI_OUTPUT_PER_1M)
 
-    def batch_cost(self):
-        return (self.batch_input_tokens / 1_000_000 * HAIKU_INPUT_PER_1M
-                + self.batch_output_tokens / 1_000_000 * HAIKU_OUTPUT_PER_1M) * 0.5
-
 
 # Exit-phrasing detector for the reply gate. Word-boundary regex, not bare
 # substrings: "cut" as a substring matched "exeCUTe"/"hairCUT". Generous on
 # purpose — this gate protects the SELL side of the IBKR mirror, and a false
-# positive only costs one Haiku call.
+# positive only costs one Gemini call.
 SELL_PATTERN = re.compile(
     r"\b(sold|selling|sell|dumped|dumping|exited|exiting|exit|"
     r"trimmed|trimming|closed|closing|liquidated|liquidating|"
@@ -868,213 +833,16 @@ def tweets_for_account(account, state, backfill, source):
     return tweets, len(tweets), calls
 
 
-def _build_batch_requests(candidates):
-    """candidates: list of (custom_id, account, tw). Returns one Batch API Request
-    per tweet for the Haiku text pass — identical params to real-time extract()."""
-    return [
-        Request(custom_id=cid, params=MessageCreateParamsNonStreaming(
-            model=MODEL, max_tokens=300, system=_system_blocks(),
-            output_config=_output_config(),
-            messages=[_user_message(account, tw.get("text", ""),
-                                    (tw.get("created_at") or "")[:10])]))
-        for cid, account, tw in candidates
-    ]
-
-
-def _poll_batch(interp, batch_id, max_wait_s=None):
-    """Block-poll a submitted batch until processing_status == 'ended'. Returns
-    True when ended, or False if max_wait_s elapsed first (None = wait forever,
-    used by the latency-insensitive --backfill-batch)."""
-    waited = 0
-    while True:
-        b = interp.client.messages.batches.retrieve(batch_id)
-        if b.processing_status == "ended":
-            return True
-        if max_wait_s is not None and waited >= max_wait_s:
-            return False
-        rc = b.request_counts
-        print(f"  status={b.processing_status} processing={rc.processing} "
-              f"succeeded={rc.succeeded} errored={rc.errored}")
-        time.sleep(BATCH_POLL_INTERVAL_S)
-        waited += BATCH_POLL_INTERVAL_S
-
-
-def _collect_batch(interp, batch_id, lookup):
-    """Stream a completed batch's results. Returns (parsed, errored) where parsed
-    is a list of (account, tw, parsed_dict) and errored is the list of custom_ids
-    whose requests did not succeed. Accumulates batch token usage on interp
-    (billed at 50%). Records are TEXT-only; callers add the vision pass."""
-    parsed, errored = [], []
-    for result in interp.client.messages.batches.results(batch_id):
-        if result.result.type != "succeeded":
-            errored.append(result.custom_id)
-            continue
-        msg = result.result.message
-        u = msg.usage
-        interp.batch_input_tokens += u.input_tokens + \
-            (u.cache_read_input_tokens or 0) + (u.cache_creation_input_tokens or 0)
-        interp.batch_output_tokens += u.output_tokens
-        account, tw = lookup[result.custom_id]
-        parsed.append((account, tw, _parse_json_text(msg.content)))
-    return parsed, errored
-
-
-def _vision_enrich(interp, account, tw, parsed):
-    """Run the real-time influencer chart pass (Gemini vision) on a batch-parsed
-    result, mirroring build_signal's back half so batch mode keeps the same
-    chart enrichment as the live path. Mutates `parsed` in place."""
-    actionable = parsed and parsed["action"] != "none" and parsed.get("ticker")
-    if (SOURCE_TYPE.get(account) == "influencer" and tw.get("media")
-            and (actionable or _mentions_asset(parsed, tw.get("text", "")))):
-        chart = interp.extract_chart(tw["media"], tw.get("text", ""),
-                                     account, (tw.get("created_at") or "")[:10])
-        merge_chart(parsed, chart)
-        if not actionable:
-            promote_with_chart(parsed, chart)
-
-
-def collect_live_batch(interp, candidates):
-    """Submit live-run candidates as ONE Batch API job, block-poll it (bounded by
-    BATCH_MAX_WAIT_S), then build signal records. The influencer chart-vision pass
-    still runs real-time, so batch mode produces the SAME records as the live path
-    at half the Haiku cost. Returns the new records, or None if the batch did not
-    finish in time (caller must defer: don't persist state, retry next run)."""
-    lookup = {cid: (account, tw) for cid, account, tw in candidates}
-    batch = interp.client.messages.batches.create(
-        requests=_build_batch_requests(candidates))
-    print(f"Submitted batch {batch.id}: {len(candidates)} requests. "
-          f"Polling (max {BATCH_MAX_WAIT_S // 60} min)...")
-    try:
-        ended = _poll_batch(interp, batch.id, BATCH_MAX_WAIT_S)
-    except Exception:
-        # A transient API failure mid-poll must not strand the submitted batch:
-        # this run dies (state unwritten -> retried), and without a cancel the
-        # next run would submit a fresh batch while this one still bills.
-        try:
-            interp.client.messages.batches.cancel(batch.id)
-            print(f"  (cancelled batch {batch.id} after poll failure)",
-                  file=sys.stderr)
-        except Exception as e:                      # noqa: BLE001 - best-effort
-            print(f"  (cancel after poll failure failed: {e})", file=sys.stderr)
-        raise
-    if not ended:
-        # Cancel the abandoned batch: the next run re-fetches these tweets and
-        # submits a FRESH batch, so letting the old one run to completion would
-        # bill the same tokens twice (its results are never collected).
-        try:
-            interp.client.messages.batches.cancel(batch.id)
-        except Exception as e:                      # noqa: BLE001 - best-effort
-            print(f"  (cancel of abandoned batch failed: {e})", file=sys.stderr)
-        print(f"Batch {batch.id} did not finish within {BATCH_MAX_WAIT_S // 60} "
-              f"min - deferring signals to the next run.", file=sys.stderr)
-        notify_telegram(f"batch {batch.id} exceeded "
-                        f"{BATCH_MAX_WAIT_S // 60}min; cancelled + deferred to next run")
-        return None
-    parsed, errored = _collect_batch(interp, batch.id, lookup)
-    # Errored requests would otherwise be LOST FOREVER: newest_id has already
-    # advanced past these tweets, so they are never refetched. Retry each one
-    # real-time (full Haiku price; the errored set is normally tiny). A retry
-    # that still fails matches the non-batch live path's exposure (extract()
-    # returning None) — accepted there too.
-    if errored:
-        print(f"  batch: {len(errored)} request(s) errored; retrying "
-              f"real-time.", file=sys.stderr)
-        for cid in errored:
-            account, tw = lookup[cid]
-            p = interp.extract(tw.get("text", ""), account,
-                               (tw.get("created_at") or "")[:10])
-            parsed.append((account, tw, p))
-    records = []
-    for account, tw, p in parsed:
-        _vision_enrich(interp, account, tw, p)
-        rec = record_from_parsed(account, tw, p)
-        if rec:
-            records.append(rec)
-    return records
-
-
-def backfill_batch(interp):
-    """Interpret all local snapshot tweets via the Anthropic Batch API (50%
-    cheaper). Submits one batch, polls until complete, then writes results.
-    Rebuilds trades.json + positions.json from scratch (like --backfill)."""
-    candidates, skipped = [], 0
-    for account in ACCOUNTS:
-        influencer = SOURCE_TYPE.get(account) == "influencer"
-        for tw in load_json(RAW_FILES.get(account, ""), []):
-            if foreign_author(account, tw):       # drop other users' thread replies
-                skipped += 1
-                continue
-            if account in POSTS_ONLY_ACCOUNTS and tw.get("is_reply"):
-                skipped += 1
-                continue
-            if is_duplicate_retweet(tw.get("text", "")):  # RT of monitored acct
-                skipped += 1
-                continue
-            if not influencer and not should_send_to_llm(tw):
-                skipped += 1
-                continue
-            candidates.append((f"{account}__{tw['id']}", account, tw))
-
-    if not candidates:
-        print("No candidate tweets to batch.")
-        return
-    lookup = {cid: (account, tw) for cid, account, tw in candidates}
-    batch = interp.client.messages.batches.create(
-        requests=_build_batch_requests(candidates))
-    print(f"Submitted batch {batch.id}: {len(candidates)} requests "
-          f"({skipped} replies skipped). Polling...")
-    try:
-        _poll_batch(interp, batch.id)             # backfill: wait as long as needed
-    except Exception:
-        try:                    # don't strand the batch if the poll dies
-            interp.client.messages.batches.cancel(batch.id)
-        except Exception as e:                      # noqa: BLE001 - best-effort
-            print(f"  (cancel after poll failure failed: {e})", file=sys.stderr)
-        raise
-
-    # Backfill stays TEXT-only (no vision pass), matching the prior behaviour.
-    parsed, errored = _collect_batch(interp, batch.id, lookup)
-    signals = []
-    for account, tw, p in parsed:
-        rec = record_from_parsed(account, tw, p)
-        if rec:
-            signals.append(rec)
-
-    signals.sort(key=lambda r: r["timestamp"], reverse=True)
-    write_json_atomic(TRADES_FILE, signals)
-    reconcile(TRADES_FILE, POSITIONS_FILE)
-
-    batch_cost = interp.batch_cost()
-    realtime_cost = batch_cost * 2
-    by = {}
-    for s in signals:
-        key = (s["account"], s["signal_type"])
-        by[key] = by.get(key, 0) + 1
-    print(f"\nBatch complete: {len(signals)} signals "
-          f"({len(candidates)} requests, {len(errored)} errored).")
-    for (acct, st), c in sorted(by.items()):
-        print(f"  {acct:16} {st:9} {c}")
-    print(f"\nTokens: input {interp.batch_input_tokens}, "
-          f"output {interp.batch_output_tokens}")
-    print(f"Batch API cost: ${batch_cost:.4f} (50% off)")
-    print(f"  vs real-time: ${realtime_cost:.4f}  -> saved ${realtime_cost - batch_cost:.4f}")
-    print(f"Saved -> {TRADES_FILE} + {POSITIONS_FILE}")
-
-
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--backfill", action="store_true",
                     help="interpret local tweets_*.json instead of fetching X")
     ap.add_argument("--backfill-batch", action="store_true",
-                    help="like --backfill but via the Anthropic Batch API (50%% "
-                         "cheaper); submits one job and polls to completion")
+                    help="alias for --backfill (kept for the existing crontab; "
+                         "the Anthropic Batch API this once used is retired)")
     ap.add_argument("--batch", action="store_true",
-                    help=f"live incremental run via the Anthropic Batch API (50%% "
-                         f"cheaper Haiku text pass). Fetches fresh tweets, submits "
-                         f"ONE batch and block-polls it to completion (up to "
-                         f"{BATCH_MAX_WAIT_S // 60} min), then writes/reconciles/"
-                         f"trades as usual. Signals are delayed by the batch "
-                         f"turnaround.")
+                    help="accepted for the existing crontab; a no-op now (Gemini "
+                         "calls always run real-time -- see CLAUDE.md)")
     ap.add_argument("--source", choices=["official", "getxapi"], default="getxapi",
                     help="tweet backend: getxapi (default, tweets_and_replies) "
                          "or official X API")
@@ -1092,6 +860,11 @@ def main():
                     help="do NOT execute trades on IBKR after the run (auto_trader "
                          "still queues orders in no-trade mode for inspection).")
     args = ap.parse_args()
+    if args.backfill_batch:            # --backfill-batch is now just --backfill
+        args.backfill = True
+    if args.batch:
+        print("note: --batch no longer submits a batch job (Gemini calls run "
+              "real-time); flag kept for crontab compatibility.")
 
     # Telegram self-test: load creds from the env files and send one message.
     if args.test_telegram:
@@ -1104,15 +877,11 @@ def main():
 
     load_env(ENV_FILE)
     load_env(PAPER_ENV)   # Telegram creds (setdefault: pilot .env still wins)
-    if not os.environ.get("ANTHROPIC_API_KEY"):
-        print("ANTHROPIC_API_KEY is not set. Add it to ~/pilot_trader/.env "
-              "(ANTHROPIC_API_KEY=sk-ant-...) and re-run.", file=sys.stderr)
-        sys.exit(1)
     if not os.environ.get("GOOGLE_API_KEY"):
         print("GOOGLE_API_KEY is not set. Add it to ~/pilot_trader/.env "
               "and re-run.", file=sys.stderr)
         sys.exit(1)
-    if not args.backfill and not args.backfill_batch:
+    if not args.backfill:
         need = "GETXAPI_KEY" if args.source == "getxapi" else "X_BEARER_TOKEN"
         if not os.environ.get(need):
             print(f"{need} is not set. Add it to ~/pilot_trader/.env and re-run.",
@@ -1120,9 +889,6 @@ def main():
             sys.exit(1)
 
     interp = Interpreter()
-    if args.backfill_batch:
-        backfill_batch(interp)
-        return
 
     state = load_json(STATE_FILE, {})
     if not (args.backfill or args.dry_run):
@@ -1147,7 +913,6 @@ def main():
 
     all_new, total_reads, total_skipped, total_sell_cand, total_calls = \
         [], 0, 0, 0, 0
-    candidates = []          # (custom_id, account, tw) accumulator for --batch
     fetch_failures = []      # accounts whose GetXAPI fetch failed after retries
     attempted = 0            # accounts that reached the fetch (not slow-skipped)
     now = datetime.now(timezone.utc)
@@ -1232,26 +997,17 @@ def main():
                 else:
                     skipped += 1
                     continue
-            if args.batch:
-                # Defer the LLM call: queue the tweet for one bulk Batch API job
-                # submitted after every account is fetched. `new` counts queued
-                # tweets here (actual signals are resolved post-batch).
-                candidates.append((f"{account}__{tw['id']}", account, tw))
+            sig = build_signal(account, tw, interp)
+            if sig:
+                all_new.append(sig)
                 seen_ids.add(tw["id"])
                 new += 1
-            else:
-                sig = build_signal(account, tw, interp)
-                if sig:
-                    all_new.append(sig)
-                    seen_ids.add(tw["id"])
-                    new += 1
         total_skipped += skipped
         total_sell_cand += sell_cand
-        label = "queued for batch" if args.batch else "new signals"
         print(f"[{account}] scanned {len(tweets)}, already-seen-skipped {seen}, "
               f"foreign-author-skipped {foreign}, retweet-skipped {retweet}, "
               f"reply-skipped {skipped}, "
-              f"reply-sell-candidate {sell_cand}, {label} {new}")
+              f"reply-sell-candidate {sell_cand}, new signals {new}")
 
     # If EVERY attempted account failed to fetch, this is a total GetXAPI outage:
     # defer the whole run (leave state unwritten so the next run refetches via the
@@ -1268,19 +1024,6 @@ def main():
         print(f"WARNING: {len(fetch_failures)}/{attempted} account(s) failed "
               f"fetch after retries, continuing with the rest: "
               f"{', '.join(fetch_failures)}", file=sys.stderr)
-
-    # --batch: now run the single bulk job. A timeout leaves state unwritten so
-    # the next run refetches+resubmits these tweets (no signals are lost).
-    if args.batch:
-        if candidates:
-            result = collect_live_batch(interp, candidates)
-            if result is None:
-                print("Batch did not complete; no writes this run.",
-                      file=sys.stderr)
-                return
-            all_new = result
-        else:
-            print("No candidate tweets to batch.")
 
     merged = existing + all_new
     merged.sort(key=lambda r: r["timestamp"], reverse=True)
@@ -1309,18 +1052,14 @@ def main():
         print(f"  {acct:16} {st:9} {c}")
     print(f"\nreply-skipped (no API call): {total_skipped}  |  "
           f"reply-sell-candidate (sent to LLM): {total_sell_cand}")
-    print(f"LLM text calls (Haiku): {interp.calls}  "
+    print(f"LLM text calls (Gemini {MODEL}): {interp.calls}  "
           f"(input {interp.input_tokens} tok, output {interp.output_tokens} tok)"
           f"  ${interp.cost():.4f}")
-    if interp.batch_input_tokens or interp.batch_output_tokens:
-        print(f"LLM batch text (Haiku, 50% off): input "
-              f"{interp.batch_input_tokens} tok, output "
-              f"{interp.batch_output_tokens} tok  ${interp.batch_cost():.4f}")
     print(f"LLM vision calls (Gemini): {interp.vision_calls}  "
           f"(input {interp.vision_input_tokens} tok, "
           f"output {interp.vision_output_tokens} tok)  ${interp.vision_cost():.4f}")
     print(f"LLM cost this run: "
-          f"${interp.cost() + interp.batch_cost() + interp.vision_cost():.4f}")
+          f"${interp.cost() + interp.vision_cost():.4f}")
     if not args.backfill:
         if args.source == "getxapi":
             print(f"GetXAPI [{args.source}]: {total_reads} tweets in "
@@ -1330,8 +1069,7 @@ def main():
                   f"(${total_reads * TWITTER_COST_PER_TWEET:.4f})")
 
     # Append per-run cost telemetry (skip dry-run writes and zero-LLM runs).
-    if not args.dry_run and (interp.calls or interp.vision_calls
-                             or interp.batch_input_tokens):
+    if not args.dry_run and (interp.calls or interp.vision_calls):
         log_cost(interp)
 
     # Automatic execution: hand off to auto_trader (AI mirror -> IBKR paper) on
@@ -1354,14 +1092,11 @@ def log_cost(interp):
     but never breaks the run."""
     rec = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
-        # Fold batch Haiku tokens into the haiku_* totals (dashboard sums these);
-        # total_usd already discounts the batch portion via interp.batch_cost().
-        "haiku_input_tok": interp.input_tokens + interp.batch_input_tokens,
-        "haiku_output_tok": interp.output_tokens + interp.batch_output_tokens,
+        "extract_input_tok": interp.input_tokens,
+        "extract_output_tok": interp.output_tokens,
         "vision_input_tok": interp.vision_input_tokens,
         "vision_output_tok": interp.vision_output_tokens,
-        "total_usd": round(
-            interp.cost() + interp.batch_cost() + interp.vision_cost(), 6),
+        "total_usd": round(interp.cost() + interp.vision_cost(), 6),
     }
     try:
         log = load_json(COST_LOG_FILE, [])

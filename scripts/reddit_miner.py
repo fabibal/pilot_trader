@@ -5,14 +5,14 @@ reddit_miner.py - daily Reddit trading-strategy miner.
 Pipeline (mirrors monitor.py's "scrape -> LLM -> json" shape, for Reddit posts):
 
   RedditAPI top-of-week posts per subreddit       -> candidate posts
-   -> claude-haiku-4-5 structured analysis (is this a CONCRETE strategy?),
-      submitted as ONE Batch API job per run (50% cheaper than synchronous)
+   -> gemini-2.5-flash-lite structured analysis (is this a CONCRETE strategy?),
+      one real-time call per new post
    -> data/reddit_strategies.json  (append-only event log, one record/strategy)
 
 A post counts as a strategy only if it clearly carries >=3 of: a specific entry
 condition, a specific exit condition, a named asset/ticker, a timeframe, a
 backtest result / win rate, code or a formula, risk-management details. The
-Haiku call applies that rule and returns is_strategy + confidence + the
+Gemini call applies that rule and returns is_strategy + confidence + the
 structured fields.
 
 Dedup: .seen_reddit_ids.json holds every post_id already analyzed (strategy or
@@ -25,23 +25,22 @@ daily cron never re-send a post to the LLM. Only NEW posts cost tokens.
   python scripts/reddit_miner.py --min-confidence 0.7   # stricter keep gate
   python scripts/reddit_miner.py --dry-run              # analyze + print, no write
 
-Requires REDDITAPI_TOKEN + ANTHROPIC_API_KEY in ~/pilot_trader/.env. Run with the
+Requires REDDITAPI_TOKEN + GOOGLE_API_KEY in ~/pilot_trader/.env. Run with the
 project venv: /home/fbazsa/pilot_trader/.venv/bin/python scripts/reddit_miner.py
 """
 import argparse
 import json
 import os
 import sys
-import time
 import traceback
 import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 
-import anthropic
-from anthropic.types.message_create_params import MessageCreateParamsNonStreaming
-from anthropic.types.messages.batch_create_params import Request
+from google import genai
+from google.genai import types as genai_types
+from google.genai import errors as genai_errors
 
 # reddit_miner lives in scripts/; put the repo root on sys.path so the shared
 # monitor.py / reconcile.py helpers import cleanly when run as
@@ -49,13 +48,15 @@ from anthropic.types.messages.batch_create_params import Request
 sys.path.insert(0, "/home/fbazsa/pilot_trader")
 from reconcile import write_json_atomic                       # noqa: E402
 from monitor import (load_env, load_json, notify_telegram,    # noqa: E402
-                     TELEGRAM_ENVS)
+                     TELEGRAM_ENVS, MODEL as EXTRACT_MODEL,
+                     EXTRACT_INPUT_PER_1M, EXTRACT_OUTPUT_PER_1M,
+                     EXTRACT_THINKING)
 
 # --- config ----------------------------------------------------------------
 HOME = "/home/fbazsa/pilot_trader"
 DATA_DIR = os.path.join(HOME, "data")
 STRATEGIES_FILE = os.path.join(DATA_DIR, "reddit_strategies.json")
-# Per-run Anthropic spend ledger (one record/run: timestamp + tokens + USD) so
+# Per-run Gemini spend ledger (one record/run: timestamp + tokens + USD) so
 # the dashboard can show Reddit mining cost separately from the tweet pipeline.
 COST_LOG_FILE = os.path.join(DATA_DIR, "reddit_cost_log.json")
 # Seen-id ledger (every analyzed post_id, strategy or not) so the LLM never
@@ -71,26 +72,19 @@ DEFAULT_LIMIT = 25                    # posts/sub (RedditAPI page size)
 SORT = "top"
 TIMEFRAME = "week"                    # top-of-week: high-signal, low-noise
 
-# Anthropic. Haiku 4.5 (the same text model the tweet pipeline uses) -- cheap,
-# and strategy detection is a structured text-classification task it handles
-# well. Vision is never needed here (text posts only).
-MODEL = "claude-haiku-4-5-20251001"
-HAIKU_INPUT_PER_1M = 1.00             # $ / 1M input tokens
-HAIKU_OUTPUT_PER_1M = 5.00            # $ / 1M output tokens
+# gemini-2.5-flash-lite (the same text model the tweet pipeline uses, since
+# 2026-07 when the Anthropic credit balance ran out) -- cheap, and strategy
+# detection is a structured text-classification task it handles well. Vision
+# is never needed here (text posts only). Real-time, one call per new post:
+# Gemini's own Batch API has a different shape than Anthropic's and, at
+# gemini-2.5-flash-lite's real-time rate, isn't needed for the cost to stay low.
+MODEL = EXTRACT_MODEL
 # Cap post body sent to the model; long DD write-ups can run huge. ~16k chars
 # ~= 4k tokens, ample for the strategy details while bounding per-post cost.
 MAX_POST_CHARS = 16_000
 # Keep gate: a strategy is written only if confidence >= this (override with
 # --min-confidence). is_strategy already encodes the >=3-criteria rule.
 DEFAULT_MIN_CONFIDENCE = 0.6
-
-# Batch API: Haiku requests are billed 50% cheaper, but asynchronous -- we submit
-# ONE job for all new posts and block-poll it to completion (same shape as
-# monitor.py's tweet batch). Reddit's top/week posts stay fetchable for days, so
-# a run whose batch times out just re-batches them next time -- no real-time
-# fallback needed (unlike monitor's tweets, which advance past a high-water id).
-BATCH_POLL_INTERVAL_S = 20            # seconds between batch status polls
-BATCH_MAX_WAIT_S = 55 * 60            # defer to next run if a batch exceeds this
 
 # --- LLM analysis ----------------------------------------------------------
 ANALYSIS_SYSTEM = (
@@ -210,133 +204,59 @@ def signal_count(a):
             + bool(a.get("has_backtest")) + bool(a.get("has_code")))
 
 
-def _parse_json(content_blocks):
-    block = next((b.text for b in content_blocks if b.type == "text"), None)
-    if not block:
-        return None
+def _parse_json(resp):
     try:
-        return json.loads(block)
-    except json.JSONDecodeError:
+        return json.loads(resp.text)
+    except (json.JSONDecodeError, TypeError, ValueError):
         return None
-
-
-def _system_blocks():
-    # cache_control marks the (fixed) system prompt for prompt caching. NOTE:
-    # Haiku 4.5's minimum cacheable prefix is 4096 tokens and ANALYSIS_SYSTEM is
-    # only ~530, so this is a harmless no-op today (the cost line confirms
-    # cache read/write stay 0); it activates automatically only if the prompt
-    # later grows past 4096. Same marker monitor.py carries on its text prompt.
-    return [{"type": "text", "text": ANALYSIS_SYSTEM,
-             "cache_control": {"type": "ephemeral"}}]
-
-
-def _output_config():
-    return {"format": {"type": "json_schema", "schema": ANALYSIS_SCHEMA}}
 
 
 def _user_message(post):
     body = post.get("body") or ""
     if len(body) > MAX_POST_CHARS:
         body = body[:MAX_POST_CHARS] + "\n...[post truncated]"
-    return {"role": "user",
-            "content": (f"Subreddit: r/{post['subreddit']}\n"
-                        f"Title: {post['title']}\n\n"
-                        f"Body:\n{body or '(no body text)'}")}
+    return (f"Subreddit: r/{post['subreddit']}\n"
+            f"Title: {post['title']}\n\n"
+            f"Body:\n{body or '(no body text)'}")
 
 
-def _build_batch_requests(candidates):
-    """candidates: list of (custom_id, post). One Batch API Request per post,
-    with the same model / system prompt / json_schema as the former sync call."""
-    return [
-        # 800 (not 500): the replicability schema can emit long
-        # missing_for_replication + red_flags lists; too low a cap truncates the
-        # JSON and the result fails to parse.
-        Request(custom_id=cid, params=MessageCreateParamsNonStreaming(
-            model=MODEL, max_tokens=800, system=_system_blocks(),
-            output_config=_output_config(), messages=[_user_message(post)]))
-        for cid, post in candidates
-    ]
-
-
-def _poll_batch(client, batch_id, max_wait_s=None):
-    """Block-poll a submitted batch until processing_status == 'ended'. Returns
-    True when ended, or False if max_wait_s elapsed first (None = wait forever).
-    Same loop as monitor.py's _poll_batch."""
-    waited = 0
-    while True:
-        b = client.messages.batches.retrieve(batch_id)
-        if b.processing_status == "ended":
-            return True
-        if max_wait_s is not None and waited >= max_wait_s:
-            return False
-        rc = b.request_counts
-        print(f"  status={b.processing_status} processing={rc.processing} "
-              f"succeeded={rc.succeeded} errored={rc.errored}")
-        time.sleep(BATCH_POLL_INTERVAL_S)
-        waited += BATCH_POLL_INTERVAL_S
-
-
-def _collect_batch(client, batch_id, lookup):
-    """Stream a completed batch's results. Returns (parsed, errored, in_tok,
-    out_tok, cache_read, cache_create): parsed is [(post, analysis_dict_or_None),
-    ...] for SUCCEEDED requests (None when the JSON failed to parse); errored is
-    the custom_ids whose request did not succeed -- left un-seen so the next run
-    re-batches them. in_tok folds the cache tokens in (for cost); cache_read /
-    cache_create are also returned SEPARATELY so the cost line can confirm
-    whether prompt caching actually fired."""
+def analyze_posts(gemini_client, candidates):
+    """Analyze each candidate post with Gemini, real-time -- Anthropic's Batch
+    API this once used has no Gemini equivalent with the same shape, and
+    gemini-2.5-flash-lite's real-time rate is already cheaper than Haiku's
+    50%-off batch rate, so the async submit/poll/cancel dance buys nothing here.
+    Returns (parsed, errored, in_tok, out_tok): parsed is
+    [(post, analysis_dict_or_None), ...] for posts the API call itself
+    succeeded on (None when the JSON failed to parse); errored is the posts
+    whose call raised -- left un-seen so the next run retries them."""
     parsed, errored = [], []
-    in_tok = out_tok = cache_read = cache_create = 0
-    for result in client.messages.batches.results(batch_id):
-        if result.result.type != "succeeded":
-            errored.append(result.custom_id)
-            continue
-        msg = result.result.message
-        u = msg.usage
-        cr = u.cache_read_input_tokens or 0
-        cc = u.cache_creation_input_tokens or 0
-        in_tok += u.input_tokens + cr + cc
-        out_tok += u.output_tokens
-        cache_read += cr
-        cache_create += cc
-        parsed.append((lookup[result.custom_id], _parse_json(msg.content)))
-    return parsed, errored, in_tok, out_tok, cache_read, cache_create
-
-
-def _cache_line(cache_read, cache_create):
-    """One-line cache telemetry for the cost summary. Both stay 0 until
-    ANALYSIS_SYSTEM exceeds Haiku's 4096-token cache minimum (see _system_blocks);
-    the next real run will show non-zero here if caching ever starts firing."""
-    note = ("  (no-op: prompt < Haiku 4096-tok minimum)"
-            if cache_read == 0 and cache_create == 0 else "")
-    return f"  cache: read={cache_read} write={cache_create}{note}"
-
-
-def submit_batch(client, candidates):
-    """Submit all new posts as ONE Batch API job and block-poll it (bounded by
-    BATCH_MAX_WAIT_S). Returns _collect_batch's 6-tuple (parsed, errored, in_tok,
-    out_tok, cache_read, cache_create), or None if the batch did not finish in
-    time -- the caller then defers (writes nothing; the posts stay un-seen and
-    are re-batched next run). Mirrors monitor.py's collect_live_batch, minus the
-    tweet-only vision pass."""
-    lookup = {cid: post for cid, post in candidates}
-    batch = client.messages.batches.create(
-        requests=_build_batch_requests(candidates))
-    print(f"Submitted batch {batch.id}: {len(candidates)} requests. "
-          f"Polling (max {BATCH_MAX_WAIT_S // 60} min)...")
-    if not _poll_batch(client, batch.id, BATCH_MAX_WAIT_S):
-        # Cancel the abandoned batch so its tokens aren't billed for results we
-        # never collect (the next run submits a fresh one) -- same guard as
-        # monitor.py.
+    in_tok = out_tok = 0
+    for cid, post in candidates:
         try:
-            client.messages.batches.cancel(batch.id)
-        except Exception as e:                        # noqa: BLE001 - best-effort
-            print(f"  (cancel of abandoned batch failed: {e})", file=sys.stderr)
-        print(f"Batch {batch.id} did not finish within {BATCH_MAX_WAIT_S // 60} "
-              f"min - deferring to the next run.", file=sys.stderr)
-        notify_telegram(f"reddit_miner batch {batch.id} exceeded "
-                        f"{BATCH_MAX_WAIT_S // 60}min; cancelled + deferred")
-        return None
-    return _collect_batch(client, batch.id, lookup)
+            resp = gemini_client.models.generate_content(
+                model=MODEL,
+                contents=_user_message(post),
+                config=genai_types.GenerateContentConfig(
+                    system_instruction=ANALYSIS_SYSTEM,
+                    response_mime_type="application/json",
+                    response_json_schema=ANALYSIS_SCHEMA,
+                    thinking_config=EXTRACT_THINKING,
+                    # 800 (not 500): the replicability schema can emit long
+                    # missing_for_replication + red_flags lists; too low a cap
+                    # truncates the JSON and the result fails to parse.
+                    max_output_tokens=800,
+                ),
+            )
+        except genai_errors.APIError as e:
+            print(f"  [{post['post_id']}] llm error: {type(e).__name__}: {e}",
+                  file=sys.stderr)
+            errored.append(cid)
+            continue
+        u = resp.usage_metadata
+        in_tok += u.prompt_token_count or 0
+        out_tok += (u.candidates_token_count or 0) + (u.thoughts_token_count or 0)
+        parsed.append((post, _parse_json(resp)))
+    return parsed, errored, in_tok, out_tok
 
 
 # --- RedditAPI fetch -------------------------------------------------------
@@ -508,13 +428,13 @@ def main():
                     help="min model confidence to keep a strategy "
                          "(default: %(default)s)")
     ap.add_argument("--dry-run", action="store_true",
-                    help="submit + analyze the batch and print, but do NOT write "
+                    help="analyze and print, but do NOT write "
                          "the strategies / seen files")
     args = ap.parse_args()
 
-    for p in TELEGRAM_ENVS:            # loads ANTHROPIC_API_KEY + REDDITAPI_TOKEN
+    for p in TELEGRAM_ENVS:            # loads GOOGLE_API_KEY + REDDITAPI_TOKEN
         load_env(p)
-    missing = [k for k in ("ANTHROPIC_API_KEY", "REDDITAPI_TOKEN")
+    missing = [k for k in ("GOOGLE_API_KEY", "REDDITAPI_TOKEN")
                if not os.environ.get(k)]
     if missing:
         print(f"Missing required env var(s): {', '.join(missing)}. Add them to "
@@ -538,32 +458,25 @@ def main():
         print("No new posts to analyze.")
         return
 
-    client = anthropic.Anthropic()    # reads ANTHROPIC_API_KEY from env
-    result = submit_batch(client, candidates)
-    if result is None:                # batch timed out -> deferred, nothing written
-        print("Batch did not complete; no writes this run.", file=sys.stderr)
-        return
-    parsed, errored, in_tok, out_tok, cache_read, cache_create = result
+    gemini_client = genai.Client()    # reads GOOGLE_API_KEY from env
+    parsed, errored, in_tok, out_tok = analyze_posts(gemini_client, candidates)
     if errored:
-        print(f"  batch: {len(errored)} request(s) errored; left un-seen for "
+        print(f"  {len(errored)} request(s) errored; left un-seen for "
               f"the next run.", file=sys.stderr)
 
     records, analyzed = build_records(parsed, args.min_confidence)
-    # Mark seen only the posts the batch returned a result for; errored ones stay
-    # un-seen so the next run re-batches them.
+    # Mark seen only the posts the call actually succeeded on; errored ones stay
+    # un-seen so the next run retries them.
     newly_seen = {post["post_id"] for post, _ in parsed}
-    # Batch Haiku is billed at 50% of the synchronous rate.
-    cost = (in_tok / 1_000_000 * HAIKU_INPUT_PER_1M
-            + out_tok / 1_000_000 * HAIKU_OUTPUT_PER_1M) * 0.5
+    cost = (in_tok / 1_000_000 * EXTRACT_INPUT_PER_1M
+            + out_tok / 1_000_000 * EXTRACT_OUTPUT_PER_1M)
 
     if args.dry_run:
         print(f"\n[dry-run] {len(parsed)} result(s), analyzed {analyzed}, "
               f"{len(records)} strateg(ies); no files written.")
         if records:
             print(json.dumps(records, indent=2))
-        print(f"Batch Haiku tokens in={in_tok} out={out_tok} "
-              f"(${cost:.4f} at 50% batch rate)")
-        print(_cache_line(cache_read, cache_create))
+        print(f"Gemini tokens in={in_tok} out={out_tok} (${cost:.4f})")
         return
 
     merged = existing + records
@@ -573,10 +486,10 @@ def main():
     write_json_atomic(STRATEGIES_FILE, merged)
     write_json_atomic(SEEN_FILE, sorted(seen))
 
-    # Append this run's Anthropic spend to the cost ledger; the dashboard sums
+    # Append this run's Gemini spend to the cost ledger; the dashboard sums
     # the current calendar month ("Reddit: $X.XX this month"). Skip zero-token
-    # runs (e.g. every batch request errored) so the ledger holds only real
-    # billed runs, and never let a telemetry-write failure fail the whole run
+    # runs (e.g. every request errored) so the ledger holds only real billed
+    # runs, and never let a telemetry-write failure fail the whole run
     # (strategies + seen are already persisted above).
     if in_tok or out_tok:
         try:
@@ -599,9 +512,7 @@ def main():
         by_sub[r["subreddit"]] = by_sub.get(r["subreddit"], 0) + 1
     for sub, c in sorted(by_sub.items()):
         print(f"  r/{sub:18} {c}")
-    print(f"Batch Haiku tokens in={in_tok} out={out_tok} "
-          f"(${cost:.4f} at 50% batch rate)")
-    print(_cache_line(cache_read, cache_create))
+    print(f"Gemini tokens in={in_tok} out={out_tok} (${cost:.4f})")
     print(f"Wrote {len(merged)} strategies -> {STRATEGIES_FILE}")
     print(f"Seen ledger: {len(seen)} ids -> {SEEN_FILE}")
 
