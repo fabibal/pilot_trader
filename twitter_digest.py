@@ -8,9 +8,9 @@ Runs one or more analysis-only feeds. Each feed mirrors youtube_monitor.py's
   GetXAPI posts-only endpoint (no @-replies)        -> recent posts
    -> filter: drop retweets, replies, configured skip-languages, and
       contentless posts; dedup by tweet id against the feed's summaries ledger
-   -> Claude Sonnet structured analysis (sentiment / market view / levels /
+   -> Gemini structured analysis (sentiment / market view / levels /
       themes / summary), written IN HUNGARIAN (sentiment enum stays English)
-        + optional Sonnet VISION pass on chart image(s) -- same mechanism as
+        + optional Gemini VISION pass on chart image(s) -- same mechanism as
           monitor.py's IncomeSharks chart pass (capped at MAX_VISION_IMAGES) --
           whose read is merged into the record
    -> the feed's summaries json   (one record per tweet, newest-first)
@@ -34,7 +34,7 @@ Feeds (see FEEDS):
       data/kendrick_forecasts.json ({seen_ids, forecasts}). No single account is
       dedicated to his calls and each call is echoed by 20-30 outlets, so we
       search the topic, Haiku-triage each post into (asset, direction, target,
-      timeframe), cluster echoes by (asset, normalized price target), and Sonnet-read one
+      timeframe), cluster echoes by (asset, normalized price target), and Gemini-read one
       representative per new forecast. English only; source count = reach.
 
 ANALYSIS ONLY: neither account is in accounts.ACCOUNTS; neither is written to
@@ -62,17 +62,20 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 
 import anthropic
+from google import genai
+from google.genai import types as genai_types
+from google.genai import errors as genai_errors
 
 from reconcile import write_json_atomic
 # Reuse monitor.py's tested helpers (env/json loaders, GetXAPI client + tweet
-# normalizer, the base64 image-block fetch, Telegram alerting) so this stays DRY
+# normalizer, the Gemini image-block fetch, Telegram alerting) so this stays DRY
 # and consistent with the rest of the pipeline.
 import monitor
 from monitor import (load_env, load_json, notify_telegram, TELEGRAM_ENVS,
                      getxapi_get, _normalize_getxapi, _image_block,
                      GETXAPI_BASE, GETXAPI_POSTS_PATH, GETXAPI_COST_PER_CALL,
-                     MAX_VISION_IMAGES, SONNET_INPUT_PER_1M, SONNET_OUTPUT_PER_1M,
-                     SONNET_THINKING, SONNET_DEEP_THINKING,
+                     MAX_VISION_IMAGES, GEMINI_INPUT_PER_1M, GEMINI_OUTPUT_PER_1M,
+                     GEMINI_THINKING, GEMINI_DEEP_THINKING,
                      HAIKU_INPUT_PER_1M, HAIKU_OUTPUT_PER_1M)
 
 # --- config ---------------------------------------------------------------
@@ -84,12 +87,12 @@ DATA_DIR = os.path.join(HOME, "data")
 # imported from there. $0.001/call, ~20 tweets/page.
 GETXAPI_SEARCH_PATH = "/twitter/tweet/advanced_search"
 
-# Sonnet 5 (NOT the tweet-signal pipeline's Haiku): we want a careful read of
-# dense on-chain commentary, and the vision pass needs Sonnet anyway (Haiku can't
-# take images). Same model the Cowen YouTube digest uses. Both Sonnet calls pin
-# thinking=SONNET_THINKING (disabled) — Sonnet 5 runs adaptive thinking by default,
-# which would eat the tight max_tokens and truncate the json_schema output.
-MODEL = "claude-sonnet-5"
+# Gemini 3.5 Flash (NOT the tweet-signal pipeline's Haiku): we want a careful read
+# of dense on-chain commentary, and the vision pass needs a multimodal model anyway
+# (Haiku can't take images). Same model the Cowen YouTube digest uses. Both calls
+# pin thinking_config=GEMINI_THINKING (budget 0) — Gemini 3.5 Flash thinks by
+# default, which would eat the tight max_output_tokens and truncate the JSON output.
+MODEL = "gemini-3.5-flash"
 
 # --- LLM analysis ---------------------------------------------------------
 # The system prompt is shared across feeds EXCEPT for a 1-2 sentence persona
@@ -176,11 +179,11 @@ VISION_SCHEMA = {
 # (asset, normalized price target -- so '$40K' and '$40,000' are one row while
 # ETH $4,000 vs $40,000 stay distinct), and only a genuinely NEW forecast
 # triggers the (expensive)
-# Sonnet read of one representative post. Echoes of a known forecast just append a
+# Gemini read of one representative post. Echoes of a known forecast just append a
 # source + bump the count. One ledger row per forecast; the source count IS the
 # signal (how widely the call was picked up). Dedup is semantic (the forecast),
 # not textual (text_sig), so differently-worded reports of one call still merge.
-TRIAGE_MODEL = "claude-haiku-4-5-20251001"   # cheap gate; Sonnet only on new ones
+TRIAGE_MODEL = "claude-haiku-4-5-20251001"   # cheap gate; Gemini only on new ones
 
 TRIAGE_BODY = (
     "You triage a single X/Twitter post for whether it states or relays a "
@@ -257,10 +260,10 @@ class Feed:
     # event into a single forecast row instead of one card per post. See the
     # "forecast-ledger mode" block above and run_forecast_feed().
     forecast_ledger: bool = False
-    # Opt this feed's TEXT analysis into Sonnet 5 adaptive thinking (the chart
+    # Opt this feed's TEXT analysis into Gemini dynamic thinking (the chart
     # vision pass stays disabled regardless). Only worth it for dense, low-volume
     # reads -- kept off for the high-volume per-tweet feeds (ki/joao) where it adds
-    # cost without much gain. analyze_text gives max_tokens room when this is set.
+    # cost without much gain. analyze_text gives max_output_tokens room when this is set.
     deep_thinking: bool = False
     # Fetch buffer. Daily cron + high-water dedup means a normal run stops early
     # after a few new posts; this only bounds catch-up after a missed run.
@@ -313,7 +316,7 @@ FEEDS = {f.key: f for f in [
             "tweet by Joao Wedson (Alphractal)."),
         # He posts in English; the occasional non-English item is a retweet/reply
         # /bare promo link already dropped by the RT/reply/contentless filters, so
-        # no language is skipped (Sonnet outputs Hungarian regardless of input).
+        # no language is skipped (Gemini outputs Hungarian regardless of input).
         skip_langs=frozenset(),
         max_fetch=60,                    # ~6 posts/day -> ~10 days of headroom
     ),
@@ -540,61 +543,77 @@ def _usage_in(resp):
             + (resp.usage.cache_creation_input_tokens or 0))
 
 
-def analyze_text(client, feed, date, text, author):
-    """Sonnet text analysis. Returns (analysis_dict|None, in_tok, out_tok)."""
+def _parse_gemini_json(resp):
+    try:
+        return json.loads(resp.text)
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return None
+
+
+def _gemini_usage(resp):
+    u = resp.usage_metadata
+    return (u.prompt_token_count or 0,
+            (u.candidates_token_count or 0) + (u.thoughts_token_count or 0))
+
+
+def analyze_text(gemini_client, feed, date, text, author):
+    """Gemini text analysis. Returns (analysis_dict|None, in_tok, out_tok)."""
     user = (f"Posted by @{author} ({feed.display_name})\n"
             f"Date: {date}\nPost:\n{text}")
     # Hungarian is token-heavier than English; long-form essays need headroom or
     # the JSON truncates (600 was too low -> 1000). deep_thinking feeds also spend
-    # part of max_tokens on adaptive thinking, so they get a much larger budget.
+    # part of max_output_tokens on dynamic thinking, so they get a much larger budget.
     deep = feed.deep_thinking
     try:
-        resp = client.messages.create(
+        resp = gemini_client.models.generate_content(
             model=MODEL,
-            max_tokens=6000 if deep else 1000,
-            thinking=SONNET_DEEP_THINKING if deep else SONNET_THINKING,
-            system=[{"type": "text", "text": feed.analysis_system}],
-            output_config={"format": {"type": "json_schema",
-                                      "schema": ANALYSIS_SCHEMA}},
-            messages=[{"role": "user", "content": user}],
+            contents=user,
+            config=genai_types.GenerateContentConfig(
+                system_instruction=feed.analysis_system,
+                response_mime_type="application/json",
+                response_json_schema=ANALYSIS_SCHEMA,
+                thinking_config=GEMINI_DEEP_THINKING if deep else GEMINI_THINKING,
+                max_output_tokens=6000 if deep else 1000,
+            ),
         )
-    except anthropic.APIError as e:
+    except genai_errors.APIError as e:
         print(f"  [llm error] {type(e).__name__}: {e}", file=sys.stderr)
         return None, 0, 0
-    return _parse_json(resp.content), _usage_in(resp), resp.usage.output_tokens
+    in_tok, out_tok = _gemini_usage(resp)
+    return _parse_gemini_json(resp), in_tok, out_tok
 
 
-def analyze_chart(client, feed, media_urls, date, text, author):
-    """Sonnet vision pass over the post's chart image(s) (capped at
+def analyze_chart(gemini_client, feed, media_urls, date, text, author):
+    """Gemini vision pass over the post's chart image(s) (capped at
     MAX_VISION_IMAGES, same as the IncomeSharks pass). Returns
     (chart_dict|None, in_tok, out_tok); None if no image could be fetched."""
-    blocks = []
-    for url in media_urls[:MAX_VISION_IMAGES]:
-        b = _image_block(url)
-        if b:
-            blocks.append(b)
-    if not blocks:
+    parts = [p for p in (_image_block(u) for u in media_urls[:MAX_VISION_IMAGES])
+             if p]
+    if not parts:
         return None, 0, 0
-    content = blocks + [{
-        "type": "text",
-        "text": f"Posted by @{author} ({feed.display_name})\nDate: {date}\n"
-                f"Tweet:\n{text}"}]
+    contents = parts + [f"Posted by @{author} ({feed.display_name})\nDate: {date}\n"
+                        f"Tweet:\n{text}"]
     try:
-        resp = client.messages.create(
-            model=MODEL, max_tokens=400, thinking=SONNET_THINKING,
-            system=[{"type": "text", "text": feed.vision_system}],
-            output_config={"format": {"type": "json_schema",
-                                      "schema": VISION_SCHEMA}},
-            messages=[{"role": "user", "content": content}],
+        resp = gemini_client.models.generate_content(
+            model=MODEL,
+            contents=contents,
+            config=genai_types.GenerateContentConfig(
+                system_instruction=feed.vision_system,
+                response_mime_type="application/json",
+                response_json_schema=VISION_SCHEMA,
+                thinking_config=GEMINI_THINKING,
+                max_output_tokens=400,
+            ),
         )
-    except anthropic.APIError as e:
+    except genai_errors.APIError as e:
         print(f"  [vision error] {type(e).__name__}: {e}", file=sys.stderr)
         return None, 0, 0
-    return _parse_json(resp.content), _usage_in(resp), resp.usage.output_tokens
+    in_tok, out_tok = _gemini_usage(resp)
+    return _parse_gemini_json(resp), in_tok, out_tok
 
 
 # --- main -----------------------------------------------------------------
-def process(candidates, client, feed, allow_vision=True):
+def process(candidates, gemini_client, feed, allow_vision=True):
     """Analyze each candidate tweet; return (records, in_tok, out_tok)."""
     records, total_in, total_out = [], 0, 0
     for tw in candidates:
@@ -608,7 +627,7 @@ def process(candidates, client, feed, allow_vision=True):
         print(f"- {tid}  {('@' + author + ' ') if feed.is_search else ''}"
               f"{text[:70].replace(chr(10), ' ')}")
 
-        analysis, in_t, out_t = analyze_text(client, feed, date, text, author)
+        analysis, in_t, out_t = analyze_text(gemini_client, feed, date, text, author)
         total_in += in_t
         total_out += out_t
         if not analysis:
@@ -635,7 +654,7 @@ def process(candidates, client, feed, allow_vision=True):
             rec["text_sig"] = _content_sig(text)
 
         if media and allow_vision:
-            chart, ci, co = analyze_chart(client, feed, media, date, text, author)
+            chart, ci, co = analyze_chart(gemini_client, feed, media, date, text, author)
             total_in += ci
             total_out += co
             if chart:
@@ -792,7 +811,7 @@ def _merge_sources(rec, sources, targets):
 
 
 def _new_forecast(key, cluster, sources, rep, analysis, chart):
-    """Build a fresh forecast record from a cluster + the Sonnet read of its
+    """Build a fresh forecast record from a cluster + the Gemini read of its
     representative post (analysis/chart may be None if the LLM call failed)."""
     cas = [s["created_at"] for s in sources if s.get("created_at")]
     analysis = analysis or {}
@@ -917,9 +936,9 @@ def _write_forecast_ledger(feed, ledger, forecasts, seen):
     write_json_atomic(feed.summaries_file, ledger)
 
 
-def run_forecast_feed(feed, client, args):
+def run_forecast_feed(feed, client, gemini_client, args):
     """kendrick_sc pipeline: Haiku triage -> cluster by (asset, price target) ->
-    Sonnet read of one representative per NEW forecast; echoes just add a source.
+    Gemini read of one representative per NEW forecast; echoes just add a source.
     One ledger row per forecast (vs one per post)."""
     print(f"\n=== {feed.display_name} (forecast ledger; search) ===")
     ledger = _load_forecast_ledger(feed.summaries_file)
@@ -988,7 +1007,7 @@ def run_forecast_feed(feed, client, args):
                 c["timeframe"] = tf      # prefer a concrete year for display
             c["tweets"].append((tw, n))
 
-    # 3) new forecast -> Sonnet a representative; known forecast -> add sources
+    # 3) new forecast -> Gemini a representative; known forecast -> add sources
     ana_in = ana_out = 0
     new_keys, upd_keys = [], []
     for key, c in clusters.items():
@@ -1000,7 +1019,7 @@ def run_forecast_feed(feed, client, args):
         # A non-price-keyed cluster ('50x', a range rephrase) whose raw target
         # already sits on an existing row of the same asset is an ECHO of that
         # call, not a new forecast -- credit its reach there instead of minting
-        # a duplicate row and paying a duplicate Sonnet read.
+        # a duplicate row and paying a duplicate Gemini read.
         if c["targets"] and _target_value(c["targets"][0]) is None:
             norm = {t.strip().lower().replace(" ", "") for t in c["targets"]}
             alt = next((k for k, f in forecasts.items()
@@ -1013,13 +1032,13 @@ def run_forecast_feed(feed, client, args):
                 continue
         rep_tw, rep = max(c["tweets"], key=lambda p: _authority(p[0]))
         date = (rep.get("created_at") or "")[:10]
-        analysis, a_i, a_o = analyze_text(client, feed, date,
+        analysis, a_i, a_o = analyze_text(gemini_client, feed, date,
                                           rep.get("text", ""),
                                           rep.get("author") or "")
         ana_in += a_i
         ana_out += a_o
         if analysis is None:
-            # Transient Sonnet failure: creating the row now would freeze it
+            # Transient Gemini failure: creating the row now would freeze it
             # narrative-less forever (echoes never re-read). Un-see the
             # cluster's posts so the next run re-triages and re-reads it.
             for _, nn in c["tweets"]:
@@ -1028,7 +1047,7 @@ def run_forecast_feed(feed, client, args):
             continue
         chart, media = None, rep.get("media") or []
         if media and not args.no_vision:
-            chart, ci, co = analyze_chart(client, feed, media, date,
+            chart, ci, co = analyze_chart(gemini_client, feed, media, date,
                                           rep.get("text", ""),
                                           rep.get("author") or "")
             ana_in += ci
@@ -1041,9 +1060,9 @@ def run_forecast_feed(feed, client, args):
         print(f"  +src {key}: now {forecasts[key]['source_count']}")
 
     hcost = tri_in / 1e6 * HAIKU_INPUT_PER_1M + tri_out / 1e6 * HAIKU_OUTPUT_PER_1M
-    scost = ana_in / 1e6 * SONNET_INPUT_PER_1M + ana_out / 1e6 * SONNET_OUTPUT_PER_1M
+    scost = ana_in / 1e6 * GEMINI_INPUT_PER_1M + ana_out / 1e6 * GEMINI_OUTPUT_PER_1M
     print(f"Triage Haiku in={tri_in} out={tri_out} (${hcost:.4f}); "
-          f"Analysis Sonnet in={ana_in} out={ana_out} (${scost:.4f}); "
+          f"Analysis Gemini in={ana_in} out={ana_out} (${scost:.4f}); "
           f"{len(new_keys)} new, {len(upd_keys)} updated")
 
     if args.dry_run:
@@ -1056,10 +1075,10 @@ def run_forecast_feed(feed, client, args):
     print(f"Wrote {len(forecasts)} forecasts -> {feed.summaries_file}")
 
 
-def run_feed(feed, client, args):
+def run_feed(feed, client, gemini_client, args):
     """Process one feed end-to-end: fetch -> filter -> analyze -> write ledger."""
     if feed.forecast_ledger:                 # kendrick_sc: forecast rows, not posts
-        return run_forecast_feed(feed, client, args)
+        return run_forecast_feed(feed, client, gemini_client, args)
     where = f"search: {feed.query}" if feed.is_search else f"@{feed.account}"
     print(f"\n=== {feed.display_name} ({where}) ===")
     summaries = _load_ledger_strict(feed.summaries_file, [])
@@ -1098,13 +1117,13 @@ def run_feed(feed, client, args):
 
     print(f"Processing {len(candidates)} post(s)"
           + (" [FORCE]" if force_ids else "") + ":")
-    records, in_tok, out_tok = process(candidates, client, feed,
+    records, in_tok, out_tok = process(candidates, gemini_client, feed,
                                        allow_vision=not args.no_vision)
 
-    cost = (in_tok / 1_000_000 * SONNET_INPUT_PER_1M
-            + out_tok / 1_000_000 * SONNET_OUTPUT_PER_1M)
+    cost = (in_tok / 1_000_000 * GEMINI_INPUT_PER_1M
+            + out_tok / 1_000_000 * GEMINI_OUTPUT_PER_1M)
     print(f"Analyzed {len(records)} post(s); "
-          f"Sonnet tokens in={in_tok} out={out_tok} (${cost:.4f})")
+          f"Gemini tokens in={in_tok} out={out_tok} (${cost:.4f})")
 
     if not records:
         return
@@ -1136,7 +1155,7 @@ def main():
     ap.add_argument("--dry-run", action="store_true",
                     help="analyze and print, but do not write the summaries file")
     ap.add_argument("--no-vision", action="store_true",
-                    help="skip the Sonnet chart-image vision pass")
+                    help="skip the Gemini chart-image vision pass")
     args = ap.parse_args()
 
     if args.force and not args.feed:
@@ -1147,13 +1166,17 @@ def main():
     if not os.environ.get("ANTHROPIC_API_KEY") or not os.environ.get("GETXAPI_KEY"):
         print("Missing ANTHROPIC_API_KEY or GETXAPI_KEY in .env", file=sys.stderr)
         sys.exit(1)
+    if not os.environ.get("GOOGLE_API_KEY"):
+        print("Missing GOOGLE_API_KEY in .env", file=sys.stderr)
+        sys.exit(1)
 
     feeds = [FEEDS[args.feed]] if args.feed else list(FEEDS.values())
     client = anthropic.Anthropic()
+    gemini_client = genai.Client()
     failed = []
     for feed in feeds:
         try:
-            run_feed(feed, client, args)
+            run_feed(feed, client, gemini_client, args)
         except (SystemExit, KeyboardInterrupt):
             raise
         except Exception as exc:

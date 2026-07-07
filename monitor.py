@@ -28,7 +28,6 @@ loaded from ~/pilot_trader/.env. Run with the project venv:
 """
 
 import argparse
-import base64
 import gzip
 import http.client
 import json
@@ -46,6 +45,9 @@ from email.utils import parsedate_to_datetime
 import anthropic
 from anthropic.types.message_create_params import MessageCreateParamsNonStreaming
 from anthropic.types.messages.batch_create_params import Request
+from google import genai
+from google.genai import types as genai_types
+from google.genai import errors as genai_errors
 
 from reconcile import reconcile, write_json_atomic
 
@@ -115,21 +117,20 @@ HAIKU_OUTPUT_PER_1M = 5.00           # $ / 1M output tokens
 # Vision model for chart-image analysis (Haiku 4.5 does NOT accept images).
 # Only used for influencer tweets that carry a chart photo. Pricier per token,
 # so it runs as an ADD-ON to the cheap Haiku text pass, never as a replacement.
-# (claude-sonnet-4-20250514 is retired on this account; Sonnet 5 is the current
-# vision-capable Sonnet — same $3/$15 sticker as 4-6, intro $2/$10 through
-# 2026-08-31. ⚠️ Sonnet 5 runs ADAPTIVE THINKING by default when `thinking` is
-# unset; every Sonnet call pins `thinking=SONNET_THINKING` (disabled) to keep the
-# tight max_tokens budgets for JSON only — else thinking eats the budget and the
-# json_schema response truncates.)
-VISION_MODEL = "claude-sonnet-5"
-SONNET_THINKING = {"type": "disabled"}   # Sonnet 5 defaults to adaptive; we don't want it
-# Opt-in adaptive thinking for the dense, low-volume analysis reads where the
+# (Gemini 3.5 Flash via Google AI Studio / google-genai — replaced Sonnet 5 here
+# 2026-07: multimodal + json-schema structured output, no Anthropic vision spend.
+# thinking_budget=0 mirrors the old "thinking disabled" behavior — Gemini 3.5
+# Flash also thinks by default (medium), which would eat the tight max_output_tokens
+# budgets meant for JSON only.)
+VISION_MODEL = "gemini-3.5-flash"
+GEMINI_THINKING = genai_types.ThinkingConfig(thinking_budget=0)     # off
+# Opt-in dynamic thinking for the dense, low-volume analysis reads where the
 # reasoning pays off (YouTube/Cowen TA, Kendrick forecasts) — NOT vision, NOT the
-# high-volume per-tweet feeds (ki/joao). Callers that use it MUST give max_tokens
-# room for thinking + JSON or the json_schema output truncates.
-SONNET_DEEP_THINKING = {"type": "adaptive"}
-SONNET_INPUT_PER_1M = 3.00           # $ / 1M input tokens (sticker; intro $2 to 2026-08-31)
-SONNET_OUTPUT_PER_1M = 15.00         # $ / 1M output tokens (sticker; intro $10 to 2026-08-31)
+# high-volume per-tweet feeds (ki/joao). Callers that use it MUST give
+# max_output_tokens room for thinking + JSON or the json output truncates.
+GEMINI_DEEP_THINKING = genai_types.ThinkingConfig(thinking_budget=-1)   # dynamic
+GEMINI_INPUT_PER_1M = 1.50           # $ / 1M input tokens (gemini-3.5-flash)
+GEMINI_OUTPUT_PER_1M = 9.00          # $ / 1M output tokens, incl. thinking tokens
 MAX_VISION_IMAGES = 2                # cap images/tweet to bound vision cost
 
 # Batch API (--batch live runs + --backfill-batch). 50% cheaper than real-time,
@@ -312,9 +313,9 @@ def _user_message(account, text, tweet_date):
 
 
 def _image_block(url):
-    """Download a Twitter media photo and return an Anthropic image content
-    block (base64), or None on any failure. `name=small` keeps the download
-    (and the vision token cost) modest while staying legible for chart levels."""
+    """Download a Twitter media photo and return a Gemini image Part, or None
+    on any failure. `name=small` keeps the download (and the vision token cost)
+    modest while staying legible for chart levels."""
     try:
         req = urllib.request.Request(url + "?name=small",
                                      headers={"User-Agent": "Mozilla/5.0"})
@@ -324,9 +325,20 @@ def _image_block(url):
         print(f"  [media error] {url}: {e}", file=sys.stderr)
         return None
     media_type = "image/png" if url.lower().endswith(".png") else "image/jpeg"
-    return {"type": "image",
-            "source": {"type": "base64", "media_type": media_type,
-                       "data": base64.standard_b64encode(raw).decode("ascii")}}
+    return genai_types.Part.from_bytes(data=raw, mime_type=media_type)
+
+
+def _parse_gemini_json(resp):
+    try:
+        return json.loads(resp.text)
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return None
+
+
+def _gemini_usage(resp):
+    u = resp.usage_metadata
+    return (u.prompt_token_count or 0,
+            (u.candidates_token_count or 0) + (u.thoughts_token_count or 0))
 
 
 def _parse_json_text(content_blocks):
@@ -344,10 +356,11 @@ class Interpreter:
 
     def __init__(self):
         self.client = anthropic.Anthropic()   # reads ANTHROPIC_API_KEY from env
+        self.gemini_client = genai.Client()   # reads GOOGLE_API_KEY from env
         self.calls = 0
         self.input_tokens = 0
         self.output_tokens = 0
-        # Vision (Sonnet) usage tracked separately for cost reporting.
+        # Vision (Gemini) usage tracked separately for cost reporting.
         self.vision_calls = 0
         self.vision_input_tokens = 0
         self.vision_output_tokens = 0
@@ -377,46 +390,42 @@ class Interpreter:
         return _parse_json_text(resp.content)
 
     def extract_chart(self, media_urls, text, account, tweet_date):
-        """Run a Sonnet vision pass over the tweet's chart image(s). Returns the
+        """Run a Gemini vision pass over the tweet's chart image(s). Returns the
         parsed chart dict, or None if no image could be fetched / on error."""
-        blocks = []
-        for url in media_urls[:MAX_VISION_IMAGES]:
-            b = _image_block(url)
-            if b:
-                blocks.append(b)
-        if not blocks:
+        parts = [p for p in (_image_block(u)
+                             for u in media_urls[:MAX_VISION_IMAGES]) if p]
+        if not parts:
             return None
-        content = blocks + [{
-            "type": "text",
-            "text": f"Posted by @{account}\nTweet date: {tweet_date}\n"
-                    f"Tweet:\n{text}"}]
+        contents = parts + [f"Posted by @{account}\nTweet date: {tweet_date}\n"
+                            f"Tweet:\n{text}"]
         try:
-            resp = self.client.messages.create(
+            resp = self.gemini_client.models.generate_content(
                 model=VISION_MODEL,
-                max_tokens=300,
-                thinking=SONNET_THINKING,
-                system=[{"type": "text", "text": VISION_SYSTEM}],
-                output_config={"format": {"type": "json_schema",
-                                          "schema": CHART_SCHEMA}},
-                messages=[{"role": "user", "content": content}],
+                contents=contents,
+                config=genai_types.GenerateContentConfig(
+                    system_instruction=VISION_SYSTEM,
+                    response_mime_type="application/json",
+                    response_json_schema=CHART_SCHEMA,
+                    thinking_config=GEMINI_THINKING,
+                    max_output_tokens=300,
+                ),
             )
-        except anthropic.APIError as e:
+        except genai_errors.APIError as e:
             print(f"  [vision error] {type(e).__name__}: {e}", file=sys.stderr)
             return None
         self.vision_calls += 1
-        self.vision_input_tokens += resp.usage.input_tokens + \
-            (resp.usage.cache_read_input_tokens or 0) + \
-            (resp.usage.cache_creation_input_tokens or 0)
-        self.vision_output_tokens += resp.usage.output_tokens
-        return _parse_json_text(resp.content)
+        in_tok, out_tok = _gemini_usage(resp)
+        self.vision_input_tokens += in_tok
+        self.vision_output_tokens += out_tok
+        return _parse_gemini_json(resp)
 
     def cost(self):
         return (self.input_tokens / 1_000_000 * HAIKU_INPUT_PER_1M
                 + self.output_tokens / 1_000_000 * HAIKU_OUTPUT_PER_1M)
 
     def vision_cost(self):
-        return (self.vision_input_tokens / 1_000_000 * SONNET_INPUT_PER_1M
-                + self.vision_output_tokens / 1_000_000 * SONNET_OUTPUT_PER_1M)
+        return (self.vision_input_tokens / 1_000_000 * GEMINI_INPUT_PER_1M
+                + self.vision_output_tokens / 1_000_000 * GEMINI_OUTPUT_PER_1M)
 
     def batch_cost(self):
         return (self.batch_input_tokens / 1_000_000 * HAIKU_INPUT_PER_1M
@@ -659,7 +668,7 @@ def build_signal(account, tw, interp):
     tweet_date = (tw.get("created_at") or "")[:10]
     text = tw.get("text", "")
     parsed = interp.extract(text, account, tweet_date)
-    # Influencer chart-image pass (Sonnet vision). Runs when the tweet carries a
+    # Influencer chart-image pass (Gemini vision). Runs when the tweet carries a
     # photo AND either (a) the text pass already yielded an actionable signal —
     # vision backfills its chart-only levels — or (b) the text was NOT actionable
     # but an asset is plausibly in play (ticker/cashtag): the annotated chart may
@@ -911,7 +920,7 @@ def _collect_batch(interp, batch_id, lookup):
 
 
 def _vision_enrich(interp, account, tw, parsed):
-    """Run the real-time influencer chart pass (Sonnet vision) on a batch-parsed
+    """Run the real-time influencer chart pass (Gemini vision) on a batch-parsed
     result, mirroring build_signal's back half so batch mode keeps the same
     chart enrichment as the live path. Mutates `parsed` in place."""
     actionable = parsed and parsed["action"] != "none" and parsed.get("ticker")
@@ -1098,6 +1107,10 @@ def main():
     if not os.environ.get("ANTHROPIC_API_KEY"):
         print("ANTHROPIC_API_KEY is not set. Add it to ~/pilot_trader/.env "
               "(ANTHROPIC_API_KEY=sk-ant-...) and re-run.", file=sys.stderr)
+        sys.exit(1)
+    if not os.environ.get("GOOGLE_API_KEY"):
+        print("GOOGLE_API_KEY is not set. Add it to ~/pilot_trader/.env "
+              "and re-run.", file=sys.stderr)
         sys.exit(1)
     if not args.backfill and not args.backfill_batch:
         need = "GETXAPI_KEY" if args.source == "getxapi" else "X_BEARER_TOKEN"
@@ -1303,7 +1316,7 @@ def main():
         print(f"LLM batch text (Haiku, 50% off): input "
               f"{interp.batch_input_tokens} tok, output "
               f"{interp.batch_output_tokens} tok  ${interp.batch_cost():.4f}")
-    print(f"LLM vision calls (Sonnet): {interp.vision_calls}  "
+    print(f"LLM vision calls (Gemini): {interp.vision_calls}  "
           f"(input {interp.vision_input_tokens} tok, "
           f"output {interp.vision_output_tokens} tok)  ${interp.vision_cost():.4f}")
     print(f"LLM cost this run: "
@@ -1345,8 +1358,8 @@ def log_cost(interp):
         # total_usd already discounts the batch portion via interp.batch_cost().
         "haiku_input_tok": interp.input_tokens + interp.batch_input_tokens,
         "haiku_output_tok": interp.output_tokens + interp.batch_output_tokens,
-        "sonnet_input_tok": interp.vision_input_tokens,
-        "sonnet_output_tok": interp.vision_output_tokens,
+        "vision_input_tok": interp.vision_input_tokens,
+        "vision_output_tok": interp.vision_output_tokens,
         "total_usd": round(
             interp.cost() + interp.batch_cost() + interp.vision_cost(), 6),
     }

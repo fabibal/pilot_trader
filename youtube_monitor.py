@@ -7,7 +7,7 @@ Pipeline (mirrors monitor.py's "scrape -> LLM -> json" shape, but for video):
   YouTube RSS feed (free, no API key)            -> new video IDs + titles
    -> transcript via youtube-transcript-api (free, PRIMARY)
         fallback: faster-whisper small int8 on yt-dlp audio (LOCAL, rare)
-   -> Claude Sonnet structured analysis (sentiment / BTC outlook / levels / themes)
+   -> Gemini structured analysis (sentiment / BTC outlook / levels / themes)
    -> data/youtube_summaries.json  (one record per video, newest-first)
 
 The summaries file is also the dedup ledger: a video_id already present is
@@ -37,13 +37,15 @@ import urllib.request
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 
-import anthropic
+from google import genai
+from google.genai import types as genai_types
+from google.genai import errors as genai_errors
 
 from reconcile import write_json_atomic
 # Reuse monitor.py's small, already-tested helpers (env/json loaders, Telegram
 # alerting) so this stays DRY and consistent with the rest of the pipeline.
 from monitor import (load_env, load_json, notify_telegram, TELEGRAM_ENVS,
-                     SONNET_DEEP_THINKING)
+                     GEMINI_DEEP_THINKING)
 
 # --- config ---------------------------------------------------------------
 CHANNEL_ID = "UCRvqjQPSeaWn-uEx-w0XOIg"        # @benjaminjcowen
@@ -54,14 +56,14 @@ HOME = "/home/fbazsa/pilot_trader"
 DATA_DIR = os.path.join(HOME, "data")
 SUMMARIES_FILE = os.path.join(DATA_DIR, "youtube_summaries.json")
 
-# Anthropic. Sonnet 5 (NOT the tweet pipeline's Haiku): Cowen's content is dense,
-# multi-level technical analysis, and Sonnet reads it markedly better. The call
-# uses SONNET_DEEP_THINKING (adaptive) — the reasoning pays off on this dense TA,
-# and it's low volume (~1-2/day). max_tokens is raised so thinking + the JSON
-# output share the budget without truncating the json_schema response.
-MODEL = "claude-sonnet-5"
-INPUT_PER_1M = 3.00                  # $ / 1M input tokens (Sonnet 5 sticker; intro $2 to 2026-08-31)
-OUTPUT_PER_1M = 15.00                # $ / 1M output tokens (Sonnet 5 sticker; intro $10 to 2026-08-31)
+# Gemini 3.5 Flash (NOT the tweet pipeline's Haiku): Cowen's content is dense,
+# multi-level technical analysis, and Gemini reads it markedly better. The call
+# uses GEMINI_DEEP_THINKING (dynamic) — the reasoning pays off on this dense TA,
+# and it's low volume (~1-2/day). max_output_tokens is raised so thinking + the
+# JSON output share the budget without truncating the response.
+MODEL = "gemini-3.5-flash"
+INPUT_PER_1M = 1.50                  # $ / 1M input tokens (gemini-3.5-flash)
+OUTPUT_PER_1M = 9.00                 # $ / 1M output tokens, incl. thinking tokens
 # Cap transcript length sent to the model. Cowen videos run ~10-30k chars; a long
 # stream could be far bigger. ~60k chars ~= 15k tokens, a safe per-video bound.
 MAX_TRANSCRIPT_CHARS = 60_000
@@ -219,39 +221,39 @@ def whisper_transcribe(video_id):
 
 
 # --- Analysis -------------------------------------------------------------
-def _parse_json(content_blocks):
-    block = next((b.text for b in content_blocks if b.type == "text"), None)
-    if not block:
-        return None
+def _parse_json(resp):
     try:
-        return json.loads(block)
-    except json.JSONDecodeError:
+        return json.loads(resp.text)
+    except (json.JSONDecodeError, TypeError, ValueError):
         return None
 
 
 def analyze(client, title, transcript):
-    """Send the transcript to the model (Sonnet) and return
+    """Send the transcript to the model (Gemini) and return
     (analysis_dict, in_tok, out_tok). analysis_dict is None on API/parse error."""
     text = transcript
     if len(text) > MAX_TRANSCRIPT_CHARS:
         text = text[:MAX_TRANSCRIPT_CHARS] + "\n...[transcript truncated]"
     user = f"Video title: {title}\n\nTranscript:\n{text}"
     try:
-        resp = client.messages.create(
+        resp = client.models.generate_content(
             model=MODEL,
-            max_tokens=6000,
-            thinking=SONNET_DEEP_THINKING,
-            system=[{"type": "text", "text": ANALYSIS_SYSTEM}],
-            output_config={"format": {"type": "json_schema",
-                                      "schema": ANALYSIS_SCHEMA}},
-            messages=[{"role": "user", "content": user}],
+            contents=user,
+            config=genai_types.GenerateContentConfig(
+                system_instruction=ANALYSIS_SYSTEM,
+                response_mime_type="application/json",
+                response_json_schema=ANALYSIS_SCHEMA,
+                thinking_config=GEMINI_DEEP_THINKING,
+                max_output_tokens=6000,
+            ),
         )
-    except anthropic.APIError as e:
+    except genai_errors.APIError as e:
         print(f"  [llm error] {type(e).__name__}: {e}", file=sys.stderr)
         return None, 0, 0
-    in_tok = resp.usage.input_tokens + (resp.usage.cache_read_input_tokens or 0) \
-        + (resp.usage.cache_creation_input_tokens or 0)
-    return _parse_json(resp.content), in_tok, resp.usage.output_tokens
+    u = resp.usage_metadata
+    in_tok = u.prompt_token_count or 0
+    out_tok = (u.candidates_token_count or 0) + (u.thoughts_token_count or 0)
+    return _parse_json(resp), in_tok, out_tok
 
 
 # --- main -----------------------------------------------------------------
@@ -298,10 +300,10 @@ def main():
                     help="disable the local Whisper fallback")
     args = ap.parse_args()
 
-    for p in TELEGRAM_ENVS:                       # loads ANTHROPIC_API_KEY + alerts
+    for p in TELEGRAM_ENVS:                       # loads GOOGLE_API_KEY + alerts
         load_env(p)
-    if not os.environ.get("ANTHROPIC_API_KEY"):
-        print("ANTHROPIC_API_KEY is not set. Add it to ~/pilot_trader/.env "
+    if not os.environ.get("GOOGLE_API_KEY"):
+        print("GOOGLE_API_KEY is not set. Add it to ~/pilot_trader/.env "
               "and re-run.", file=sys.stderr)
         sys.exit(1)
 
@@ -332,14 +334,14 @@ def main():
 
     print(f"Processing {len(todo)} video(s)"
           + (" [FORCE]" if args.force else "") + ":")
-    client = anthropic.Anthropic()
+    client = genai.Client()
     records, in_tok, out_tok = process(todo, client,
                                        allow_whisper=not args.no_whisper)
 
     cost = in_tok / 1_000_000 * INPUT_PER_1M \
         + out_tok / 1_000_000 * OUTPUT_PER_1M
     print(f"\nAnalyzed {len(records)} video(s); "
-          f"Sonnet tokens in={in_tok} out={out_tok} (${cost:.4f})")
+          f"Gemini tokens in={in_tok} out={out_tok} (${cost:.4f})")
 
     if not records:
         return
