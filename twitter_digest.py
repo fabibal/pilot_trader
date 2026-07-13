@@ -385,7 +385,14 @@ FEEDS = {f.key: f for f in [
 # doesn't fail the daily run (and page Telegram). A sustained outage still raises
 # after the final attempt; permanent HTTP client errors (4xx except 429, e.g. a
 # bad key) raise immediately without burning retries.
-GETXAPI_RETRIES = 3
+# 2026-07-13: bumped 3->5 -- kendrick_sc's fetch_search (advanced-search
+# endpoint) twice exhausted all 3 attempts (both times failing attempts 1 AND
+# 2 before the fatal 3rd) and paged Telegram with "IncompleteRead(10 bytes
+# read)", while fetch_posts's timeline endpoint has always recovered within 2
+# attempts in the same window -- the search endpoint's payloads appear bigger
+# and/or less reliably gzip-negotiated. Mirrors monitor.getxapi_get_retry,
+# bumped there too rather than diverging the two.
+GETXAPI_RETRIES = 5
 GETXAPI_BACKOFF_S = 3
 _TRANSIENT_NET = (http.client.HTTPException, OSError)   # OSError covers URLError
 

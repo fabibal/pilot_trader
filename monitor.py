@@ -736,7 +736,13 @@ def getxapi_get(url):
 # for many cycles (observed: 6 consecutive failed runs / ~24h). Retry transient
 # read/network errors with a short linear backoff; permanent 4xx (except 429)
 # raise immediately. Mirrors twitter_digest._getxapi_get_retry.
-GETXAPI_RETRIES = 3
+# 2026-07-13: bumped 3->5 after twitter_digest's kendrick_sc (search endpoint,
+# bigger/less-reliably-compressed payloads than this module's timeline fetch)
+# twice exhausted 3 attempts and paged Telegram. This module's own timeline
+# fetch has never needed more than 2 of its 3 attempts in practice, so the
+# higher ceiling costs it nothing -- kept in sync rather than diverging the
+# two "mirrored" retry wrappers.
+GETXAPI_RETRIES = 5
 GETXAPI_BACKOFF_S = 3
 _TRANSIENT_NET = (http.client.HTTPException, OSError)   # OSError covers URLError
 
