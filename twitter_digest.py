@@ -96,6 +96,15 @@ GETXAPI_SEARCH_PATH = "/twitter/tweet/advanced_search"
 # multimodal model anyway. Same model the Cowen YouTube digest uses. Both calls
 # pin thinking_config=GEMINI_THINKING (budget 0) — Gemini 3.5 Flash thinks by
 # default, which would eat the tight max_output_tokens and truncate the JSON output.
+# 2026-07-13 cost review: Batch Mode (50% off) evaluated and rejected here --
+# at this feed set's real volume the saving is single-digit $/mo, not worth
+# the async submit/poll/expiry machinery this file doesn't have, and 2026
+# reports (GitHub googleapis/python-genai#2221/#1482) show batch jobs
+# sometimes stuck in PENDING for 24-96h+ -- unacceptable for a daily-cron
+# freshness expectation. Context caching also evaluated and rejected: every
+# feed's analysis_system is 400-450 tokens, far under every documented
+# minimum (Gemini's implicit/explicit caching needs >=2048 tokens on 2.5
+# Flash, >=4096 on 3.5 Flash). Revisit only if either changes materially.
 MODEL = "gemini-3.5-flash"
 
 # --- LLM analysis ---------------------------------------------------------
@@ -352,7 +361,13 @@ FEEDS = {f.key: f for f in [
         display_name="Geoff Kendrick / Standard Chartered",
         summaries_file=os.path.join(DATA_DIR, "kendrick_forecasts.json"),
         forecast_ledger=True,            # one row per forecast, not per post
-        deep_thinking=True,              # adaptive thinking on the forecast read (dense, low-volume)
+        # deep_thinking was True (adaptive thinking on the forecast read) until
+        # a 2026-07-13 cost review: live A/B on real Cowen/tweet content showed
+        # dynamic thinking burned ~65-75% of output tokens on invisible
+        # reasoning with no measurable quality gain over thinking off. Kept
+        # False here; the mechanism stays available for a future feed that
+        # needs it.
+        deep_thinking=False,
         # No account is dedicated to his calls; reputable outlets cover him only
         # incidentally amid huge volume. So search the TOPIC and let every
         # account's coverage flow in -- ~100% relevant, ~2-6 unique en posts/day.

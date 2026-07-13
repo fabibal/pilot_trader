@@ -45,7 +45,7 @@ from reconcile import write_json_atomic
 # Reuse monitor.py's small, already-tested helpers (env/json loaders, Telegram
 # alerting) so this stays DRY and consistent with the rest of the pipeline.
 from monitor import (load_env, load_json, notify_telegram, TELEGRAM_ENVS,
-                     GEMINI_DEEP_THINKING)
+                     GEMINI_THINKING)
 
 # --- config ---------------------------------------------------------------
 CHANNEL_ID = "UCRvqjQPSeaWn-uEx-w0XOIg"        # @benjaminjcowen
@@ -57,10 +57,24 @@ DATA_DIR = os.path.join(HOME, "data")
 SUMMARIES_FILE = os.path.join(DATA_DIR, "youtube_summaries.json")
 
 # Gemini 3.5 Flash (NOT the tweet pipeline's Haiku): Cowen's content is dense,
-# multi-level technical analysis, and Gemini reads it markedly better. The call
-# uses GEMINI_DEEP_THINKING (dynamic) — the reasoning pays off on this dense TA,
-# and it's low volume (~1-2/day). max_output_tokens is raised so thinking + the
-# JSON output share the budget without truncating the response.
+# multi-level technical analysis, and Gemini reads it markedly better.
+# max_output_tokens stays high (was sized for thinking + JSON sharing the
+# budget) -- harmless headroom now, no cost since only tokens actually
+# generated are billed.
+# 2026-07-13 cost review: GEMINI_DEEP_THINKING (dynamic) turned OFF here --
+# live A/B on a real Cowen transcript showed it burned ~1,350 invisible
+# thinking tokens (77% of output) for no measurable quality gain over
+# thinking off (same sentiment/themes/price levels). Model itself (3.5 Flash)
+# stays as-is, only the thinking toggle changed.
+# Batch Mode (50% off) evaluated and rejected here --
+# at 1-2 calls/day the absolute saving is ~$0.01-0.03/video (~$0.5-1/mo), not
+# worth the async submit/poll/expiry machinery, and 2026 reports (GitHub
+# googleapis/python-genai#2221/#1482) show batch jobs sometimes stuck in
+# PENDING for 24-96h+ -- unacceptable for a daily-cron freshness expectation.
+# Context caching also evaluated and rejected: ANALYSIS_SYSTEM is far under
+# every documented minimum (Gemini's implicit/explicit caching needs >=2048
+# tokens on 2.5 Flash, >=4096 on 3.5 Flash; this prompt is ~1 order of
+# magnitude smaller). Revisit only if either changes materially.
 MODEL = "gemini-3.5-flash"
 INPUT_PER_1M = 1.50                  # $ / 1M input tokens (gemini-3.5-flash)
 OUTPUT_PER_1M = 9.00                 # $ / 1M output tokens, incl. thinking tokens
@@ -243,7 +257,7 @@ def analyze(client, title, transcript):
                 system_instruction=ANALYSIS_SYSTEM,
                 response_mime_type="application/json",
                 response_json_schema=ANALYSIS_SCHEMA,
-                thinking_config=GEMINI_DEEP_THINKING,
+                thinking_config=GEMINI_THINKING,
                 max_output_tokens=6000,
             ),
         )
