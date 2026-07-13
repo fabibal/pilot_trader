@@ -108,12 +108,16 @@ GETXAPI_COST_PER_CALL = 0.001        # $/call (~20 tweets/page)
 # Text extraction. gemini-2.5-flash-lite replaced Haiku here 2026-07 (Anthropic
 # credit balance depleted): cheap, stable (not the shut-down preview variant),
 # and schema-constrained JSON via response_json_schema works the same way.
+# 2026-07-13: briefly pinned to gemini-2.0-flash because 2.5-flash-lite is
+# paid-tier-only and GOOGLE_API_KEY's project ("My First Project") had no
+# linked Cloud Billing account (an AI Studio prepay credit balance alone does
+# NOT enable paid tier) -- reverted back now that billing is linked.
 # thinking_budget=0 is explicit even though 2.5 Flash-Lite defaults to thinking
 # off, so a future Google default change can't silently eat max_output_tokens.
 MODEL = "gemini-2.5-flash-lite"
 EXTRACT_THINKING = genai_types.ThinkingConfig(thinking_budget=0)
 TWITTER_COST_PER_TWEET = 0.005       # X API read
-EXTRACT_INPUT_PER_1M = 0.10          # $ / 1M input tokens (gemini-2.5-flash-lite)
+EXTRACT_INPUT_PER_1M = 0.10          # $ / 1M input tokens
 EXTRACT_OUTPUT_PER_1M = 0.40         # $ / 1M output tokens
 
 # Vision model for chart-image analysis (Haiku 4.5 does NOT accept images).
@@ -325,6 +329,7 @@ class Interpreter:
     def __init__(self):
         self.gemini_client = genai.Client()   # reads GOOGLE_API_KEY from env
         self.calls = 0
+        self.errors = 0
         self.input_tokens = 0
         self.output_tokens = 0
         # Vision usage tracked separately for cost reporting (different model).
@@ -350,6 +355,7 @@ class Interpreter:
             )
         except genai_errors.APIError as e:
             print(f"  [llm error] {type(e).__name__}: {e}", file=sys.stderr)
+            self.errors += 1
             return None
 
         self.calls += 1
@@ -1024,6 +1030,16 @@ def main():
         print(f"WARNING: {len(fetch_failures)}/{attempted} account(s) failed "
               f"fetch after retries, continuing with the rest: "
               f"{', '.join(fetch_failures)}", file=sys.stderr)
+
+    # extract() swallows genai_errors.APIError per-call and returns None, so a
+    # total Gemini outage (bad key, denied project, exhausted quota) still lets
+    # the run "succeed" and refresh _last_run -- the staleness alert never
+    # fires. Mirror the GetXAPI-outage alert above: every attempted call failed
+    # and none succeeded this run.
+    if interp.errors and not interp.calls and not args.dry_run:
+        notify_telegram(
+            f"monitor: all {interp.errors} Gemini text-extraction call(s) "
+            f"failed this run -- check GOOGLE_API_KEY/quota")
 
     merged = existing + all_new
     merged.sort(key=lambda r: r["timestamp"], reverse=True)
