@@ -29,6 +29,9 @@ Feeds (see FEEDS):
       data/twitter_summaries.json. Korean-language posts are skipped.
   - joao_wedson (Joao Wedson, Alphractal founder; crypto on-chain / quant) ->
       data/joao_summaries.json.
+  - dorkchicken (DorkChicken; crypto/macro technical analyst -- chart-pattern
+      and historical-cycle comparisons, no explicit trade calls) ->
+      data/dorkchicken_summaries.json.
   - kendrick_sc (TOPIC SEARCH + FORECAST LEDGER): Standard Chartered / Geoff
       Kendrick crypto price calls, deduplicated into one row per forecast ->
       data/kendrick_forecasts.json ({seen_ids, forecasts}). No single account is
@@ -321,6 +324,27 @@ FEEDS = {f.key: f for f in [
         # no language is skipped (Gemini outputs Hungarian regardless of input).
         skip_langs=frozenset(),
         max_fetch=60,                    # ~6 posts/day -> ~10 days of headroom
+    ),
+    Feed(
+        key="dorkchicken",
+        account="DorkChicken",
+        display_name="DorkChicken",
+        summaries_file=os.path.join(DATA_DIR, "dorkchicken_summaries.json"),
+        analysis_persona=(
+            "You analyze a single X/Twitter post by @DorkChicken, a crypto/macro "
+            "technical analyst covering Bitcoin and altcoins (moving averages, "
+            "RSI divergence, Bollinger Bands, Gaussian Channel, BTC dominance) "
+            "with frequent historical-cycle fractal comparisons (e.g. 2022 vs "
+            "the current cycle), plus occasional traditional-market charts "
+            "(equities, gold). His posts are structural/technical reads, not "
+            "specific entry/exit trade calls."),
+        vision_persona=(
+            "You read a price or technical-indicator chart image attached to a "
+            "tweet by DorkChicken (crypto/macro TA)."),
+        # Posts in English only (see module docstring eval); no skip needed.
+        skip_langs=frozenset(),
+        max_fetch=60,                    # bursty (dormant stretches then ~4
+                                         # posts/day) -- bounds catch-up after a gap
     ),
     Feed(
         key="kendrick_sc",
