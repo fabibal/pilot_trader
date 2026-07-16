@@ -45,7 +45,7 @@ from reconcile import write_json_atomic
 # Reuse monitor.py's small, already-tested helpers (env/json loaders, Telegram
 # alerting) so this stays DRY and consistent with the rest of the pipeline.
 from monitor import (load_env, load_json, notify_telegram, TELEGRAM_ENVS,
-                     GEMINI_THINKING)
+                     GEMINI_THINKING, _unescape_strings, _looks_mangled)
 
 # --- config ---------------------------------------------------------------
 CHANNEL_ID = "UCRvqjQPSeaWn-uEx-w0XOIg"        # @benjaminjcowen
@@ -237,9 +237,15 @@ def whisper_transcribe(video_id):
 # --- Analysis -------------------------------------------------------------
 def _parse_json(resp):
     try:
-        return json.loads(resp.text)
+        return _unescape_strings(json.loads(resp.text))
     except (json.JSONDecodeError, TypeError, ValueError):
         return None
+
+
+# gemini-3.5-flash occasionally mangles accented Hungarian characters in long
+# free-text fields (see monitor._looks_mangled); a retry of the identical
+# call usually comes back clean.
+_MANGLED_MAX_ATTEMPTS = 3
 
 
 def analyze(client, title, transcript):
@@ -249,25 +255,34 @@ def analyze(client, title, transcript):
     if len(text) > MAX_TRANSCRIPT_CHARS:
         text = text[:MAX_TRANSCRIPT_CHARS] + "\n...[transcript truncated]"
     user = f"Video title: {title}\n\nTranscript:\n{text}"
-    try:
-        resp = client.models.generate_content(
-            model=MODEL,
-            contents=user,
-            config=genai_types.GenerateContentConfig(
-                system_instruction=ANALYSIS_SYSTEM,
-                response_mime_type="application/json",
-                response_json_schema=ANALYSIS_SCHEMA,
-                thinking_config=GEMINI_THINKING,
-                max_output_tokens=6000,
-            ),
-        )
-    except genai_errors.APIError as e:
-        print(f"  [llm error] {type(e).__name__}: {e}", file=sys.stderr)
-        return None, 0, 0
-    u = resp.usage_metadata
-    in_tok = u.prompt_token_count or 0
-    out_tok = (u.candidates_token_count or 0) + (u.thoughts_token_count or 0)
-    return _parse_json(resp), in_tok, out_tok
+    in_tok = out_tok = 0
+    parsed = None
+    for attempt in range(_MANGLED_MAX_ATTEMPTS):
+        try:
+            resp = client.models.generate_content(
+                model=MODEL,
+                contents=user,
+                config=genai_types.GenerateContentConfig(
+                    system_instruction=ANALYSIS_SYSTEM,
+                    response_mime_type="application/json",
+                    response_json_schema=ANALYSIS_SCHEMA,
+                    thinking_config=GEMINI_THINKING,
+                    max_output_tokens=6000,
+                ),
+            )
+        except genai_errors.APIError as e:
+            print(f"  [llm error] {type(e).__name__}: {e}", file=sys.stderr)
+            return None, in_tok, out_tok
+        u = resp.usage_metadata
+        in_tok += u.prompt_token_count or 0
+        out_tok += (u.candidates_token_count or 0) + (u.thoughts_token_count or 0)
+        parsed = _parse_json(resp)
+        if not (parsed and _looks_mangled(parsed)
+                and attempt < _MANGLED_MAX_ATTEMPTS - 1):
+            break
+        print("  [retry] mangled Hungarian text in analyze, retrying",
+              file=sys.stderr)
+    return parsed, in_tok, out_tok
 
 
 # --- main -----------------------------------------------------------------

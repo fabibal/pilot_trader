@@ -576,9 +576,15 @@ def select_candidates(raw, seen_ids, feed, seen_sigs=frozenset()):
 
 
 # --- LLM calls ------------------------------------------------------------
+# Some images/prompts hit monitor._looks_mangled at a high rate (seen 2/3
+# retries still mangled on one chart) -- worth a couple extra attempts over
+# letting garbled Hungarian text reach the ledger.
+_MANGLED_MAX_ATTEMPTS = 3
+
+
 def _parse_gemini_json(resp):
     try:
-        return json.loads(resp.text)
+        return monitor._unescape_strings(json.loads(resp.text))
     except (json.JSONDecodeError, TypeError, ValueError):
         return None
 
@@ -597,23 +603,36 @@ def analyze_text(gemini_client, feed, date, text, author):
     # the JSON truncates (600 was too low -> 1000). deep_thinking feeds also spend
     # part of max_output_tokens on dynamic thinking, so they get a much larger budget.
     deep = feed.deep_thinking
-    try:
-        resp = gemini_client.models.generate_content(
-            model=MODEL,
-            contents=user,
-            config=genai_types.GenerateContentConfig(
-                system_instruction=feed.analysis_system,
-                response_mime_type="application/json",
-                response_json_schema=ANALYSIS_SCHEMA,
-                thinking_config=GEMINI_DEEP_THINKING if deep else GEMINI_THINKING,
-                max_output_tokens=6000 if deep else 1000,
-            ),
-        )
-    except genai_errors.APIError as e:
-        print(f"  [llm error] {type(e).__name__}: {e}", file=sys.stderr)
-        return None, 0, 0
-    in_tok, out_tok = _gemini_usage(resp)
-    return _parse_gemini_json(resp), in_tok, out_tok
+    in_tok = out_tok = 0
+    parsed = None
+    # A retry of the identical call usually comes back clean (see
+    # monitor._looks_mangled), so on a mangled hit we just ask again rather
+    # than storing garbled Hungarian text.
+    for attempt in range(_MANGLED_MAX_ATTEMPTS):
+        try:
+            resp = gemini_client.models.generate_content(
+                model=MODEL,
+                contents=user,
+                config=genai_types.GenerateContentConfig(
+                    system_instruction=feed.analysis_system,
+                    response_mime_type="application/json",
+                    response_json_schema=ANALYSIS_SCHEMA,
+                    thinking_config=GEMINI_DEEP_THINKING if deep else GEMINI_THINKING,
+                    max_output_tokens=6000 if deep else 1000,
+                ),
+            )
+        except genai_errors.APIError as e:
+            print(f"  [llm error] {type(e).__name__}: {e}", file=sys.stderr)
+            return None, in_tok, out_tok
+        i, o = _gemini_usage(resp)
+        in_tok, out_tok = in_tok + i, out_tok + o
+        parsed = _parse_gemini_json(resp)
+        if not (parsed and monitor._looks_mangled(parsed)
+                and attempt < _MANGLED_MAX_ATTEMPTS - 1):
+            break
+        print("  [retry] mangled Hungarian text in analyze_text, retrying",
+              file=sys.stderr)
+    return parsed, in_tok, out_tok
 
 
 def analyze_chart(gemini_client, feed, media_urls, date, text, author):
@@ -626,23 +645,35 @@ def analyze_chart(gemini_client, feed, media_urls, date, text, author):
         return None, 0, 0
     contents = parts + [f"Posted by @{author} ({feed.display_name})\nDate: {date}\n"
                         f"Tweet:\n{text}"]
-    try:
-        resp = gemini_client.models.generate_content(
-            model=MODEL,
-            contents=contents,
-            config=genai_types.GenerateContentConfig(
-                system_instruction=feed.vision_system,
-                response_mime_type="application/json",
-                response_json_schema=VISION_SCHEMA,
-                thinking_config=GEMINI_THINKING,
-                max_output_tokens=400,
-            ),
-        )
-    except genai_errors.APIError as e:
-        print(f"  [vision error] {type(e).__name__}: {e}", file=sys.stderr)
-        return None, 0, 0
-    in_tok, out_tok = _gemini_usage(resp)
-    return _parse_gemini_json(resp), in_tok, out_tok
+    in_tok = out_tok = 0
+    parsed = None
+    # See analyze_text: a retry of the identical call usually comes back
+    # clean, so on a mangled hit we just ask again.
+    for attempt in range(_MANGLED_MAX_ATTEMPTS):
+        try:
+            resp = gemini_client.models.generate_content(
+                model=MODEL,
+                contents=contents,
+                config=genai_types.GenerateContentConfig(
+                    system_instruction=feed.vision_system,
+                    response_mime_type="application/json",
+                    response_json_schema=VISION_SCHEMA,
+                    thinking_config=GEMINI_THINKING,
+                    max_output_tokens=400,
+                ),
+            )
+        except genai_errors.APIError as e:
+            print(f"  [vision error] {type(e).__name__}: {e}", file=sys.stderr)
+            return None, in_tok, out_tok
+        i, o = _gemini_usage(resp)
+        in_tok, out_tok = in_tok + i, out_tok + o
+        parsed = _parse_gemini_json(resp)
+        if not (parsed and monitor._looks_mangled(parsed)
+                and attempt < _MANGLED_MAX_ATTEMPTS - 1):
+            break
+        print("  [retry] mangled Hungarian text in analyze_chart, retrying",
+              file=sys.stderr)
+    return parsed, in_tok, out_tok
 
 
 # --- main -----------------------------------------------------------------

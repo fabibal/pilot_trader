@@ -29,6 +29,7 @@ loaded from ~/pilot_trader/.env. Run with the project venv:
 
 import argparse
 import gzip
+import html
 import http.client
 import json
 import os
@@ -308,6 +309,48 @@ def _image_block(url):
         return None
     media_type = "image/png" if url.lower().endswith(".png") else "image/jpeg"
     return genai_types.Part.from_bytes(data=raw, mime_type=media_type)
+
+
+def _unescape_strings(obj):
+    """Recursively html.unescape() every string in a parsed JSON value.
+    Gemini occasionally emits HTML-named-entity text (e.g. "&eacute;" for
+    "e") instead of the literal character -- harmless no-op on already-clean
+    text, so applied unconditionally. Shared by twitter_digest.py and
+    youtube_monitor.py, both of which get Hungarian free text back from
+    gemini-3.5-flash."""
+    if isinstance(obj, str):
+        return html.unescape(obj)
+    if isinstance(obj, list):
+        return [_unescape_strings(v) for v in obj]
+    if isinstance(obj, dict):
+        return {k: _unescape_strings(v) for k, v in obj.items()}
+    return obj
+
+
+# gemini-3.5-flash occasionally (probabilistically -- a retry of the
+# identical call often comes back clean) mangles accented non-ASCII
+# characters in long free-text fields. Observed forms, all specific to
+# Hungarian-output feeds (twitter_digest.py, youtube_monitor.py):
+#  - the UTF-8 continuation byte survives with its high bit stripped,
+#    landing mid-word as stray punctuation: "veszteseg" -> "vesztes)g".
+#  - a raw C0 control byte in its place: "n\x01gy".
+#  - an ASCII escape-like marker + bare letter: "realiz'alt", "%evek".
+# None of these are legitimate mid-word occurrences in Hungarian or English
+# prose, so a hit is an unambiguous corruption signal.
+_MANGLED_RE = re.compile(
+    "[A-Za-zÀ-ÿ][)!:<#%][A-Za-zÀ-ÿ]"
+    "|[A-Za-z]'[aeiouAEIOU]")
+_MANGLED_CTRL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
+
+
+def _looks_mangled(obj):
+    if isinstance(obj, str):
+        return bool(_MANGLED_RE.search(obj) or _MANGLED_CTRL_RE.search(obj))
+    if isinstance(obj, list):
+        return any(_looks_mangled(v) for v in obj)
+    if isinstance(obj, dict):
+        return any(_looks_mangled(v) for v in obj.values())
+    return False
 
 
 def _parse_gemini_json(resp):
@@ -784,7 +827,10 @@ def _normalize_getxapi(tw):
              if m.get("type") == "photo" and m.get("url")]
     return {
         "id": str(tw.get("id")),
-        "text": tw.get("text", ""),
+        # GetXAPI sometimes returns text HTML-escaped (e.g. "S&amp;P500");
+        # unescape so it doesn't leak into the LLM prompt, the stored ledger,
+        # and the dashboard.
+        "text": html.unescape(tw.get("text", "")),
         "created_at": created_iso,
         "is_reply": tw.get("isReply"),
         # author handle of THIS tweet. tweets_and_replies returns the whole
