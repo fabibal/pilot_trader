@@ -335,11 +335,18 @@ def _unescape_strings(obj):
 #    landing mid-word as stray punctuation: "veszteseg" -> "vesztes)g".
 #  - a raw C0 control byte in its place: "n\x01gy".
 #  - an ASCII escape-like marker + bare letter: "realiz'alt", "%evek".
+#  - a bogus numeric-entity-shaped placeholder: "T#1;masz", "elt#3;rő".
+#    Not a real HTML entity (no leading "&", so html.unescape() in
+#    _unescape_strings correctly ignores it) and NOT a stable per-char
+#    code -- the same digit stands in for different letters within one
+#    string (#3; covers 'ó', 'í', 'ö', 'é' and 'á' in a single summary) --
+#    so it's detected-for-retry like the others rather than decoded.
 # None of these are legitimate mid-word occurrences in Hungarian or English
 # prose, so a hit is an unambiguous corruption signal.
 _MANGLED_RE = re.compile(
     "[A-Za-zÀ-ÿ][)!:<#%][A-Za-zÀ-ÿ]"
-    "|[A-Za-z]'[aeiouAEIOU]")
+    "|[A-Za-z]'[aeiouAEIOU]"
+    "|#\\d{1,3};")
 _MANGLED_CTRL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
 
 
