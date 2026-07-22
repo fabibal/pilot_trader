@@ -36,8 +36,8 @@ satisfy my own curiosity, not to give or follow investment advice.
 - **Multi-account X/Twitter monitoring** — polls a registry of public accounts:
   AI-run portfolio bots (Grok, Claude, DeepSeek, ChatGPT-style), a multi-AI
   contest feed, and human finance influencers.
-- **LLM signal extraction** — each tweet is read by Claude under a strict JSON
-  schema, yielding portfolio attribution, ticker, direction, sizing, entry,
+- **LLM signal extraction** — each tweet is read by Google Gemini under a strict
+  JSON schema, yielding portfolio attribution, ticker, direction, sizing, entry,
   stop/target, thesis, and the *actual trade date* (bots often recap old trades).
 - **Vision pass** — influencer posts with chart images get a second
   vision-model pass that fills gaps the text didn't cover.
@@ -50,9 +50,9 @@ satisfy my own curiosity, not to give or follow investment advice.
 - **Live dashboard** — a dark-themed web app showing normalized performance
   (every portfolio + the paper mirror vs. the S&P 500), holdings, a leaderboard,
   the live paper-account state, and the research digests.
-- **Cost-aware by design** — high-water-mark deduplication, the Anthropic Batch
-  API, and a cheaper third-party tweet source keep the monthly LLM/API spend in
-  the single-digit-dollar range.
+- **Cost-aware by design** — high-water-mark deduplication, cheap real-time
+  Gemini calls, and a cheaper third-party tweet source keep the monthly LLM/API
+  spend in the single-digit-dollar range.
 
 ---
 
@@ -97,7 +97,7 @@ produce analysis-only research summaries shown in the dashboard.
 | Area | Tools |
 |------|-------|
 | Language | **Python 3.12** |
-| LLM | **Anthropic Claude** — Haiku for text extraction, Sonnet for vision & long-form, via the Messages + Batch APIs |
+| LLM | **Google Gemini** — `gemini-2.5-flash-lite` for text extraction, `gemini-3.5-flash` for vision & long-form analysis, via the real-time Gemini API (schema-constrained JSON) |
 | Dashboard | **Dash / Plotly** (dark, GitHub-style theme) |
 | Brokerage | **Interactive Brokers** via **IB Gateway** + **ib_insync** (paper account) |
 | Market data | **yfinance** (prices), RSS (YouTube detection) |
@@ -147,7 +147,7 @@ This applies to human contributors **and to automated assistants (e.g. Claude
 Code sessions)** alike. The following must **never** be committed — they belong
 only in a local `.env` (git-ignored) or stay out of the repo entirely:
 
-- **Credentials** — API keys, tokens, bearer tokens, passwords (Anthropic,
+- **Credentials** — API keys, tokens, bearer tokens, passwords (Google/Gemini,
   GetXAPI, X/Twitter, Telegram, etc.)
 - **Account identifiers** — brokerage / IBKR account IDs, order IDs
 - **Network details** — internal/LAN IPs, public IPs, private hostnames or URLs
@@ -176,7 +176,7 @@ This is a **personal, educational project**.
   buy or sell any security or asset. The signals are automated interpretations
   of third-party social-media content and are frequently wrong.
 - **No affiliation.** This project is not affiliated with, endorsed by, or
-  sponsored by any of the monitored accounts, Interactive Brokers, Anthropic, or
+  sponsored by any of the monitored accounts, Interactive Brokers, Google, or
   any data provider. All monitored accounts are public; their content belongs to
   its respective authors.
 - **No warranty.** Provided "as is", for learning and experimentation. Use at
