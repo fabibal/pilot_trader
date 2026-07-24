@@ -62,7 +62,7 @@ import traceback
 import urllib.error
 import urllib.parse
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from google import genai
 from google.genai import types as genai_types
@@ -184,6 +184,52 @@ VISION_SCHEMA = {
 }
 
 
+# --- rolling "current view" synthesis -------------------------------------
+# Once per run, IF new posts were processed, synthesize a short rolling stance
+# from the feed's recent history -- shown as a banner above the individual
+# post cards on the dashboard, so "what does he think right now" doesn't
+# require manually reading and merging several cards. Runs over the
+# already-distilled per-post fields (market_view/summary/top_themes), not raw
+# tweet text, so it's a cheap second-pass read, not a re-analysis.
+CURRENT_VIEW_DAYS = 14           # day-based floor
+CURRENT_VIEW_MIN_POSTS = 8       # thin/slow feeds (e.g. ki_young_ju) extend by
+                                 # count when the day window is too sparse
+CURRENT_VIEW_MAX_POSTS = 25      # hard cap so a firehose feed (joao_wedson)
+                                 # doesn't blow out the prompt
+
+CURRENT_VIEW_BODY = (
+    "Below is a list of his recent analyzed posts, OLDEST FIRST, each as "
+    "\"[date] sentiment | themes -- market view\". Synthesize his CURRENT "
+    "overall stance across this window -- do not just rehash the newest "
+    "post.\n"
+    "Fields:\n"
+    "- overall_sentiment: his NET stance across THESE posts -- the EXACT "
+    "English enum value 'bullish', 'bearish', 'neutral', or 'mixed'. Use "
+    "'mixed' when the posts genuinely disagree or pull in different "
+    "directions (not merely cautious -- that is 'neutral'). KEEP THIS IN "
+    "ENGLISH.\n"
+    "- stance_summary: 2-4 sentences, IN HUNGARIAN, on his current overall "
+    "view/thesis across the window -- what he is focused on and where he "
+    "leans. Weigh the whole window, not just the newest post.\n"
+    "- shift_note: ONE sentence, IN HUNGARIAN, ONLY if his stance visibly "
+    "shifted somewhere across the window (e.g. turned more cautious, flipped "
+    "bullish). Empty string if there is no clear shift.\n"
+    "Return ONLY valid JSON matching the schema. No markdown, no preamble."
+)
+
+CURRENT_VIEW_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "overall_sentiment": {"type": "string",
+                              "enum": ["bullish", "bearish", "neutral", "mixed"]},
+        "stance_summary": {"type": "string"},
+        "shift_note": {"type": "string"},
+    },
+    "required": ["overall_sentiment", "stance_summary", "shift_note"],
+    "additionalProperties": False,
+}
+
+
 # --- forecast-ledger mode (kendrick_sc) -----------------------------------
 # kendrick_sc is a TOPIC SEARCH where ONE research event (a Standard Chartered /
 # Geoff Kendrick price call) is echoed by 20-30 outlets. Per-post cards would be
@@ -282,6 +328,11 @@ class Feed:
     # Fetch buffer. Daily cron + high-water dedup means a normal run stops early
     # after a few new posts; this only bounds catch-up after a missed run.
     max_fetch: int = 40
+    # Sibling file for the rolling "current view" synthesis (see the
+    # "rolling current view synthesis" block above). None (default, e.g.
+    # kendrick_sc) skips the feature -- forecast-ledger feeds already have
+    # their own "current state" view: the forecast table itself.
+    current_view_file: str = None
 
     @property
     def is_search(self):
@@ -294,6 +345,10 @@ class Feed:
     @property
     def vision_system(self):
         return self.vision_persona + " " + VISION_BODY
+
+    @property
+    def current_view_system(self):
+        return self.analysis_persona + " " + CURRENT_VIEW_BODY
 
 
 FEEDS = {f.key: f for f in [
@@ -312,6 +367,7 @@ FEEDS = {f.key: f for f in [
             "Young Ju (CryptoQuant)."),
         skip_langs=frozenset({"ko"}),   # requirement: skip Korean-language posts
         max_fetch=40,                    # ~2.5 posts/week
+        current_view_file=os.path.join(DATA_DIR, "ki_young_ju_current_view.json"),
     ),
     Feed(
         key="joao_wedson",
@@ -333,6 +389,7 @@ FEEDS = {f.key: f for f in [
         # no language is skipped (Gemini outputs Hungarian regardless of input).
         skip_langs=frozenset(),
         max_fetch=60,                    # ~6 posts/day -> ~10 days of headroom
+        current_view_file=os.path.join(DATA_DIR, "joao_wedson_current_view.json"),
     ),
     Feed(
         key="dorkchicken",
@@ -354,6 +411,7 @@ FEEDS = {f.key: f for f in [
         skip_langs=frozenset(),
         max_fetch=60,                    # bursty (dormant stretches then ~4
                                          # posts/day) -- bounds catch-up after a gap
+        current_view_file=os.path.join(DATA_DIR, "dorkchicken_current_view.json"),
     ),
     Feed(
         key="kendrick_sc",
@@ -730,6 +788,87 @@ def process(candidates, gemini_client, feed, allow_vision=True):
         tag = "  +chart" if rec["has_chart"] else ""
         print(f"    -> {rec['overall_sentiment']}{tag}")
     return records, total_in, total_out
+
+
+def _select_current_view_window(summaries):
+    """Pick the records that feed the rolling-view synthesis: everything from
+    the last CURRENT_VIEW_DAYS days, extended by count if that's too thin
+    (slow feeds), capped at CURRENT_VIEW_MAX_POSTS (firehose feeds). `summaries`
+    must be newest-first (as merged/written by run_feed); returns a
+    newest-first list."""
+    if not summaries:
+        return []
+    cutoff = (datetime.now(timezone.utc)
+              - timedelta(days=CURRENT_VIEW_DAYS)).strftime("%Y-%m-%d")
+    window = [r for r in summaries if (r.get("created_at") or "")[:10] >= cutoff]
+    if len(window) < CURRENT_VIEW_MIN_POSTS:
+        window = summaries[:CURRENT_VIEW_MIN_POSTS]
+    return window[:CURRENT_VIEW_MAX_POSTS]
+
+
+def _current_view_entry_text(r):
+    """One post's already-distilled fields, formatted as a single prompt line."""
+    line = (f"[{(r.get('created_at') or '')[:10]}] "
+            f"{r.get('overall_sentiment') or 'neutral'}")
+    themes = r.get("top_themes") or []
+    if themes:
+        line += " | " + ", ".join(themes)
+    line += f" -- {r.get('market_view') or ''}"
+    if r.get("chart_summary"):
+        line += f" (chart: {r.get('chart_trend') or 'neutral'} -- {r['chart_summary']})"
+    return line
+
+
+def generate_current_view(gemini_client, feed, summaries):
+    """Synthesize a rolling 'current stance' from the feed's recent history
+    (see _select_current_view_window) -- fed the already-distilled per-post
+    fields, not raw tweet text. Returns (view_dict|None, in_tok, out_tok);
+    None if there is nothing to synthesize from or the call fails."""
+    window = _select_current_view_window(summaries)
+    if not window:
+        return None, 0, 0
+    entries = "\n".join(_current_view_entry_text(r) for r in reversed(window))
+    user = f"Posts by @{feed.account} ({feed.display_name}):\n{entries}"
+    in_tok = out_tok = 0
+    parsed = None
+    for attempt in range(_MANGLED_MAX_ATTEMPTS):
+        try:
+            resp = gemini_client.models.generate_content(
+                model=MODEL,
+                contents=user,
+                config=genai_types.GenerateContentConfig(
+                    system_instruction=feed.current_view_system,
+                    response_mime_type="application/json",
+                    response_json_schema=CURRENT_VIEW_SCHEMA,
+                    thinking_config=GEMINI_THINKING,
+                    max_output_tokens=800,
+                ),
+            )
+        except genai_errors.APIError as e:
+            print(f"  [current-view error] {type(e).__name__}: {e}", file=sys.stderr)
+            return None, in_tok, out_tok
+        i, o = _gemini_usage(resp)
+        in_tok, out_tok = in_tok + i, out_tok + o
+        parsed = _parse_gemini_json(resp)
+        if not (parsed and monitor._looks_mangled(parsed)
+                and attempt < _MANGLED_MAX_ATTEMPTS - 1):
+            break
+        print("  [retry] mangled Hungarian text in generate_current_view, "
+              "retrying", file=sys.stderr)
+    if not parsed:
+        return None, in_tok, out_tok
+    dates = sorted((r.get("created_at") or "")[:10] for r in window
+                   if r.get("created_at"))
+    view = {
+        **parsed,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "based_on": {
+            "count": len(window),
+            "from_date": dates[0] if dates else None,
+            "to_date": dates[-1] if dates else None,
+        },
+    }
+    return view, in_tok, out_tok
 
 
 # --- forecast-ledger pipeline (kendrick_sc) -------------------------------
@@ -1210,6 +1349,17 @@ def run_feed(feed, gemini_client, args):
     os.makedirs(DATA_DIR, exist_ok=True)
     write_json_atomic(feed.summaries_file, merged)
     print(f"Wrote {len(merged)} summaries -> {feed.summaries_file}")
+
+    if feed.current_view_file:
+        view, cv_in, cv_out = generate_current_view(gemini_client, feed, merged)
+        if view:
+            cv_cost = (cv_in / 1_000_000 * GEMINI_INPUT_PER_1M
+                       + cv_out / 1_000_000 * GEMINI_OUTPUT_PER_1M)
+            write_json_atomic(feed.current_view_file, view)
+            print(f"Current view: {view['overall_sentiment']} "
+                  f"(based on {view['based_on']['count']} posts); "
+                  f"tokens in={cv_in} out={cv_out} (${cv_cost:.4f}) "
+                  f"-> {feed.current_view_file}")
 
 
 def main():

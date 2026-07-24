@@ -35,7 +35,7 @@ import traceback
 import urllib.error
 import urllib.request
 import xml.etree.ElementTree as ET
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from google import genai
 from google.genai import types as genai_types
@@ -55,6 +55,7 @@ WATCH_URL = "https://www.youtube.com/watch?v={vid}"
 HOME = "/home/fbazsa/pilot_trader"
 DATA_DIR = os.path.join(HOME, "data")
 SUMMARIES_FILE = os.path.join(DATA_DIR, "youtube_summaries.json")
+CURRENT_VIEW_FILE = os.path.join(DATA_DIR, "youtube_current_view.json")
 
 # Gemini 3.5 Flash (NOT the tweet pipeline's Haiku): Cowen's content is dense,
 # multi-level technical analysis, and Gemini reads it markedly better.
@@ -131,6 +132,53 @@ ANALYSIS_SCHEMA = {
     },
     "required": ["overall_sentiment", "btc_outlook", "key_price_levels",
                  "top_themes", "summary"],
+    "additionalProperties": False,
+}
+
+# --- rolling "current view" synthesis --------------------------------------
+# Once per run, IF new videos were processed, synthesize a short rolling
+# stance from Cowen's recent video history -- shown as a banner above the
+# individual video cards on the dashboard, so "what does he think right now"
+# doesn't require manually reading and merging several cards. Runs over the
+# already-distilled per-video fields (btc_outlook/summary/top_themes), not
+# the full transcript, so it's a cheap second-pass read, not a re-analysis.
+# Mirrors twitter_digest.py's identical feature for the X analysis digests.
+CURRENT_VIEW_DAYS = 14           # day-based floor
+CURRENT_VIEW_MIN_POSTS = 8       # extend by count when the day window is thin
+CURRENT_VIEW_MAX_POSTS = 25      # hard cap so a busy stretch doesn't blow out
+                                 # the prompt
+
+CURRENT_VIEW_SYSTEM = (
+    "You analyze a set of recent video analyses of Benjamin Cowen, a "
+    "quantitative cryptocurrency analyst focused on Bitcoin, Ethereum, BTC "
+    "dominance, market cycles (bull/bear), risk, and macro.\n"
+    "Below is a list of his recent analyzed videos, OLDEST FIRST, each as "
+    "\"[date] sentiment | themes -- outlook\". Synthesize his CURRENT overall "
+    "stance across this window -- do not just rehash the newest video.\n"
+    "Fields:\n"
+    "- overall_sentiment: his NET stance across THESE videos -- the EXACT "
+    "English enum value 'bullish', 'bearish', 'neutral', or 'mixed'. Use "
+    "'mixed' when the videos genuinely disagree or pull in different "
+    "directions (not merely cautious -- that is 'neutral'). KEEP THIS IN "
+    "ENGLISH.\n"
+    "- stance_summary: 2-4 sentences, IN HUNGARIAN, on his current overall "
+    "view/thesis across the window -- what he is focused on and where he "
+    "leans. Weigh the whole window, not just the newest video.\n"
+    "- shift_note: ONE sentence, IN HUNGARIAN, ONLY if his stance visibly "
+    "shifted somewhere across the window (e.g. turned more cautious, flipped "
+    "bullish). Empty string if there is no clear shift.\n"
+    "Return ONLY valid JSON matching the schema. No markdown, no preamble."
+)
+
+CURRENT_VIEW_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "overall_sentiment": {"type": "string",
+                              "enum": ["bullish", "bearish", "neutral", "mixed"]},
+        "stance_summary": {"type": "string"},
+        "shift_note": {"type": "string"},
+    },
+    "required": ["overall_sentiment", "stance_summary", "shift_note"],
     "additionalProperties": False,
 }
 
@@ -285,6 +333,85 @@ def analyze(client, title, transcript):
     return parsed, in_tok, out_tok
 
 
+def _select_current_view_window(summaries):
+    """Pick the records that feed the rolling-view synthesis: everything from
+    the last CURRENT_VIEW_DAYS days, extended by count if that's too thin,
+    capped at CURRENT_VIEW_MAX_POSTS. `summaries` must be newest-first (as
+    merged/written by main()); returns a newest-first list."""
+    if not summaries:
+        return []
+    cutoff = (datetime.now(timezone.utc)
+              - timedelta(days=CURRENT_VIEW_DAYS)).strftime("%Y-%m-%d")
+    window = [r for r in summaries if (r.get("published") or "")[:10] >= cutoff]
+    if len(window) < CURRENT_VIEW_MIN_POSTS:
+        window = summaries[:CURRENT_VIEW_MIN_POSTS]
+    return window[:CURRENT_VIEW_MAX_POSTS]
+
+
+def _current_view_entry_text(r):
+    """One video's already-distilled fields, formatted as a single prompt line."""
+    line = (f"[{(r.get('published') or '')[:10]}] "
+            f"{r.get('overall_sentiment') or 'neutral'}")
+    themes = r.get("top_themes") or []
+    if themes:
+        line += " | " + ", ".join(themes)
+    line += f" -- {r.get('btc_outlook') or ''}"
+    return line
+
+
+def generate_current_view(client, summaries):
+    """Synthesize a rolling 'current stance' from Cowen's recent video history
+    (see _select_current_view_window) -- fed the already-distilled per-video
+    fields, not the full transcript. Returns (view_dict|None, in_tok, out_tok);
+    None if there is nothing to synthesize from or the call fails."""
+    window = _select_current_view_window(summaries)
+    if not window:
+        return None, 0, 0
+    entries = "\n".join(_current_view_entry_text(r) for r in reversed(window))
+    user = f"Recent Benjamin Cowen videos:\n{entries}"
+    in_tok = out_tok = 0
+    parsed = None
+    for attempt in range(_MANGLED_MAX_ATTEMPTS):
+        try:
+            resp = client.models.generate_content(
+                model=MODEL,
+                contents=user,
+                config=genai_types.GenerateContentConfig(
+                    system_instruction=CURRENT_VIEW_SYSTEM,
+                    response_mime_type="application/json",
+                    response_json_schema=CURRENT_VIEW_SCHEMA,
+                    thinking_config=GEMINI_THINKING,
+                    max_output_tokens=800,
+                ),
+            )
+        except genai_errors.APIError as e:
+            print(f"  [current-view error] {type(e).__name__}: {e}", file=sys.stderr)
+            return None, in_tok, out_tok
+        u = resp.usage_metadata
+        in_tok += u.prompt_token_count or 0
+        out_tok += (u.candidates_token_count or 0) + (u.thoughts_token_count or 0)
+        parsed = _parse_json(resp)
+        if not (parsed and _looks_mangled(parsed)
+                and attempt < _MANGLED_MAX_ATTEMPTS - 1):
+            break
+        print("  [retry] mangled Hungarian text in generate_current_view, "
+              "retrying", file=sys.stderr)
+    if not parsed:
+        return None, in_tok, out_tok
+    dates = sorted((r.get("published") or "")[:10] for r in window
+                   if r.get("published"))
+    view = {
+        **parsed,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "based_on": {
+            "count": len(window),
+            "from_date": dates[0] if dates else None,
+            "to_date": dates[-1] if dates else None,
+        },
+    }
+    return view, in_tok, out_tok
+
+
 # --- main -----------------------------------------------------------------
 def process(videos, client, allow_whisper=True):
     """Transcribe + analyze each video dict; return (records, in_tok, out_tok)."""
@@ -388,6 +515,16 @@ def main():
     os.makedirs(DATA_DIR, exist_ok=True)
     write_json_atomic(SUMMARIES_FILE, merged)
     print(f"Wrote {len(merged)} summaries -> {SUMMARIES_FILE}")
+
+    view, cv_in, cv_out = generate_current_view(client, merged)
+    if view:
+        cv_cost = (cv_in / 1_000_000 * INPUT_PER_1M
+                   + cv_out / 1_000_000 * OUTPUT_PER_1M)
+        write_json_atomic(CURRENT_VIEW_FILE, view)
+        print(f"Current view: {view['overall_sentiment']} "
+              f"(based on {view['based_on']['count']} videos); "
+              f"tokens in={cv_in} out={cv_out} (${cv_cost:.4f}) "
+              f"-> {CURRENT_VIEW_FILE}")
 
 
 if __name__ == "__main__":

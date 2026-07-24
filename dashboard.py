@@ -1818,7 +1818,9 @@ def leaderboard_table(kpis):
 
 # --- YouTube (Benjamin Cowen) analysis ------------------------------------
 YT_SUMMARIES_FILE = os.path.join(DATA_DIR, "youtube_summaries.json")
-_YT_SENTIMENT = {"bullish": C["green"], "bearish": C["red"], "neutral": C["dim"]}
+YT_CURRENT_VIEW_FILE = os.path.join(DATA_DIR, "youtube_current_view.json")
+_YT_SENTIMENT = {"bullish": C["green"], "bearish": C["red"], "neutral": C["dim"],
+                 "mixed": C["yellow"]}
 
 
 def load_youtube_summaries():
@@ -1830,6 +1832,23 @@ def load_youtube_summaries():
         return data if isinstance(data, list) else []
     except (OSError, json.JSONDecodeError):
         return []
+
+
+def _load_current_view(path):
+    """Rolling 'current view' synthesis written by twitter_digest.py /
+    youtube_monitor.py for one feed (see CURRENT_VIEW_SCHEMA in either file).
+    Missing, corrupt, or not-yet-generated file -> {} (the banner just doesn't
+    render -- see _current_view_banner)."""
+    try:
+        with open(path) as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def load_youtube_current_view():
+    return _load_current_view(YT_CURRENT_VIEW_FILE)
 
 
 def _yt_chip(text, color=None):
@@ -1885,6 +1904,47 @@ def _yt_card(v):
     ])
 
 
+def _current_view_banner(view):
+    """Rolling 'current stance' banner (see CURRENT_VIEW_SCHEMA in
+    twitter_digest.py / youtube_monitor.py), shown above a feed's post/video
+    cards. A full-border card (vs. the individual cards' left-accent border)
+    so it reads as a distinct header rather than another entry in the list.
+    Empty span if no view has been generated yet (e.g. right after the feed
+    was added, before its first cron run that processed new posts)."""
+    if not view:
+        return html.Span()
+    sent = (view.get("overall_sentiment") or "neutral").lower()
+    color = _YT_SENTIMENT.get(sent, C["dim"])
+    based_on = view.get("based_on") or {}
+    count, from_date, to_date = (based_on.get("count"), based_on.get("from_date"),
+                                 based_on.get("to_date"))
+    stamp = (f"as of {to_date}  ·  based on {count} posts since {from_date}"
+             if count else "")
+    return html.Div(style={
+        "background": C["card"], "border": f"1px solid {color}",
+        "borderRadius": "8px", "padding": "12px 16px", "marginTop": "10px"},
+        children=[
+        html.Div(style={"display": "flex", "justifyContent": "space-between",
+                        "alignItems": "flex-start", "gap": "12px"}, children=[
+            html.Span("CURRENT VIEW", style={"color": C["dim"],
+                      "fontSize": "0.68rem", "fontWeight": "bold",
+                      "letterSpacing": "0.06em"}),
+            html.Span(sent.upper(), style={
+                "background": color, "color": C["bg"], "borderRadius": "10px",
+                "padding": "1px 10px", "fontSize": "0.66rem", "fontWeight": "bold",
+                "whiteSpace": "nowrap", "letterSpacing": "0.04em"}),
+        ]),
+        html.Div(view.get("stance_summary") or "", style={"color": C["text"],
+                 "fontSize": "0.84rem", "marginTop": "8px", "lineHeight": "1.5"}),
+        (html.Div(view.get("shift_note"), style={"color": C["yellow"],
+                  "fontSize": "0.76rem", "marginTop": "8px", "lineHeight": "1.4",
+                  "fontStyle": "italic"})
+         if view.get("shift_note") else html.Span()),
+        (html.Div(stamp, style={"color": C["dim"], "fontSize": "0.68rem",
+                  "marginTop": "8px"}) if stamp else html.Span()),
+    ])
+
+
 def youtube_section(summaries, limit=5):
     """Render the most recent `limit` video analyses as cards (newest first)."""
     if not summaries:
@@ -1905,6 +1965,9 @@ TW_SUMMARIES_FILE = os.path.join(DATA_DIR, "twitter_summaries.json")
 JOAO_SUMMARIES_FILE = os.path.join(DATA_DIR, "joao_summaries.json")
 DORKCHICKEN_SUMMARIES_FILE = os.path.join(DATA_DIR, "dorkchicken_summaries.json")
 KENDRICK_FORECASTS_FILE = os.path.join(DATA_DIR, "kendrick_forecasts.json")
+KI_CURRENT_VIEW_FILE = os.path.join(DATA_DIR, "ki_young_ju_current_view.json")
+JOAO_CURRENT_VIEW_FILE = os.path.join(DATA_DIR, "joao_wedson_current_view.json")
+DORKCHICKEN_CURRENT_VIEW_FILE = os.path.join(DATA_DIR, "dorkchicken_current_view.json")
 
 
 def _load_summaries(path):
@@ -1931,6 +1994,18 @@ def load_joao_summaries():
 def load_dorkchicken_summaries():
     """@DorkChicken (crypto/macro TA) post analyses."""
     return _load_summaries(DORKCHICKEN_SUMMARIES_FILE)
+
+
+def load_ki_current_view():
+    return _load_current_view(KI_CURRENT_VIEW_FILE)
+
+
+def load_joao_current_view():
+    return _load_current_view(JOAO_CURRENT_VIEW_FILE)
+
+
+def load_dorkchicken_current_view():
+    return _load_current_view(DORKCHICKEN_CURRENT_VIEW_FILE)
 
 
 def load_kendrick_forecasts():
@@ -3332,15 +3407,21 @@ def refresh_influencers(_n, account):
     # analysis-only views, not traders: no header card / positions / signals —
     # just the cards.
     if account == "BenCowen":
-        return "", [], None, None, youtube_section(load_youtube_summaries()), [], [], [], []
+        children = ([_current_view_banner(load_youtube_current_view())]
+                    + youtube_section(load_youtube_summaries()))
+        return "", [], None, None, children, [], [], [], []
     if account == "KiYoungJu":
-        return "", [], None, None, [], twitter_section(load_twitter_summaries()), [], [], []
+        children = ([_current_view_banner(load_ki_current_view())]
+                    + twitter_section(load_twitter_summaries()))
+        return "", [], None, None, [], children, [], [], []
     if account == "JoaoWedson":
-        return ("", [], None, None, [], [],
-                twitter_section(load_joao_summaries(), who="@joao_wedson"), [], [])
+        children = ([_current_view_banner(load_joao_current_view())]
+                    + twitter_section(load_joao_summaries(), who="@joao_wedson"))
+        return ("", [], None, None, [], [], children, [], [])
     if account == "DorkChicken":
-        return ("", [], None, None, [], [], [],
-                twitter_section(load_dorkchicken_summaries(), who="@DorkChicken"), [])
+        children = ([_current_view_banner(load_dorkchicken_current_view())]
+                    + twitter_section(load_dorkchicken_summaries(), who="@DorkChicken"))
+        return ("", [], None, None, [], [], [], children, [])
     if account == "GeoffKendrick":
         return ("", [], None, None, [], [], [], [],
                 kendrick_forecast_section(load_kendrick_forecasts()))
