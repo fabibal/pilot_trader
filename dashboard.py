@@ -1851,6 +1851,21 @@ def load_youtube_current_view():
     return _load_current_view(YT_CURRENT_VIEW_FILE)
 
 
+# --- YouTube (Jesse Olson / "The Market Sniper") analysis -----------------
+JESSE_SUMMARIES_FILE = os.path.join(DATA_DIR, "jesse_olson_summaries.json")
+JESSE_CURRENT_VIEW_FILE = os.path.join(DATA_DIR, "jesse_olson_current_view.json")
+
+
+def load_jesse_olson_summaries():
+    """Jesse Olson (Market Sniper) video analyses (written by
+    youtube_monitor.py --channel jesse_olson)."""
+    return _load_summaries(JESSE_SUMMARIES_FILE)
+
+
+def load_jesse_olson_current_view():
+    return _load_current_view(JESSE_CURRENT_VIEW_FILE)
+
+
 def _yt_chip(text, color=None):
     return html.Span(text, style={
         "display": "inline-block", "background": C["bg"],
@@ -1945,10 +1960,10 @@ def _current_view_banner(view):
     ])
 
 
-def youtube_section(summaries, limit=5):
+def youtube_section(summaries, limit=5, empty_label="Benjamin Cowen"):
     """Render the most recent `limit` video analyses as cards (newest first)."""
     if not summaries:
-        return [html.Div("No Benjamin Cowen videos analyzed yet.",
+        return [html.Div(f"No {empty_label} videos analyzed yet.",
                          style={"color": C["dim"], "fontSize": "0.8rem",
                                 "marginTop": "8px"})]
     ordered = sorted(summaries, key=lambda r: r.get("published") or "",
@@ -2927,6 +2942,8 @@ app.layout = html.Div(
                                      style=_TAB_STYLE, selected_style=_TAB_SELECTED),
                              dcc.Tab(label="Ben Cowen", value="BenCowen",
                                      style=_TAB_STYLE, selected_style=_TAB_SELECTED),
+                             dcc.Tab(label="Jesse Olson", value="JesseOlson",
+                                     style=_TAB_STYLE, selected_style=_TAB_SELECTED),
                              dcc.Tab(label="Ki Young Ju", value="KiYoungJu",
                                      style=_TAB_STYLE, selected_style=_TAB_SELECTED),
                              dcc.Tab(label="Joao Wedson", value="JoaoWedson",
@@ -2996,6 +3013,24 @@ app.layout = html.Div(
                                         "fontSize": "0.8rem"})],
                          style=_SECTION_H),
                 html.Div(id="youtube-summaries", style={"marginTop": "4px"}),
+            ]),
+
+            # Jesse Olson view: YouTube video analysis cards (analysis only —
+            # "The Market Sniper" is a swing trader, not one we mirror, so no
+            # positions/signals/win-rate here — same pattern as Ben Cowen).
+            html.Div(id="jesse-view", style={"display": "none"}, children=[
+                html.Div(["YouTube Analysis — Jesse Olson (Market Sniper)",
+                          html.A("→ channel",
+                                 href="https://www.youtube.com/channel/UCtuoqGiIHBGMRmTGeXVrf9g/videos",
+                                 target="_blank", rel="noopener noreferrer",
+                                 style={"color": C["blue"], "marginLeft": "14px",
+                                        "textTransform": "none",
+                                        "letterSpacing": "normal",
+                                        "textDecoration": "none",
+                                        "fontWeight": "normal",
+                                        "fontSize": "0.8rem"})],
+                         style=_SECTION_H),
+                html.Div(id="jesse-summaries", style={"marginTop": "4px"}),
             ]),
 
             # Ki Young Ju view: X/Twitter post analysis cards (analysis only —
@@ -3256,6 +3291,7 @@ def _influencer_header(title, account):
 @app.callback(
     Output("influencer-trade-view", "style"),
     Output("youtube-view", "style"),
+    Output("jesse-view", "style"),
     Output("ki-view", "style"),
     Output("joao-view", "style"),
     Output("dorkchicken-view", "style"),
@@ -3267,16 +3303,18 @@ def _influencer_header(title, account):
 def switch_influencer_subtab(account):
     show, hide = {"display": "block"}, {"display": "none"}
     if account == "BenCowen":           # YouTube analysis view, not a trade view
-        return hide, show, hide, hide, hide, hide, "", ""
+        return hide, show, hide, hide, hide, hide, hide, "", ""
+    if account == "JesseOlson":         # YouTube analysis view, not a trade view
+        return hide, hide, show, hide, hide, hide, hide, "", ""
     if account == "KiYoungJu":          # X analysis view, not a trade view
-        return hide, hide, show, hide, hide, hide, "", ""
+        return hide, hide, hide, show, hide, hide, hide, "", ""
     if account == "JoaoWedson":         # X analysis view, not a trade view
-        return hide, hide, hide, show, hide, hide, "", ""
+        return hide, hide, hide, hide, show, hide, hide, "", ""
     if account == "DorkChicken":        # X analysis view, not a trade view
-        return hide, hide, hide, hide, show, hide, "", ""
+        return hide, hide, hide, hide, hide, show, hide, "", ""
     if account == "GeoffKendrick":      # X topic-search analysis view
-        return hide, hide, hide, hide, hide, show, "", ""
-    return (show, hide, hide, hide, hide, hide,
+        return hide, hide, hide, hide, hide, hide, show, "", ""
+    return (show, hide, hide, hide, hide, hide, hide,
             _influencer_header(f"{account} — Open Positions", account),
             _influencer_header(f"{account} — Signals", account))
 
@@ -3395,6 +3433,7 @@ def refresh_pie(_n, portfolio):
     Output("influencer-positions", "children"),
     Output("influencer-winrate", "children"),
     Output("youtube-summaries", "children"),
+    Output("jesse-summaries", "children"),
     Output("ki-summaries", "children"),
     Output("joao-summaries", "children"),
     Output("dorkchicken-summaries", "children"),
@@ -3403,27 +3442,32 @@ def refresh_pie(_n, portfolio):
     Input("influencer-subtabs", "value"),
 )
 def refresh_influencers(_n, account):
-    # Ben Cowen / Ki Young Ju / Joao Wedson / DorkChicken / Geoff Kendrick are
-    # analysis-only views, not traders: no header card / positions / signals —
-    # just the cards.
+    # Ben Cowen / Jesse Olson / Ki Young Ju / Joao Wedson / DorkChicken /
+    # Geoff Kendrick are analysis-only views, not traders: no header card /
+    # positions / signals — just the cards.
     if account == "BenCowen":
         children = ([_current_view_banner(load_youtube_current_view())]
                     + youtube_section(load_youtube_summaries()))
-        return "", [], None, None, children, [], [], [], []
+        return "", [], None, None, children, [], [], [], [], []
+    if account == "JesseOlson":
+        children = ([_current_view_banner(load_jesse_olson_current_view())]
+                    + youtube_section(load_jesse_olson_summaries(),
+                                      empty_label="Jesse Olson"))
+        return "", [], None, None, [], children, [], [], [], []
     if account == "KiYoungJu":
         children = ([_current_view_banner(load_ki_current_view())]
                     + twitter_section(load_twitter_summaries()))
-        return "", [], None, None, [], children, [], [], []
+        return "", [], None, None, [], [], children, [], [], []
     if account == "JoaoWedson":
         children = ([_current_view_banner(load_joao_current_view())]
                     + twitter_section(load_joao_summaries(), who="@joao_wedson"))
-        return ("", [], None, None, [], [], children, [], [])
+        return ("", [], None, None, [], [], [], children, [], [])
     if account == "DorkChicken":
         children = ([_current_view_banner(load_dorkchicken_current_view())]
                     + twitter_section(load_dorkchicken_summaries(), who="@DorkChicken"))
-        return ("", [], None, None, [], [], [], children, [])
+        return ("", [], None, None, [], [], [], [], children, [])
     if account == "GeoffKendrick":
-        return ("", [], None, None, [], [], [], [],
+        return ("", [], None, None, [], [], [], [], [],
                 kendrick_forecast_section(load_kendrick_forecasts()))
     positions = load_positions()
     warm_prices({_yf_symbol(p["ticker"], p.get("asset_type", "stock"))
@@ -3434,7 +3478,7 @@ def refresh_influencers(_n, account):
             influencer_signals_data(load_trades(), account=account),
             influencer_positions_table(resolutions),
             influencer_winrate_card(resolutions),
-            [], [], [], [], [])
+            [], [], [], [], [], [])
 
 
 # --- background cache warmer -------------------------------------------------

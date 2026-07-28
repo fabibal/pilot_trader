@@ -1,32 +1,58 @@
 #!/usr/bin/env python3
 """
-youtube_monitor.py - daily Benjamin Cowen YouTube analysis.
+youtube_monitor.py - recurring YouTube channel analysis digest (ANALYSIS ONLY).
 
-Pipeline (mirrors monitor.py's "scrape -> LLM -> json" shape, but for video):
+Runs one or more channels. Each channel mirrors twitter_digest.py's
+"scrape -> LLM -> json" shape, but for video instead of tweets:
 
   YouTube RSS feed (free, no API key)            -> new video IDs + titles
    -> transcript via youtube-transcript-api (free, PRIMARY)
-        fallback: faster-whisper small int8 on yt-dlp audio (LOCAL, rare)
+        fallback: faster-whisper small int8 on yt-dlp audio (LOCAL, rare-ish)
    -> Gemini structured analysis (sentiment / BTC outlook / levels / themes)
-   -> data/youtube_summaries.json  (one record per video, newest-first)
+   -> the channel's summaries json  (one record per video, newest-first)
 
 The summaries file is also the dedup ledger: a video_id already present is
-skipped, so reruns / the daily cron are idempotent (no reprocessing, no double
-LLM spend). Designed to run unattended from cron at 09:00 UTC.
+skipped, so reruns / cron are idempotent (no reprocessing, no double LLM
+spend).
 
-  python youtube_monitor.py                 # process any new videos in the feed
-  python youtube_monitor.py --limit 3       # cap new videos this run (testing)
-  python youtube_monitor.py --force ID ...  # (re)process specific video IDs
-  python youtube_monitor.py --dry-run       # analyze + print, do NOT write file
-  python youtube_monitor.py --no-whisper    # disable the local Whisper fallback
+Channels (see CHANNELS):
+  - cowen (Benjamin Cowen; quantitative BTC/ETH/macro analyst) ->
+      data/youtube_summaries.json. Scripted, dense single-narrator analysis.
+      Checked daily; whisper fallback is rare (captions are almost always
+      present).
+  - jesse_olson (Jesse Olson, "The Market Sniper"; swing trader, live-streamed
+      chart analysis) -> data/jesse_olson_summaries.json. Informal live
+      trading-stream format (rambling, chart navigation, Discord/course
+      plugs) -- the persona prompt tells Gemini to filter that noise and to
+      NOT invent price levels he only alludes to as being posted in his paid
+      Discord. Each upload session posts twice (the main video + a duplicate
+      suffixed with a mobile/shorts marker in the title); drop_shorts_dupes
+      filters the duplicate out before it ever reaches transcript fetch, so
+      it isn't double-processed or double-billed. Checked 2-3x/week (see
+      CLAUDE.md's cron table) since he posts ~weekly, not daily. His sessions
+      run long (~45-75+ min) and his freshest upload sometimes has captions
+      not yet ready, so whisper fallback -- while still the exception, not
+      the rule -- fires more often here than for Cowen; the cron slot is
+      scheduled with a wide buffer before other jobs to absorb that.
 
-Whisper is a fallback only: Cowen's videos almost always have YouTube captions,
+ANALYSIS ONLY: neither channel is in accounts.ACCOUNTS; neither is written to
+trades.json / positions.json; neither is mirrored to IBKR.
+
+  python youtube_monitor.py                       # process new videos, ALL channels
+  python youtube_monitor.py --channel jesse_olson  # only this channel
+  python youtube_monitor.py --limit 3              # cap new videos/channel (testing)
+  python youtube_monitor.py --channel cowen --force ID ...  # (re)process ids
+  python youtube_monitor.py --dry-run              # analyze + print, do NOT write
+  python youtube_monitor.py --no-whisper           # disable the local Whisper fallback
+
+Whisper is a fallback only: captions are the primary path for both channels,
 so the local transcription path (faster-whisper + yt-dlp, both CPU-only here)
-is exercised rarely. It is lazily imported so the common path stays light.
+is lazily imported so the common path stays light.
 """
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -35,6 +61,7 @@ import traceback
 import urllib.error
 import urllib.request
 import xml.etree.ElementTree as ET
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 from google import genai
@@ -48,17 +75,15 @@ from monitor import (load_env, load_json, notify_telegram, TELEGRAM_ENVS,
                      GEMINI_THINKING, _unescape_strings, _looks_mangled)
 
 # --- config ---------------------------------------------------------------
-CHANNEL_ID = "UCRvqjQPSeaWn-uEx-w0XOIg"        # @benjaminjcowen
-RSS_URL = f"https://www.youtube.com/feeds/videos.xml?channel_id={CHANNEL_ID}"
-WATCH_URL = "https://www.youtube.com/watch?v={vid}"
-
 HOME = "/home/fbazsa/pilot_trader"
 DATA_DIR = os.path.join(HOME, "data")
-SUMMARIES_FILE = os.path.join(DATA_DIR, "youtube_summaries.json")
-CURRENT_VIEW_FILE = os.path.join(DATA_DIR, "youtube_current_view.json")
+WATCH_URL = "https://www.youtube.com/watch?v={vid}"
 
-# Gemini 3.5 Flash (NOT the tweet pipeline's Haiku): Cowen's content is dense,
-# multi-level technical analysis, and Gemini reads it markedly better.
+# Gemini 3.5 Flash (NOT the tweet pipeline's cheap extraction-tier model):
+# both channels' content needs a careful read (Cowen: dense multi-level
+# technical analysis; Jesse Olson: noisy live-stream narration that needs
+# real filtering), and Gemini reads it markedly better. Shared across
+# channels -- same model/pricing for both, only the prompt persona differs.
 # max_output_tokens stays high (was sized for thinking + JSON sharing the
 # budget) -- harmless headroom now, no cost since only tokens actually
 # generated are billed.
@@ -72,33 +97,41 @@ CURRENT_VIEW_FILE = os.path.join(DATA_DIR, "youtube_current_view.json")
 # worth the async submit/poll/expiry machinery, and 2026 reports (GitHub
 # googleapis/python-genai#2221/#1482) show batch jobs sometimes stuck in
 # PENDING for 24-96h+ -- unacceptable for a daily-cron freshness expectation.
-# Context caching also evaluated and rejected: ANALYSIS_SYSTEM is far under
+# Context caching also evaluated and rejected: ANALYSIS_BODY is far under
 # every documented minimum (Gemini's implicit/explicit caching needs >=2048
 # tokens on 2.5 Flash, >=4096 on 3.5 Flash; this prompt is ~1 order of
 # magnitude smaller). Revisit only if either changes materially.
 MODEL = "gemini-3.5-flash"
 INPUT_PER_1M = 1.50                  # $ / 1M input tokens (gemini-3.5-flash)
 OUTPUT_PER_1M = 9.00                 # $ / 1M output tokens, incl. thinking tokens
-# Cap transcript length sent to the model. Cowen videos run ~10-30k chars; a long
-# stream could be far bigger. ~60k chars ~= 15k tokens, a safe per-video bound.
+# Cap transcript length sent to the model. Cowen videos run ~10-30k chars;
+# Jesse Olson's live-stream sessions run notably longer (~40-55k chars
+# observed, occasionally more) since he narrates while charting live rather
+# than delivering a scripted take. Both stay comfortably under this cap in
+# practice, but ~60k chars ~= 15k tokens is a safe per-video bound either way.
 MAX_TRANSCRIPT_CHARS = 60_000
 
 # Local Whisper fallback (CPU-only box, no GPU): small int8 is the accuracy/RAM
 # sweet spot. ~480MB model, ~2GB RAM, downloads to ~/.cache on first use.
 WHISPER_MODEL = "small"
 WHISPER_COMPUTE = "int8"
-AUDIO_DOWNLOAD_TIMEOUT_S = 600       # yt-dlp audio fetch hard cap
+AUDIO_DOWNLOAD_TIMEOUT_S = 600       # yt-dlp audio fetch hard cap (download
+                                     # only; transcription time is unbounded
+                                     # and scales with video length -- see
+                                     # jesse_olson's cron note re: buffer)
 # yt-dlp needs a JS runtime (deno) for YouTube extraction; without one it warns
 # and some formats degrade. deno is installed user-locally here, but cron's PATH
 # is minimal and won't include it — so we add this dir to the subprocess env.
 DENO_BIN_DIR = os.path.expanduser("~/.deno/bin")
 
-# --- LLM analysis ---------------------------------------------------------
-ANALYSIS_SYSTEM = (
-    "You analyze the transcript of a YouTube video by Benjamin Cowen, a "
-    "quantitative cryptocurrency analyst focused on Bitcoin, Ethereum, BTC "
-    "dominance, market cycles (bull/bear), risk, and macro. Extract a concise, "
-    "structured read of THIS video.\n"
+# --- LLM analysis -----------------------------------------------------------
+# The system prompt is shared across channels EXCEPT for a persona prefix
+# (who the channel owner is + what format/caveats apply). Channel.analysis_system
+# prepends the per-channel persona to this shared body so every channel gets
+# identical field definitions and the Hungarian-output contract. Mirrors
+# twitter_digest.py's ANALYSIS_BODY / Feed.analysis_persona split.
+ANALYSIS_BODY = (
+    "Extract a concise, structured read of THIS video.\n"
     "The transcript is auto-captioned or machine-transcribed, so expect errors: "
     "'bare market' means 'bear market', spoken numbers ('ninety thousand') mean "
     "'$90,000', and tickers may be mis-heard. Interpret intelligently; never "
@@ -137,21 +170,21 @@ ANALYSIS_SCHEMA = {
 
 # --- rolling "current view" synthesis --------------------------------------
 # Once per run, IF new videos were processed, synthesize a short rolling
-# stance from Cowen's recent video history -- shown as a banner above the
-# individual video cards on the dashboard, so "what does he think right now"
-# doesn't require manually reading and merging several cards. Runs over the
-# already-distilled per-video fields (btc_outlook/summary/top_themes), not
+# stance from the channel's recent video history -- shown as a banner above
+# the individual video cards on the dashboard, so "what does he think right
+# now" doesn't require manually reading and merging several cards. Runs over
+# the already-distilled per-video fields (btc_outlook/summary/top_themes), not
 # the full transcript, so it's a cheap second-pass read, not a re-analysis.
 # Mirrors twitter_digest.py's identical feature for the X analysis digests.
 CURRENT_VIEW_DAYS = 14           # day-based floor
 CURRENT_VIEW_MIN_POSTS = 8       # extend by count when the day window is thin
+                                 # (e.g. jesse_olson's ~weekly cadence puts ~2
+                                 # videos in 14 days -> falls back to "last 8",
+                                 # i.e. roughly a 2-month rolling window)
 CURRENT_VIEW_MAX_POSTS = 25      # hard cap so a busy stretch doesn't blow out
                                  # the prompt
 
-CURRENT_VIEW_SYSTEM = (
-    "You analyze a set of recent video analyses of Benjamin Cowen, a "
-    "quantitative cryptocurrency analyst focused on Bitcoin, Ethereum, BTC "
-    "dominance, market cycles (bull/bear), risk, and macro.\n"
+CURRENT_VIEW_BODY = (
     "Below is a list of his recent analyzed videos, OLDEST FIRST, each as "
     "\"[date] sentiment | themes -- outlook\". Synthesize his CURRENT overall "
     "stance across this window -- do not just rehash the newest video.\n"
@@ -183,16 +216,91 @@ CURRENT_VIEW_SCHEMA = {
 }
 
 
-# --- YouTube RSS ----------------------------------------------------------
+# --- channel registry -------------------------------------------------------
+@dataclass(frozen=True)
+class Channel:
+    """One YouTube channel. The summaries file is its dedup ledger."""
+    key: str
+    channel_id: str
+    display_name: str
+    summaries_file: str
+    persona: str                    # "who + format" prefix (see ANALYSIS_BODY)
+    current_view_file: str = None   # None skips the CURRENT VIEW feature
+    # Some channels (observed: jesse_olson) post each upload session twice --
+    # the main video, and a near-identical clip suffixed with a mobile/shorts
+    # marker in the title -- within seconds/minutes of each other. Filter the
+    # duplicate before it reaches transcript fetch (see _drop_shorts_duplicates).
+    drop_shorts_dupes: bool = False
+
+    @property
+    def rss_url(self):
+        return ("https://www.youtube.com/feeds/videos.xml"
+                f"?channel_id={self.channel_id}")
+
+    @property
+    def analysis_system(self):
+        return self.persona + " " + ANALYSIS_BODY
+
+    @property
+    def current_view_system(self):
+        return self.persona + " " + CURRENT_VIEW_BODY
+
+
+CHANNELS = {c.key: c for c in [
+    Channel(
+        key="cowen",
+        channel_id="UCRvqjQPSeaWn-uEx-w0XOIg",           # @benjaminjcowen
+        display_name="Benjamin Cowen",
+        summaries_file=os.path.join(DATA_DIR, "youtube_summaries.json"),
+        persona=(
+            "You analyze the transcript of a YouTube video by Benjamin Cowen, a "
+            "quantitative cryptocurrency analyst focused on Bitcoin, Ethereum, "
+            "BTC dominance, market cycles (bull/bear), risk, and macro."),
+        current_view_file=os.path.join(DATA_DIR, "youtube_current_view.json"),
+    ),
+    Channel(
+        key="jesse_olson",
+        channel_id="UCtuoqGiIHBGMRmTGeXVrf9g",            # @jesseolsoninc
+        display_name="Jesse Olson",
+        summaries_file=os.path.join(DATA_DIR, "jesse_olson_summaries.json"),
+        persona=(
+            "You analyze the transcript of a YouTube video by Jesse Olson "
+            "(\"The Market Sniper\"), a swing trader who live-streams Bitcoin/"
+            "crypto chart analysis (support/resistance, RSI, MACD, EMA/SMA, "
+            "divergence, retest patterns, price targets).\n"
+            "The video is an informal LIVE-STREAMED trading session, not a "
+            "scripted analysis: expect rambling, live chart navigation, "
+            "community shout-outs, and repeated plugs for his paid Discord / "
+            "course / affiliate tools -- ignore all of that promotional "
+            "content when extracting the analysis fields below. He frequently "
+            "refers to 'exact targets' or specific levels as being posted in "
+            "his Discord WITHOUT restating the number on camera -- if a level "
+            "is only alluded to like that and never actually stated with a "
+            "number in the transcript, do NOT invent or infer it; leave it "
+            "out of key_price_levels entirely."),
+        current_view_file=os.path.join(DATA_DIR, "jesse_olson_current_view.json"),
+        drop_shorts_dupes=True,
+    ),
+]}
+
+
+# --- YouTube RSS ------------------------------------------------------------
 _NS = {"a": "http://www.w3.org/2005/Atom",
        "yt": "http://www.youtube.com/xml/schemas/2015"}
 
+# Trailing mobile-phone marker YouTube shows on jesse_olson's shorts/mobile
+# duplicate upload (observed: U+1F4F1, always preceded by a space). Stripping
+# it normalizes "Title X 📱" back to "Title X" so it matches the main video's
+# title for grouping in _drop_shorts_duplicates.
+_SHORTS_SUFFIX_RE = re.compile(r"\s*\U0001F4F1\s*$")
 
-def fetch_feed():
+
+def fetch_feed(channel):
     """Return the channel's recent uploads as a list of dicts (newest first):
     {video_id, title, published, url}. RSS is free and key-less; YouTube returns
     the latest ~15 entries (uploads + shorts)."""
-    req = urllib.request.Request(RSS_URL, headers={"User-Agent": "Mozilla/5.0"})
+    req = urllib.request.Request(channel.rss_url,
+                                 headers={"User-Agent": "Mozilla/5.0"})
     with urllib.request.urlopen(req, timeout=20) as resp:
         root = ET.fromstring(resp.read())
     videos = []
@@ -206,14 +314,34 @@ def fetch_feed():
             "published": e.findtext("a:published", namespaces=_NS),
             "url": WATCH_URL.format(vid=vid),
         })
+    if channel.drop_shorts_dupes:
+        videos = _drop_shorts_duplicates(videos)
     return videos
 
 
-# --- Transcript -----------------------------------------------------------
+def _drop_shorts_duplicates(videos):
+    """Collapse a session's paired upload (main video + mobile/shorts-marker
+    duplicate, see _SHORTS_SUFFIX_RE) into just the main video. Groups entries
+    by title with the trailing marker stripped; keeps the non-suffixed entry
+    when both are present in this batch, else keeps whichever one is (e.g. the
+    main video's pair already scrolled out of the RSS window)."""
+    by_key = {}
+    for v in videos:
+        stripped = _SHORTS_SUFFIX_RE.sub("", v["title"]).strip()
+        by_key.setdefault(stripped, []).append(v)
+    keep = []
+    for stripped, group in by_key.items():
+        main = [v for v in group if v["title"].strip() == stripped]
+        keep.append(main[0] if main else group[0])
+    keep.sort(key=lambda v: v["published"] or "", reverse=True)
+    return keep
+
+
+# --- Transcript -------------------------------------------------------------
 def get_transcript(video_id, allow_whisper=True):
     """Return (text, source). source is 'youtube' (captions), 'whisper' (local
     transcription), or None when both paths fail. The captions path is primary;
-    Whisper is the rare fallback when a video has no usable transcript."""
+    Whisper is the fallback when a video has no usable transcript yet."""
     try:
         from youtube_transcript_api import YouTubeTranscriptApi
         fetched = YouTubeTranscriptApi().fetch(video_id, languages=["en"])
@@ -282,7 +410,7 @@ def whisper_transcribe(video_id):
         shutil.rmtree(tmpdir, ignore_errors=True)
 
 
-# --- Analysis -------------------------------------------------------------
+# --- Analysis -----------------------------------------------------------
 def _parse_json(resp):
     try:
         return _unescape_strings(json.loads(resp.text))
@@ -296,7 +424,7 @@ def _parse_json(resp):
 _MANGLED_MAX_ATTEMPTS = 3
 
 
-def analyze(client, title, transcript):
+def analyze(client, channel, title, transcript):
     """Send the transcript to the model (Gemini) and return
     (analysis_dict, in_tok, out_tok). analysis_dict is None on API/parse error."""
     text = transcript
@@ -311,7 +439,7 @@ def analyze(client, title, transcript):
                 model=MODEL,
                 contents=user,
                 config=genai_types.GenerateContentConfig(
-                    system_instruction=ANALYSIS_SYSTEM,
+                    system_instruction=channel.analysis_system,
                     response_mime_type="application/json",
                     response_json_schema=ANALYSIS_SCHEMA,
                     thinking_config=GEMINI_THINKING,
@@ -337,7 +465,7 @@ def _select_current_view_window(summaries):
     """Pick the records that feed the rolling-view synthesis: everything from
     the last CURRENT_VIEW_DAYS days, extended by count if that's too thin,
     capped at CURRENT_VIEW_MAX_POSTS. `summaries` must be newest-first (as
-    merged/written by main()); returns a newest-first list."""
+    merged/written by run_channel()); returns a newest-first list."""
     if not summaries:
         return []
     cutoff = (datetime.now(timezone.utc)
@@ -359,16 +487,16 @@ def _current_view_entry_text(r):
     return line
 
 
-def generate_current_view(client, summaries):
-    """Synthesize a rolling 'current stance' from Cowen's recent video history
-    (see _select_current_view_window) -- fed the already-distilled per-video
-    fields, not the full transcript. Returns (view_dict|None, in_tok, out_tok);
-    None if there is nothing to synthesize from or the call fails."""
+def generate_current_view(client, channel, summaries):
+    """Synthesize a rolling 'current stance' from the channel's recent video
+    history (see _select_current_view_window) -- fed the already-distilled
+    per-video fields, not the full transcript. Returns (view_dict|None, in_tok,
+    out_tok); None if there is nothing to synthesize from or the call fails."""
     window = _select_current_view_window(summaries)
     if not window:
         return None, 0, 0
     entries = "\n".join(_current_view_entry_text(r) for r in reversed(window))
-    user = f"Recent Benjamin Cowen videos:\n{entries}"
+    user = f"Recent {channel.display_name} videos:\n{entries}"
     in_tok = out_tok = 0
     parsed = None
     for attempt in range(_MANGLED_MAX_ATTEMPTS):
@@ -377,7 +505,7 @@ def generate_current_view(client, summaries):
                 model=MODEL,
                 contents=user,
                 config=genai_types.GenerateContentConfig(
-                    system_instruction=CURRENT_VIEW_SYSTEM,
+                    system_instruction=channel.current_view_system,
                     response_mime_type="application/json",
                     response_json_schema=CURRENT_VIEW_SCHEMA,
                     thinking_config=GEMINI_THINKING,
@@ -413,7 +541,7 @@ def generate_current_view(client, summaries):
 
 
 # --- main -----------------------------------------------------------------
-def process(videos, client, allow_whisper=True):
+def process(videos, client, channel, allow_whisper=True):
     """Transcribe + analyze each video dict; return (records, in_tok, out_tok)."""
     records, total_in, total_out = [], 0, 0
     for v in videos:
@@ -423,7 +551,7 @@ def process(videos, client, allow_whisper=True):
             print("    no transcript (captions + Whisper both failed); skipping",
                   file=sys.stderr)
             continue
-        analysis, in_tok, out_tok = analyze(client, v["title"], text)
+        analysis, in_tok, out_tok = analyze(client, channel, v["title"], text)
         total_in += in_tok
         total_out += out_tok
         if not analysis:
@@ -444,41 +572,24 @@ def process(videos, client, allow_whisper=True):
     return records, total_in, total_out
 
 
-def main():
-    ap = argparse.ArgumentParser(description="Benjamin Cowen YouTube analysis")
-    ap.add_argument("--limit", type=int, default=None,
-                    help="cap how many NEW videos to process this run")
-    ap.add_argument("--force", nargs="+", metavar="VIDEO_ID",
-                    help="(re)process these specific video IDs, ignoring dedup")
-    ap.add_argument("--dry-run", action="store_true",
-                    help="analyze and print, but do not write the summaries file")
-    ap.add_argument("--no-whisper", action="store_true",
-                    help="disable the local Whisper fallback")
-    args = ap.parse_args()
-
-    for p in TELEGRAM_ENVS:                       # loads GOOGLE_API_KEY + alerts
-        load_env(p)
-    if not os.environ.get("GOOGLE_API_KEY"):
-        print("GOOGLE_API_KEY is not set. Add it to ~/pilot_trader/.env "
-              "and re-run.", file=sys.stderr)
-        sys.exit(1)
-
-    summaries = load_json(SUMMARIES_FILE, [])
+def run_channel(channel, client, args):
+    """Process one channel end-to-end: fetch -> filter -> transcribe -> analyze
+    -> write ledger -> (maybe) regenerate the rolling current view."""
+    print(f"\n=== {channel.display_name} ===")
+    summaries = load_json(channel.summaries_file, [])
     if not isinstance(summaries, list):
         summaries = []
     seen = {r.get("video_id") for r in summaries}
 
-    feed = fetch_feed()
+    feed = fetch_feed(channel)
     print(f"Feed: {len(feed)} videos in channel RSS")
 
     if args.force:
-        wanted = set(args.force)
         by_id = {v["video_id"]: v for v in feed}
-        todo = []
-        for vid in args.force:
-            todo.append(by_id.get(vid, {
-                "video_id": vid, "title": vid, "published": None,
-                "url": WATCH_URL.format(vid=vid)}))
+        todo = [by_id.get(vid, {
+                    "video_id": vid, "title": vid, "published": None,
+                    "url": WATCH_URL.format(vid=vid)})
+                for vid in args.force]
     else:
         todo = [v for v in feed if v["video_id"] not in seen]
         if args.limit is not None:
@@ -490,8 +601,7 @@ def main():
 
     print(f"Processing {len(todo)} video(s)"
           + (" [FORCE]" if args.force else "") + ":")
-    client = genai.Client()
-    records, in_tok, out_tok = process(todo, client,
+    records, in_tok, out_tok = process(todo, client, channel,
                                        allow_whisper=not args.no_whisper)
 
     cost = in_tok / 1_000_000 * INPUT_PER_1M \
@@ -513,18 +623,71 @@ def main():
     merged = sorted(by_id.values(),
                     key=lambda r: r.get("published") or "", reverse=True)
     os.makedirs(DATA_DIR, exist_ok=True)
-    write_json_atomic(SUMMARIES_FILE, merged)
-    print(f"Wrote {len(merged)} summaries -> {SUMMARIES_FILE}")
+    write_json_atomic(channel.summaries_file, merged)
+    print(f"Wrote {len(merged)} summaries -> {channel.summaries_file}")
 
-    view, cv_in, cv_out = generate_current_view(client, merged)
-    if view:
-        cv_cost = (cv_in / 1_000_000 * INPUT_PER_1M
-                   + cv_out / 1_000_000 * OUTPUT_PER_1M)
-        write_json_atomic(CURRENT_VIEW_FILE, view)
-        print(f"Current view: {view['overall_sentiment']} "
-              f"(based on {view['based_on']['count']} videos); "
-              f"tokens in={cv_in} out={cv_out} (${cv_cost:.4f}) "
-              f"-> {CURRENT_VIEW_FILE}")
+    if channel.current_view_file:
+        view, cv_in, cv_out = generate_current_view(client, channel, merged)
+        if view:
+            cv_cost = (cv_in / 1_000_000 * INPUT_PER_1M
+                       + cv_out / 1_000_000 * OUTPUT_PER_1M)
+            write_json_atomic(channel.current_view_file, view)
+            print(f"Current view: {view['overall_sentiment']} "
+                  f"(based on {view['based_on']['count']} videos); "
+                  f"tokens in={cv_in} out={cv_out} (${cv_cost:.4f}) "
+                  f"-> {channel.current_view_file}")
+
+
+def main():
+    ap = argparse.ArgumentParser(description="YouTube channel analysis digest")
+    ap.add_argument("--channel", choices=sorted(CHANNELS), default=None,
+                    help="process only this channel (default: all channels)")
+    ap.add_argument("--limit", type=int, default=None,
+                    help="cap how many NEW videos to process per channel this run")
+    ap.add_argument("--force", nargs="+", metavar="VIDEO_ID",
+                    help="(re)process these specific video IDs, ignoring dedup; "
+                         "requires --channel")
+    ap.add_argument("--dry-run", action="store_true",
+                    help="analyze and print, but do not write the summaries file")
+    ap.add_argument("--no-whisper", action="store_true",
+                    help="disable the local Whisper fallback")
+    args = ap.parse_args()
+
+    if args.force and not args.channel:
+        ap.error("--force requires --channel (one channel at a time)")
+
+    for p in TELEGRAM_ENVS:                       # loads GOOGLE_API_KEY + alerts
+        load_env(p)
+    if not os.environ.get("GOOGLE_API_KEY"):
+        print("GOOGLE_API_KEY is not set. Add it to ~/pilot_trader/.env "
+              "and re-run.", file=sys.stderr)
+        sys.exit(1)
+
+    channels = [CHANNELS[args.channel]] if args.channel else list(CHANNELS.values())
+    client = genai.Client()
+    failed = []
+    for channel in channels:
+        try:
+            run_channel(channel, client, args)
+        except (SystemExit, KeyboardInterrupt):
+            raise
+        except Exception as exc:
+            # Single-channel run: hard-fail (the top-level handler pages +
+            # exits). All-channels run: one channel's transient outage must
+            # NOT starve the other channel for the whole cron tick -- log +
+            # page for this channel, keep going, then exit non-zero so the
+            # failure still surfaces. Mirrors twitter_digest.py's main().
+            if len(channels) == 1:
+                raise
+            traceback.print_exc()
+            failed.append(channel.key)
+            try:
+                notify_telegram(f"youtube_monitor {channel.key} FAILED: {exc!r}")
+            except Exception:
+                pass
+    if failed:
+        print(f"channels failed: {', '.join(failed)}", file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == "__main__":
