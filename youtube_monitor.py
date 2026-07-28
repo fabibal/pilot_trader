@@ -28,12 +28,17 @@ Channels (see CHANNELS):
       Discord. Each upload session posts twice (the main video + a duplicate
       suffixed with a mobile/shorts marker in the title); drop_shorts_dupes
       filters the duplicate out before it ever reaches transcript fetch, so
-      it isn't double-processed or double-billed. Checked 2-3x/week (see
-      CLAUDE.md's cron table) since he posts ~weekly, not daily. His sessions
-      run long (~45-75+ min) and his freshest upload sometimes has captions
-      not yet ready, so whisper fallback -- while still the exception, not
-      the rule -- fires more often here than for Cowen; the cron slot is
-      scheduled with a wide buffer before other jobs to absorb that.
+      it isn't double-processed or double-billed. Checked daily (same cron
+      run as Cowen, see CLAUDE.md's cron table) even though he only posts
+      ~weekly -- the dedup ledger means an extra daily check with nothing new
+      costs one free RSS fetch, not an LLM call, so there's no reason to
+      special-case his schedule. His sessions run long (~45-75+ min) and his
+      freshest upload sometimes has captions not yet ready, so whisper
+      fallback -- while still the exception, not the rule -- fires more
+      often here than for Cowen; the shared 09:00 UTC slot is well before
+      his ~15:00+ UTC livestream, so a checked video is always from a prior
+      day, past YouTube's post-live processing window (see CLAUDE.md's
+      Post-Live-Manifestless gotcha).
 
 ANALYSIS ONLY: neither channel is in accounts.ACCOUNTS; neither is written to
 trades.json / positions.json; neither is mirrored to IBKR.
@@ -118,7 +123,8 @@ WHISPER_COMPUTE = "int8"
 AUDIO_DOWNLOAD_TIMEOUT_S = 600       # yt-dlp audio fetch hard cap (download
                                      # only; transcription time is unbounded
                                      # and scales with video length -- see
-                                     # jesse_olson's cron note re: buffer)
+                                     # jesse_olson's CHANNELS entry above for
+                                     # why this fires more often for him)
 # yt-dlp needs a JS runtime (deno) for YouTube extraction; without one it warns
 # and some formats degrade. deno is installed user-locally here, but cron's PATH
 # is minimal and won't include it — so we add this dir to the subprocess env.
