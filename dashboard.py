@@ -1308,6 +1308,22 @@ app.index_string = """<!DOCTYPE html>
       ::-webkit-scrollbar { width: 10px; height: 10px; }
       ::-webkit-scrollbar-track { background: #0d1117; }
       ::-webkit-scrollbar-thumb { background: #30363d; border-radius: 5px; }
+      /* --- influencer sub-tab bar ---------------------------------------- */
+      /* 12 sub-tabs do not fit one desktop row, and dcc.Tabs injects
+           .tab { flex: 1 1 0; min-width: 0 }
+         so each tab SHRINKS below its own label width; with white-space:nowrap
+         the labels then bleed into their neighbours and read as one word
+         ("IncomeSharksCelalKucukertraderstewie"). Stop the shrink, space the
+         tabs apart, and let the strip wrap onto a second row -- which also
+         needs .tab-parent (overflow:hidden by default) to stop clipping it.
+         These rules must stay ABOVE the max-width:760px block below: that block
+         re-forces nowrap + touch-scroll so phones keep ONE swipeable strip, and
+         at equal specificity the later source wins. */
+      .subtabs-parent { overflow: visible !important; }
+      .subtabs-strip { flex-wrap: wrap !important; gap: 6px !important; }
+      .subtabs-strip .tab { flex: 0 0 auto !important;
+                            min-width: auto !important;
+                            white-space: nowrap !important; }
       /* --- responsive / mobile ------------------------------------------ */
       html, body { -webkit-text-size-adjust: 100%; }
       @media (max-width: 760px) {
@@ -3151,7 +3167,11 @@ app.layout = html.Div(
                      children=dcc.Tabs(
                          id="influencer-subtabs", value="Consensus",
                          mobile_breakpoint=0,
-                         style={"display": "flex", "flexWrap": "nowrap"},
+                         # Wraps to a second row on desktop rather than squeezing
+                         # 12 labels into one; see .subtabs-strip in the <style>.
+                         parent_className="subtabs-parent",
+                         className="subtabs-strip",
+                         style={"display": "flex", "flexWrap": "wrap"},
                          children=[
                              dcc.Tab(label="Consensus", value="Consensus",
                                      style=_TAB_STYLE, selected_style=_TAB_SELECTED),
