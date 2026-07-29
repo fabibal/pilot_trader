@@ -2470,6 +2470,151 @@ def kendrick_forecast_section(forecasts, limit=12):
     return [html.Div(children)]
 
 
+# --- Consensus: cross-feed CURRENT VIEW summary ----------------------------
+# One row per analysis-only digest feed that produces a rolling CURRENT VIEW
+# (twitter_digest.py / youtube_monitor.py), so "who is bearish right now" is one
+# glance instead of seven sub-tab clicks. Reads the very same per-feed
+# *_current_view.json files each sub-tab's banner reads — no new data source, and
+# no dependency on data/sentiment_history.json (that log is the substrate for a
+# future timeline, not for this snapshot).
+#
+# All seven read the same market today, so one tally is meaningful; rows are
+# still grouped by asset class, because tallying a crypto stance together with an
+# equities stance would be nonsense the day a non-crypto feed is added.
+_CONSENSUS_SOURCES = [
+    # label, asset class, current-view loader, what based_on.count counts
+    ("Ben Cowen",   "crypto", load_youtube_current_view,     "videos"),
+    ("Jesse Olson", "crypto", load_jesse_olson_current_view, "videos"),
+    ("Ki Young Ju", "crypto", load_ki_current_view,          "posts"),
+    ("Joao Wedson", "crypto", load_joao_current_view,        "posts"),
+    ("DorkChicken", "crypto", load_dorkchicken_current_view, "posts"),
+    ("DaanCrypto",  "crypto", load_daancrypto_current_view,  "posts"),
+    ("DonAlt",      "crypto", load_donalt_current_view,      "posts"),
+]
+
+# Decisive views first: neutral is 55-84% of every feed's per-post reads, so
+# sorting it last keeps the rows that actually say something at the top.
+_CONSENSUS_RANK = {"bearish": 0, "bullish": 1, "mixed": 2, "neutral": 3}
+
+# Staleness is measured from the NEWEST POST behind a view, not from when it was
+# synthesized: a view regenerated this morning can still rest on three-week-old
+# posts (slow feeds like @DonAlt), and that is exactly what makes two feeds'
+# stances non-comparable if you don't show it.
+_STALE_WARN_D = 3        # older than this -> yellow
+_STALE_BAD_D = 7         # this old or more -> red
+_CONSENSUS_GRID = "128px 84px 148px 84px minmax(0,1fr)"
+
+
+def _consensus_age_days(to_date):
+    """Days since `to_date` (YYYY-MM-DD); None if absent/unparseable."""
+    try:
+        d = datetime.strptime(to_date, "%Y-%m-%d").date()
+    except (TypeError, ValueError):
+        return None
+    return (datetime.now(timezone.utc).date() - d).days
+
+
+def _shorten(text, limit=90):
+    """Collapse whitespace and cut to `limit` chars on a word boundary."""
+    text = " ".join((text or "").split())
+    if len(text) <= limit:
+        return text
+    cut = text[:limit].rsplit(" ", 1)[0]
+    return (cut or text[:limit]).rstrip(" ,.;:") + "…"
+
+
+def _consensus_tally(views):
+    """'4 neutral · 2 mixed · 1 bearish' for one group, decisive sentiments
+    first, with any feed that has no view yet counted separately."""
+    counts = {}
+    for v in views:
+        sent = (v.get("overall_sentiment") or "").lower()
+        key = sent if sent in _CONSENSUS_RANK else "n/a"
+        counts[key] = counts.get(key, 0) + 1
+    order = sorted(counts, key=lambda s: _CONSENSUS_RANK.get(s, 9))
+    return " · ".join(f"{counts[s]} {s}" for s in order)
+
+
+def _consensus_head():
+    cells = ["SOURCE", "VIEW", "AS OF", "BASIS", "WHAT CHANGED"]
+    return html.Div(style={"display": "grid",
+                           "gridTemplateColumns": _CONSENSUS_GRID,
+                           "gap": "10px", "padding": "0 12px 6px",
+                           "borderBottom": f"1px solid {C['border']}"},
+                    children=[html.Div(c, style=_RTH) for c in cells])
+
+
+def _consensus_row(label, view, unit="posts"):
+    """One feed's stance: sentiment chip, how old the underlying posts are, how
+    many fed the synthesis, and its shift_note (the one field no sub-tab lets
+    you compare across feeds)."""
+    sent = (view.get("overall_sentiment") or "").lower()
+    color = _YT_SENTIMENT.get(sent, C["dim"])
+    based_on = view.get("based_on") or {}
+    to_date, count = based_on.get("to_date"), based_on.get("count")
+    age = _consensus_age_days(to_date)
+    age_color = (C["dim"] if age is None or age <= _STALE_WARN_D
+                 else C["red"] if age >= _STALE_BAD_D else C["yellow"])
+    as_of = f"{to_date}  ·  {age}d" if to_date and age is not None else "—"
+    note = (_shorten(view.get("shift_note"))
+            or ("no view generated yet" if not view else "—"))
+    return html.Div(style={
+        "display": "grid", "gridTemplateColumns": _CONSENSUS_GRID, "gap": "10px",
+        "alignItems": "center", "padding": "8px 12px",
+        "borderBottom": f"1px solid {C['border']}"}, children=[
+        html.Div(label, style={"color": C["text"], "fontSize": "0.78rem",
+                               "fontWeight": "bold"}),
+        html.Div(html.Span(sent.upper() if sent else "—", style={
+            "background": color, "color": C["bg"], "borderRadius": "10px",
+            "padding": "1px 8px", "fontSize": "0.64rem", "fontWeight": "bold",
+            "letterSpacing": "0.04em", "whiteSpace": "nowrap"})),
+        html.Div(as_of, style={"color": age_color, "fontFamily": MONO,
+                               "fontSize": "0.7rem", "whiteSpace": "nowrap"}),
+        html.Div(f"{count} {unit}" if count else "—",
+                 style={"color": C["dim"], "fontSize": "0.7rem",
+                        "whiteSpace": "nowrap"}),
+        html.Div(note, style={"color": C["dim"] if not view else C["text"],
+                              "fontSize": "0.74rem", "lineHeight": "1.4"}),
+    ])
+
+
+def consensus_section():
+    """Cross-feed CURRENT VIEW summary — see the _CONSENSUS_SOURCES comment.
+    A feed whose view has not been generated yet still gets a row (dimmed), so a
+    silently broken digest is visible rather than just absent."""
+    def order(label_view):
+        view = label_view[1]
+        sent = (view.get("overall_sentiment") or "").lower()
+        age = _consensus_age_days((view.get("based_on") or {}).get("to_date"))
+        return (_CONSENSUS_RANK.get(sent, 9), 999 if age is None else age)
+
+    rows = [(label, cls, loader() or {}, unit)
+            for label, cls, loader, unit in _CONSENSUS_SOURCES]
+    children = []
+    for cls in dict.fromkeys(r[1] for r in rows):
+        group = sorted([(label, v, unit) for label, c, v, unit in rows if c == cls],
+                       key=order)
+        children.append(html.Div([
+            html.Span(cls.upper(), style={
+                "color": C["text"], "fontSize": "0.72rem", "fontWeight": "bold",
+                "letterSpacing": "0.06em"}),
+            html.Span(f"  ·  {len(group)} sources  ·  "
+                      f"{_consensus_tally([v for _, v, _ in group])}",
+                      style={"color": C["dim"], "fontSize": "0.72rem"}),
+        ], style={"padding": "14px 12px 8px"}))
+        children.append(_consensus_head())
+        children.extend(_consensus_row(label, v, unit) for label, v, unit in group)
+    children.append(html.Div(
+        "Each row is that feed's rolling CURRENT VIEW, identical to the banner "
+        "on its own sub-tab. AS OF is the newest post the view rests on, not "
+        "when it was generated.",
+        style={"color": C["dim"], "fontSize": "0.68rem", "padding": "10px 12px",
+               "lineHeight": "1.45"}))
+    return [html.Div(children, style={
+        "background": C["card"], "border": f"1px solid {C['border']}",
+        "borderRadius": "8px", "marginTop": "10px", "overflowX": "auto"})]
+
+
 # --- Reddit trading-strategy miner output ---------------------------------
 # Mirrors the YouTube section: read scripts/reddit_miner.py's JSON ledger and
 # render it with the same GitHub-dark helpers as the rest of the app.
@@ -3004,10 +3149,12 @@ app.layout = html.Div(
             html.Div(style={"overflowX": "auto",
                             "WebkitOverflowScrolling": "touch"},
                      children=dcc.Tabs(
-                         id="influencer-subtabs", value="IncomeSharks",
+                         id="influencer-subtabs", value="Consensus",
                          mobile_breakpoint=0,
                          style={"display": "flex", "flexWrap": "nowrap"},
                          children=[
+                             dcc.Tab(label="Consensus", value="Consensus",
+                                     style=_TAB_STYLE, selected_style=_TAB_SELECTED),
                              dcc.Tab(label="IncomeSharks", value="IncomeSharks",
                                      style=_TAB_STYLE, selected_style=_TAB_SELECTED),
                              dcc.Tab(label="CelalKucuker", value="CelalKucuker",
@@ -3031,6 +3178,12 @@ app.layout = html.Div(
                              dcc.Tab(label="Geoff Kendrick", value="GeoffKendrick",
                                      style=_TAB_STYLE, selected_style=_TAB_SELECTED),
                          ])),
+
+            # Consensus view: every digest feed's CURRENT VIEW side by side.
+            # Unlike the per-feed views below it needs no show/hide style output —
+            # its callback returns [] for every other sub-tab, and an empty div
+            # takes no space.
+            html.Div(id="consensus-panel"),
 
             # Per-influencer header card (handle · win-rate/holdings · open ·
             # best performer), shown for whichever sub-tab is selected.
@@ -3418,6 +3571,8 @@ def _influencer_header(title, account):
 )
 def switch_influencer_subtab(account):
     show, hide = {"display": "block"}, {"display": "none"}
+    if account == "Consensus":          # cross-feed summary, renders itself
+        return hide, hide, hide, hide, hide, hide, hide, hide, hide, "", ""
     if account == "BenCowen":           # YouTube analysis view, not a trade view
         return hide, show, hide, hide, hide, hide, hide, hide, hide, "", ""
     if account == "JesseOlson":         # YouTube analysis view, not a trade view
@@ -3567,6 +3722,8 @@ def refresh_influencers(_n, account):
     # Ben Cowen / Jesse Olson / Ki Young Ju / Joao Wedson / DorkChicken /
     # DaanCrypto / DonAlt / Geoff Kendrick are analysis-only views, not
     # traders: no header card / positions / signals — just the cards.
+    if account == "Consensus":       # rendered by refresh_consensus, not here
+        return "", [], None, None, [], [], [], [], [], [], [], []
     if account == "BenCowen":
         children = ([_current_view_banner(load_youtube_current_view())]
                     + youtube_section(load_youtube_summaries()))
@@ -3609,6 +3766,20 @@ def refresh_influencers(_n, account):
             influencer_positions_table(resolutions),
             influencer_winrate_card(resolutions),
             [], [], [], [], [], [], [], [])
+
+
+@app.callback(
+    Output("consensus-panel", "children"),
+    Input("interval", "n_intervals"),
+    Input("influencer-subtabs", "value"),
+)
+def refresh_consensus(_n, account):
+    """Kept separate from refresh_influencers deliberately: that callback already
+    fans 12 outputs across 9 branches, and this panel shares none of them."""
+    if account != "Consensus":
+        return []
+    return [html.Div("Consensus — current stance across every analysis feed",
+                     style=_SECTION_H)] + consensus_section()
 
 
 # --- background cache warmer -------------------------------------------------
