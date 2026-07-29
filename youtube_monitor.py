@@ -74,6 +74,7 @@ from google.genai import types as genai_types
 from google.genai import errors as genai_errors
 
 from reconcile import write_json_atomic
+import sentiment_history
 # Reuse monitor.py's small, already-tested helpers (env/json loaders, Telegram
 # alerting) so this stays DRY and consistent with the rest of the pipeline.
 from monitor import (load_env, load_json, notify_telegram, TELEGRAM_ENVS,
@@ -638,6 +639,8 @@ def run_channel(channel, client, args):
             cv_cost = (cv_in / 1_000_000 * INPUT_PER_1M
                        + cv_out / 1_000_000 * OUTPUT_PER_1M)
             write_json_atomic(channel.current_view_file, view)
+            # ...and append it to the shared, never-overwritten history log.
+            sentiment_history.append_view(channel.key, view)
             print(f"Current view: {view['overall_sentiment']} "
                   f"(based on {view['based_on']['count']} videos); "
                   f"tokens in={cv_in} out={cv_out} (${cv_cost:.4f}) "

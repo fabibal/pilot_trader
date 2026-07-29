@@ -77,6 +77,7 @@ from google.genai import types as genai_types
 from google.genai import errors as genai_errors
 
 from reconcile import write_json_atomic
+import sentiment_history
 # Reuse monitor.py's tested helpers (env/json loaders, GetXAPI client + tweet
 # normalizer, the Gemini image-block fetch, Telegram alerting) so this stays DRY
 # and consistent with the rest of the pipeline.
@@ -1408,6 +1409,8 @@ def run_feed(feed, gemini_client, args):
             cv_cost = (cv_in / 1_000_000 * GEMINI_INPUT_PER_1M
                        + cv_out / 1_000_000 * GEMINI_OUTPUT_PER_1M)
             write_json_atomic(feed.current_view_file, view)
+            # ...and append it to the shared, never-overwritten history log.
+            sentiment_history.append_view(feed.key, view)
             print(f"Current view: {view['overall_sentiment']} "
                   f"(based on {view['based_on']['count']} posts); "
                   f"tokens in={cv_in} out={cv_out} (${cv_cost:.4f}) "
