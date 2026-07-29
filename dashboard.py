@@ -868,23 +868,74 @@ def influencer_resolutions(positions, account=None):
     return out
 
 
+# A no-stop caveat only earns a spot on the card once it's the dominant case:
+# most influencers set a stop on most calls, so this stays silent for them.
+NO_STOP_CAVEAT_PCT = 50
+
+
+def _win_rate_caveats(resolutions):
+    """Diagnostics that make win_stats()'s exclusions visible on the dashboard:
+    how many calls were dropped from the ratio (expired/live) and how many of
+    those are currently underwater, plus how many calls structurally cannot
+    ever resolve to a loss because no stop_loss was set. Current-price lookups
+    only -- resolver.py still owns the win/loss classification itself."""
+    excluded = [p for p, r in resolutions
+                if r is None or r["status"] == resolver.EXPIRED]
+    priced = underwater = 0
+    for p in excluded:
+        atype = p.get("asset_type") or "unknown"
+        sym = _yf_symbol(p["ticker"], atype)
+        entry = p.get("entry_price")
+        if not entry:
+            tdate = p.get("trade_date") or (p.get("opened_at") or "")[:10] or None
+            entry = get_hist_close(sym, tdate) if tdate else None
+        cur = get_price(sym)
+        if entry and cur:
+            priced += 1
+            if cur < entry:
+                underwater += 1
+    no_stop = sum(1 for p, _r in resolutions if p.get("stop_loss") is None)
+    return {"excluded": len(excluded), "excluded_priced": priced,
+            "excluded_underwater": underwater, "no_stop": no_stop,
+            "total": len(resolutions)}
+
+
 def influencer_winrate_card(resolutions):
     s = resolver.win_stats([r for _, r in resolutions])
+    c = _win_rate_caveats(resolutions)
     wr = "n/a" if s["win_rate"] is None else f"{s['win_rate']:.0f}%"
     wr_color = C["dim"] if s["win_rate"] is None else (
         C["green"] if s["win_rate"] >= 50 else C["red"])
+
+    lines = [html.Div(children=[
+        html.Span(wr, style={"color": wr_color, "fontWeight": "bold",
+                             "fontSize": "1.1rem"}),
+        html.Span(f" win rate  ({s['decided']} decided: "
+                  f"{s['hit']} target / {s['stopped']} stopped / "
+                  f"{s['closed_win'] + s['closed_loss']} closed)",
+                  style={"color": C["dim"], "fontSize": "0.8rem"}),
+    ])]
+
+    if c["excluded"]:
+        uw_txt = (f"{c['excluded_underwater'] / c['excluded_priced'] * 100:.0f}%"
+                  if c["excluded_priced"] else "n/a")
+        lines.append(html.Div(
+            f"+ {c['excluded']} more calls excluded (expired/live) · "
+            f"{uw_txt} of those are currently negative vs entry",
+            style={"color": C["dim"], "fontSize": "0.76rem", "marginTop": "4px"}))
+
+    if c["total"] and c["no_stop"] / c["total"] * 100 >= NO_STOP_CAVEAT_PCT:
+        lines.append(html.Div(
+            f"{c['no_stop'] / c['total'] * 100:.0f}% of calls have no "
+            f"stop-loss set (a loss can't be recorded for those under "
+            f"current logic)",
+            style={"color": C["yellow"], "fontSize": "0.76rem",
+                   "marginTop": "4px", "fontStyle": "italic"}))
+
     return html.Div(style={
         "background": C["card"], "border": f"1px solid {C['border']}",
         "borderRadius": "8px", "padding": "12px 18px", "marginTop": "12px",
-        "display": "inline-block"}, children=[
-        html.Span(wr, style={"color": wr_color, "fontWeight": "bold",
-                             "fontSize": "1.1rem"}),
-        html.Span(f" win rate  ({s['decided']} calls resolved: "
-                  f"{s['hit']} target / {s['stopped']} stopped / "
-                  f"{s['closed_win'] + s['closed_loss']} closed) · "
-                  f"{s['expired']} expired · {s['live']} live",
-                  style={"color": C["dim"], "fontSize": "0.8rem"}),
-    ])
+        "display": "inline-block"}, children=lines)
 
 
 # Per-influencer descriptor + accent color (left border) for the header card.
@@ -941,7 +992,8 @@ def influencer_header_card(account, resolutions=None):
     wr_color = C["dim"] if wr is None else (
         C["green"] if wr >= 50 else C["red"])
     metrics.append(_hdr_metric("win rate", wr_txt, wr_color,
-                               f"{st['decided']} resolved"))
+                               f"{st['decided']} decided, "
+                               f"{st['expired'] + st['live']} excl."))
     metrics.append(_hdr_metric("open calls", str(len(rr)), C["text"]))
     metrics.append(_hdr_metric("best", best[0] if best else "—",
                                _color(best[1] if best else None),
