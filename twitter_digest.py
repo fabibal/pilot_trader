@@ -32,6 +32,10 @@ Feeds (see FEEDS):
   - dorkchicken (DorkChicken; crypto/macro technical analyst -- chart-pattern
       and historical-cycle comparisons, no explicit trade calls) ->
       data/dorkchicken_summaries.json.
+  - daancrypto (DaanCrypto; crypto technical analyst -- moving averages,
+      Fibonacci, market structure/liquidity clusters, ETF flows, dominance,
+      plus recurring risk-management/psychology posts; no explicit trade
+      calls) -> data/daancrypto_summaries.json.
   - kendrick_sc (TOPIC SEARCH + FORECAST LEDGER): Standard Chartered / Geoff
       Kendrick crypto price calls, deduplicated into one row per forecast ->
       data/kendrick_forecasts.json ({seen_ids, forecasts}). No single account is
@@ -412,6 +416,28 @@ FEEDS = {f.key: f for f in [
         max_fetch=60,                    # bursty (dormant stretches then ~4
                                          # posts/day) -- bounds catch-up after a gap
         current_view_file=os.path.join(DATA_DIR, "dorkchicken_current_view.json"),
+    ),
+    Feed(
+        key="daancrypto",
+        account="DaanCrypto",
+        display_name="DaanCrypto",
+        summaries_file=os.path.join(DATA_DIR, "daancrypto_summaries.json"),
+        analysis_persona=(
+            "You analyze a single X/Twitter post by @DaanCrypto, a crypto "
+            "technical analyst covering Bitcoin and Ethereum (moving averages, "
+            "Fibonacci retracements, market structure and liquidity clusters, "
+            "the Bull Market Support Band, ETF flows, BTC/ETH dominance) plus "
+            "altcoins and occasional macro (oil, FOMC) commentary. He also "
+            "posts recurring trading-psychology and risk-management notes. His "
+            "posts are structural/technical level-watching, not specific "
+            "entry/exit trade calls."),
+        vision_persona=(
+            "You read a price or technical-indicator chart image attached to "
+            "a tweet by DaanCrypto (crypto TA)."),
+        # Posts in English only (see module docstring eval); no skip needed.
+        skip_langs=frozenset(),
+        max_fetch=60,                    # ~5 posts/day -> ~12 days of headroom
+        current_view_file=os.path.join(DATA_DIR, "daancrypto_current_view.json"),
     ),
     Feed(
         key="kendrick_sc",
