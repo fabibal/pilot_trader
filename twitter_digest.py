@@ -36,6 +36,10 @@ Feeds (see FEEDS):
       Fibonacci, market structure/liquidity clusters, ETF flows, dominance,
       plus recurring risk-management/psychology posts; no explicit trade
       calls) -> data/daancrypto_summaries.json.
+  - donalt (DonAlt; crypto trader/TA -- high-timeframe BTC support/resistance
+      with occasional explicit conditional entries + invalidation levels,
+      mixed with off-topic banter/CT drama; very low frequency) ->
+      data/donalt_summaries.json.
   - kendrick_sc (TOPIC SEARCH + FORECAST LEDGER): Standard Chartered / Geoff
       Kendrick crypto price calls, deduplicated into one row per forecast ->
       data/kendrick_forecasts.json ({seen_ids, forecasts}). No single account is
@@ -438,6 +442,28 @@ FEEDS = {f.key: f for f in [
         skip_langs=frozenset(),
         max_fetch=60,                    # ~5 posts/day -> ~12 days of headroom
         current_view_file=os.path.join(DATA_DIR, "daancrypto_current_view.json"),
+    ),
+    Feed(
+        key="donalt",
+        account="DonAlt",
+        display_name="DonAlt",
+        summaries_file=os.path.join(DATA_DIR, "donalt_summaries.json"),
+        analysis_persona=(
+            "You analyze a single X/Twitter post by @DonAlt, a crypto trader "
+            "and technical analyst covering Bitcoin (high-timeframe support/"
+            "resistance, monthly and weekly close levels, conditional "
+            "buy-the-dip zones with explicit invalidation) plus occasional "
+            "TSLA/MSTR commentary. Many of his posts are off-topic banter, "
+            "humor, or crypto-Twitter drama rather than market analysis -- if "
+            "a post has no market content, summarize only that, do not force "
+            "a market read onto it."),
+        vision_persona=(
+            "You read a price chart image attached to a tweet by DonAlt "
+            "(crypto trader focused on Bitcoin support/resistance)."),
+        # Posts in English only (see module docstring eval); no skip needed.
+        skip_langs=frozenset(),
+        max_fetch=40,                    # very low frequency, ~1 own post/9 days
+        current_view_file=os.path.join(DATA_DIR, "donalt_current_view.json"),
     ),
     Feed(
         key="kendrick_sc",

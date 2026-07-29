@@ -2032,11 +2032,13 @@ TW_SUMMARIES_FILE = os.path.join(DATA_DIR, "twitter_summaries.json")
 JOAO_SUMMARIES_FILE = os.path.join(DATA_DIR, "joao_summaries.json")
 DORKCHICKEN_SUMMARIES_FILE = os.path.join(DATA_DIR, "dorkchicken_summaries.json")
 DAANCRYPTO_SUMMARIES_FILE = os.path.join(DATA_DIR, "daancrypto_summaries.json")
+DONALT_SUMMARIES_FILE = os.path.join(DATA_DIR, "donalt_summaries.json")
 KENDRICK_FORECASTS_FILE = os.path.join(DATA_DIR, "kendrick_forecasts.json")
 KI_CURRENT_VIEW_FILE = os.path.join(DATA_DIR, "ki_young_ju_current_view.json")
 JOAO_CURRENT_VIEW_FILE = os.path.join(DATA_DIR, "joao_wedson_current_view.json")
 DORKCHICKEN_CURRENT_VIEW_FILE = os.path.join(DATA_DIR, "dorkchicken_current_view.json")
 DAANCRYPTO_CURRENT_VIEW_FILE = os.path.join(DATA_DIR, "daancrypto_current_view.json")
+DONALT_CURRENT_VIEW_FILE = os.path.join(DATA_DIR, "donalt_current_view.json")
 
 
 def _load_summaries(path):
@@ -2070,6 +2072,11 @@ def load_daancrypto_summaries():
     return _load_summaries(DAANCRYPTO_SUMMARIES_FILE)
 
 
+def load_donalt_summaries():
+    """@DonAlt (crypto trader/TA) post analyses."""
+    return _load_summaries(DONALT_SUMMARIES_FILE)
+
+
 def load_ki_current_view():
     return _load_current_view(KI_CURRENT_VIEW_FILE)
 
@@ -2084,6 +2091,10 @@ def load_dorkchicken_current_view():
 
 def load_daancrypto_current_view():
     return _load_current_view(DAANCRYPTO_CURRENT_VIEW_FILE)
+
+
+def load_donalt_current_view():
+    return _load_current_view(DONALT_CURRENT_VIEW_FILE)
 
 
 def load_kendrick_forecasts():
@@ -3015,6 +3026,8 @@ app.layout = html.Div(
                                      style=_TAB_STYLE, selected_style=_TAB_SELECTED),
                              dcc.Tab(label="DaanCrypto", value="DaanCrypto",
                                      style=_TAB_STYLE, selected_style=_TAB_SELECTED),
+                             dcc.Tab(label="DonAlt", value="DonAlt",
+                                     style=_TAB_STYLE, selected_style=_TAB_SELECTED),
                              dcc.Tab(label="Geoff Kendrick", value="GeoffKendrick",
                                      style=_TAB_STYLE, selected_style=_TAB_SELECTED),
                          ])),
@@ -3166,6 +3179,24 @@ app.layout = html.Div(
                                         "fontSize": "0.8rem"})],
                          style=_SECTION_H),
                 html.Div(id="daancrypto-summaries", style={"marginTop": "4px"}),
+            ]),
+
+            # DonAlt view: X/Twitter post analysis cards (analysis only --
+            # crypto trader/TA: BTC support/resistance with occasional
+            # explicit invalidation levels; never traded/mirrored).
+            html.Div(id="donalt-view", style={"display": "none"}, children=[
+                html.Div(["Twitter Analysis — DonAlt",
+                          html.A("→ @DonAlt",
+                                 href="https://x.com/DonAlt",
+                                 target="_blank", rel="noopener noreferrer",
+                                 style={"color": C["blue"], "marginLeft": "14px",
+                                        "textTransform": "none",
+                                        "letterSpacing": "normal",
+                                        "textDecoration": "none",
+                                        "fontWeight": "normal",
+                                        "fontSize": "0.8rem"})],
+                         style=_SECTION_H),
+                html.Div(id="donalt-summaries", style={"marginTop": "4px"}),
             ]),
 
             # Geoff Kendrick view: X/Twitter TOPIC-SEARCH analysis cards (analysis
@@ -3379,6 +3410,7 @@ def _influencer_header(title, account):
     Output("joao-view", "style"),
     Output("dorkchicken-view", "style"),
     Output("daancrypto-view", "style"),
+    Output("donalt-view", "style"),
     Output("kendrick-view", "style"),
     Output("influencer-pos-header", "children"),
     Output("influencer-sig-header", "children"),
@@ -3387,20 +3419,22 @@ def _influencer_header(title, account):
 def switch_influencer_subtab(account):
     show, hide = {"display": "block"}, {"display": "none"}
     if account == "BenCowen":           # YouTube analysis view, not a trade view
-        return hide, show, hide, hide, hide, hide, hide, hide, "", ""
+        return hide, show, hide, hide, hide, hide, hide, hide, hide, "", ""
     if account == "JesseOlson":         # YouTube analysis view, not a trade view
-        return hide, hide, show, hide, hide, hide, hide, hide, "", ""
+        return hide, hide, show, hide, hide, hide, hide, hide, hide, "", ""
     if account == "KiYoungJu":          # X analysis view, not a trade view
-        return hide, hide, hide, show, hide, hide, hide, hide, "", ""
+        return hide, hide, hide, show, hide, hide, hide, hide, hide, "", ""
     if account == "JoaoWedson":         # X analysis view, not a trade view
-        return hide, hide, hide, hide, show, hide, hide, hide, "", ""
+        return hide, hide, hide, hide, show, hide, hide, hide, hide, "", ""
     if account == "DorkChicken":        # X analysis view, not a trade view
-        return hide, hide, hide, hide, hide, show, hide, hide, "", ""
+        return hide, hide, hide, hide, hide, show, hide, hide, hide, "", ""
     if account == "DaanCrypto":         # X analysis view, not a trade view
-        return hide, hide, hide, hide, hide, hide, show, hide, "", ""
+        return hide, hide, hide, hide, hide, hide, show, hide, hide, "", ""
+    if account == "DonAlt":             # X analysis view, not a trade view
+        return hide, hide, hide, hide, hide, hide, hide, show, hide, "", ""
     if account == "GeoffKendrick":      # X topic-search analysis view
-        return hide, hide, hide, hide, hide, hide, hide, show, "", ""
-    return (show, hide, hide, hide, hide, hide, hide, hide,
+        return hide, hide, hide, hide, hide, hide, hide, hide, show, "", ""
+    return (show, hide, hide, hide, hide, hide, hide, hide, hide,
             _influencer_header(f"{account} — Open Positions", account),
             _influencer_header(f"{account} — Signals", account))
 
@@ -3524,41 +3558,46 @@ def refresh_pie(_n, portfolio):
     Output("joao-summaries", "children"),
     Output("dorkchicken-summaries", "children"),
     Output("daancrypto-summaries", "children"),
+    Output("donalt-summaries", "children"),
     Output("kendrick-summaries", "children"),
     Input("interval", "n_intervals"),
     Input("influencer-subtabs", "value"),
 )
 def refresh_influencers(_n, account):
     # Ben Cowen / Jesse Olson / Ki Young Ju / Joao Wedson / DorkChicken /
-    # DaanCrypto / Geoff Kendrick are analysis-only views, not traders: no
-    # header card / positions / signals — just the cards.
+    # DaanCrypto / DonAlt / Geoff Kendrick are analysis-only views, not
+    # traders: no header card / positions / signals — just the cards.
     if account == "BenCowen":
         children = ([_current_view_banner(load_youtube_current_view())]
                     + youtube_section(load_youtube_summaries()))
-        return "", [], None, None, children, [], [], [], [], [], []
+        return "", [], None, None, children, [], [], [], [], [], [], []
     if account == "JesseOlson":
         children = ([_current_view_banner(load_jesse_olson_current_view())]
                     + youtube_section(load_jesse_olson_summaries(),
                                       empty_label="Jesse Olson"))
-        return "", [], None, None, [], children, [], [], [], [], []
+        return "", [], None, None, [], children, [], [], [], [], [], []
     if account == "KiYoungJu":
         children = ([_current_view_banner(load_ki_current_view())]
                     + twitter_section(load_twitter_summaries()))
-        return "", [], None, None, [], [], children, [], [], [], []
+        return "", [], None, None, [], [], children, [], [], [], [], []
     if account == "JoaoWedson":
         children = ([_current_view_banner(load_joao_current_view())]
                     + twitter_section(load_joao_summaries(), who="@joao_wedson"))
-        return ("", [], None, None, [], [], [], children, [], [], [])
+        return ("", [], None, None, [], [], [], children, [], [], [], [])
     if account == "DorkChicken":
         children = ([_current_view_banner(load_dorkchicken_current_view())]
                     + twitter_section(load_dorkchicken_summaries(), who="@DorkChicken"))
-        return ("", [], None, None, [], [], [], [], children, [], [])
+        return ("", [], None, None, [], [], [], [], children, [], [], [])
     if account == "DaanCrypto":
         children = ([_current_view_banner(load_daancrypto_current_view())]
                     + twitter_section(load_daancrypto_summaries(), who="@DaanCrypto"))
-        return ("", [], None, None, [], [], [], [], [], children, [])
+        return ("", [], None, None, [], [], [], [], [], children, [], [])
+    if account == "DonAlt":
+        children = ([_current_view_banner(load_donalt_current_view())]
+                    + twitter_section(load_donalt_summaries(), who="@DonAlt"))
+        return ("", [], None, None, [], [], [], [], [], [], children, [])
     if account == "GeoffKendrick":
-        return ("", [], None, None, [], [], [], [], [], [],
+        return ("", [], None, None, [], [], [], [], [], [], [],
                 kendrick_forecast_section(load_kendrick_forecasts()))
     positions = load_positions()
     warm_prices({_yf_symbol(p["ticker"], p.get("asset_type", "stock"))
@@ -3569,7 +3608,7 @@ def refresh_influencers(_n, account):
             influencer_signals_data(load_trades(), account=account),
             influencer_positions_table(resolutions),
             influencer_winrate_card(resolutions),
-            [], [], [], [], [], [], [])
+            [], [], [], [], [], [], [], [])
 
 
 # --- background cache warmer -------------------------------------------------
