@@ -2530,13 +2530,10 @@ def _consensus_age_days(to_date):
     return (datetime.now(timezone.utc).date() - d).days
 
 
-def _shorten(text, limit=90):
-    """Collapse whitespace and cut to `limit` chars on a word boundary."""
-    text = " ".join((text or "").split())
-    if len(text) <= limit:
-        return text
-    cut = text[:limit].rsplit(" ", 1)[0]
-    return (cut or text[:limit]).rstrip(" ,.;:") + "…"
+def _one_line(text):
+    """Collapse any whitespace/newlines to single spaces so the cell wraps on
+    its own width instead of on the LLM's line breaks."""
+    return " ".join((text or "").split())
 
 
 def _consensus_tally(views):
@@ -2572,11 +2569,14 @@ def _consensus_row(label, view, unit="posts"):
     age_color = (C["dim"] if age is None or age <= _STALE_WARN_D
                  else C["red"] if age >= _STALE_BAD_D else C["yellow"])
     as_of = f"{to_date}  ·  {age}d" if to_date and age is not None else "—"
-    note = (_shorten(view.get("shift_note"))
+    note = (_one_line(view.get("shift_note"))
             or ("no view generated yet" if not view else "—"))
+    # Rows top-align, not centre: shift_note is shown IN FULL and wraps to 2-3
+    # lines on a narrow window, which would otherwise leave the chip and dates
+    # floating mid-row.
     return html.Div(style={
         "display": "grid", "gridTemplateColumns": _CONSENSUS_GRID, "gap": "10px",
-        "alignItems": "center", "padding": "8px 12px",
+        "alignItems": "start", "padding": "10px 12px",
         "borderBottom": f"1px solid {C['border']}"}, children=[
         html.Div(label, style={"color": C["text"], "fontSize": "0.78rem",
                                "fontWeight": "bold"}),
@@ -2626,7 +2626,10 @@ def consensus_section():
         "when it was generated.",
         style={"color": C["dim"], "fontSize": "0.68rem", "padding": "10px 12px",
                "lineHeight": "1.45"}))
-    return [html.Div(children, style={
+    # minWidth keeps the four fixed columns (444px + gaps) from squeezing the
+    # now-untruncated WHAT CHANGED column to nothing on a phone; the card's
+    # overflow-x then scrolls, the same fallback the wide tables use.
+    return [html.Div(html.Div(children, style={"minWidth": "780px"}), style={
         "background": C["card"], "border": f"1px solid {C['border']}",
         "borderRadius": "8px", "marginTop": "10px", "overflowX": "auto"})]
 
