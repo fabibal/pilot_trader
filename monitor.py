@@ -349,6 +349,19 @@ def _unescape_strings(obj):
 #    they were legitimate whitespace -- they are not: every field these
 #    regexes guard is single-paragraph prose, so a tab/CR/LF mid-string is
 #    exactly as unambiguous a corruption signal as any other control byte.
+#  - the same silent replacement but with a plain SPACE (0x20) instead of a
+#    TAB: "elm elt" for "elmúlt", "v rakoz   ll pontot" for "várakozó
+#    álláspontot", " s" for "és". Found 2026-07-29 in daancrypto's
+#    generate_current_view() output; widening _MANGLED_CTRL_RE above does
+#    NOT cover it -- a space is not a control byte, and mid-string it is
+#    indistinguishable from a word separator. What gives it away is the
+#    stray one-letter word fragments it strews through the text, so that is
+#    what _MANGLED_FRAG_RE matches: a lone lowercase letter other than
+#    a/e/s, the only ones that legitimately stand alone in Hungarian or
+#    English prose (verified: 0 hits across every existing ledger, 28 in the
+#    corrupted file). The substitution never fires just once, so a real hit
+#    always leaves several fragments even though any single one of them
+#    could in principle be innocent.
 # None of these are legitimate mid-word occurrences in Hungarian or English
 # prose, so a hit is an unambiguous corruption signal.
 _MANGLED_RE = re.compile(
@@ -356,11 +369,13 @@ _MANGLED_RE = re.compile(
     "|[A-Za-z]'[aeiouAEIOU]"
     "|#\\d{1,3};")
 _MANGLED_CTRL_RE = re.compile(r"[\x00-\x1f]")   # full C0 range, no carve-outs
+_MANGLED_FRAG_RE = re.compile(r"(?<!\S)[b-df-rt-z](?!\S)")  # lowercase except a/e/s
 
 
 def _looks_mangled(obj):
     if isinstance(obj, str):
-        return bool(_MANGLED_RE.search(obj) or _MANGLED_CTRL_RE.search(obj))
+        return bool(_MANGLED_RE.search(obj) or _MANGLED_CTRL_RE.search(obj)
+                    or _MANGLED_FRAG_RE.search(obj))
     if isinstance(obj, list):
         return any(_looks_mangled(v) for v in obj)
     if isinstance(obj, dict):
