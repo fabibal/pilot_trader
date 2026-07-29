@@ -341,13 +341,21 @@ def _unescape_strings(obj):
 #    code -- the same digit stands in for different letters within one
 #    string (#3; covers 'ó', 'í', 'ö', 'é' and 'á' in a single summary) --
 #    so it's detected-for-retry like the others rather than decoded.
+#  - one or more accented characters silently replaced by a literal TAB
+#    (0x09) with no other artifact: "\ts" for "és", "mozg\ttlagot" for
+#    "mozgóátlagot" (moving average, accusative). Found 2026-07-29 in
+#    generate_current_view() output, undetected because _MANGLED_CTRL_RE
+#    used to carve \x09/\x0a/\x0d out of the C0 range on the assumption
+#    they were legitimate whitespace -- they are not: every field these
+#    regexes guard is single-paragraph prose, so a tab/CR/LF mid-string is
+#    exactly as unambiguous a corruption signal as any other control byte.
 # None of these are legitimate mid-word occurrences in Hungarian or English
 # prose, so a hit is an unambiguous corruption signal.
 _MANGLED_RE = re.compile(
     "[A-Za-zÀ-ÿ][)!:<#%][A-Za-zÀ-ÿ]"
     "|[A-Za-z]'[aeiouAEIOU]"
     "|#\\d{1,3};")
-_MANGLED_CTRL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
+_MANGLED_CTRL_RE = re.compile(r"[\x00-\x1f]")   # full C0 range, no carve-outs
 
 
 def _looks_mangled(obj):
