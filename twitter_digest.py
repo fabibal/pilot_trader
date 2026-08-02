@@ -46,6 +46,11 @@ Feeds (see FEEDS):
       cycles, BTC vs midterm-year seasonality, plus ITC promo posts) ->
       data/cowen_x_summaries.json. Key is cowen_x, NOT cowen: sentiment_history
       shares one key namespace with the YouTube channel registry.
+  - glassnode (Glassnode; on-chain + derivatives analytics COMPANY account --
+      options/vol positioning, futures basis & funding, ETF flows, holder
+      cohorts and cost-basis models. The only company account here: ~7% of its
+      posts are product/corporate news, handled by the persona prompt like
+      DonAlt's off-topic banter) -> data/glassnode_summaries.json.
   - kendrick_sc (TOPIC SEARCH + FORECAST LEDGER): Standard Chartered / Geoff
       Kendrick crypto price calls, deduplicated into one row per forecast ->
       data/kendrick_forecasts.json ({seen_ids, forecasts}). No single account is
@@ -509,6 +514,44 @@ FEEDS = {f.key: f for f in [
         max_fetch=40,                    # ~0.9 own posts/day + ~26% retweets
                                          # -> ~3 weeks of catch-up headroom
         current_view_file=os.path.join(DATA_DIR, "cowen_x_current_view.json"),
+    ),
+    Feed(
+        # The only COMPANY account in the registry. Evaluated 2026-08-02 against
+        # the marketing-funnel risk: of 83 top-level posts only ~7% were
+        # corporate/product news and 57% carried an explicit figure IN the tweet,
+        # so the free feed stands on its own even though the long-form research
+        # the links point at is partly paywalled (we never follow the links).
+        key="glassnode",
+        account="glassnode",
+        display_name="Glassnode",
+        summaries_file=os.path.join(DATA_DIR, "glassnode_summaries.json"),
+        analysis_persona=(
+            "You analyze a single X/Twitter post by @glassnode, the on-chain "
+            "and derivatives analytics company. Posts are desk-style data "
+            "reads, not trade calls, and lean on: OPTIONS/VOLATILITY "
+            "(implied-volatility term structure, 25-delta skew, put/call "
+            "ratio, gamma zones, DVOL, open interest), FUTURES (funding "
+            "rates, annualized basis, liquidations), ETF FLOWS, and ON-CHAIN "
+            "COHORTS (long/short-term holders, realized profit/loss, "
+            "cost-basis and price models such as True Market Mean / Active "
+            "Investors Mean / STH cost basis, accumulation trend score, "
+            "supply in profit or loss, dormancy), plus their own named "
+            "frameworks (Bitcoin Vector, Altcoin Cycle Signal, Market Pulse, "
+            "Week On-Chain). Two things to handle: (1) some posts are "
+            "COMPANY news -- product launches, funding rounds, conference "
+            "talks, hiring, infrastructure/latency notes. If a post has no "
+            "market content, summarize only that, do NOT force a market read "
+            "onto it. (2) their copy often renders the word bitcoin as the "
+            "token 'bitcoin:native' -- read it as plain 'bitcoin'/BTC and "
+            "never treat it as a ticker, product or chain name."),
+        vision_persona=(
+            "You read a Glassnode metric chart image (on-chain, options, "
+            "futures or ETF-flow data, usually their dark-themed studio "
+            "charts) attached to a tweet by @glassnode."),
+        # 97-post sample 2026-08-02: 100% English.
+        skip_langs=frozenset(),
+        max_fetch=60,                    # ~1.1 own posts/day + ~16% retweets
+        current_view_file=os.path.join(DATA_DIR, "glassnode_current_view.json"),
     ),
     Feed(
         key="kendrick_sc",
