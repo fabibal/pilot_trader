@@ -78,7 +78,8 @@ import sentiment_history
 # Reuse monitor.py's small, already-tested helpers (env/json loaders, Telegram
 # alerting) so this stays DRY and consistent with the rest of the pipeline.
 from monitor import (load_env, load_json, notify_telegram, TELEGRAM_ENVS,
-                     GEMINI_THINKING, _unescape_strings, _looks_mangled)
+                     GEMINI_THINKING, _unescape_strings, _looks_mangled,
+                     _first_sentence)
 
 # --- config ---------------------------------------------------------------
 HOME = "/home/fbazsa/pilot_trader"
@@ -204,9 +205,15 @@ CURRENT_VIEW_BODY = (
     "- stance_summary: 2-4 sentences, IN HUNGARIAN, on his current overall "
     "view/thesis across the window -- what he is focused on and where he "
     "leans. Weigh the whole window, not just the newest video.\n"
-    "- shift_note: ONE sentence, IN HUNGARIAN, ONLY if his stance visibly "
-    "shifted somewhere across the window (e.g. turned more cautious, flipped "
-    "bullish). Empty string if there is no clear shift.\n"
+    "- shift_note: ALWAYS exactly ONE sentence, IN HUNGARIAN -- NEVER an empty "
+    "string, and NEVER meta-commentary about whether his view moved. If his "
+    "stance visibly shifted somewhere across the window, THAT shift is the "
+    "sentence: name it (e.g. turned more cautious, flipped bullish). If it "
+    "did not shift, write the single sharpest CONCRETE point of where he "
+    "stands right now instead -- the price level, catalyst or condition he is "
+    "waiting on. Do NOT write 'unchanged', 'consistent', 'no shift', 'held "
+    "his view' or any equivalent, and do not merely restate stance_summary "
+    "-- this sentence is read on its own, without it.\n"
     "Return ONLY valid JSON matching the schema. No markdown, no preamble."
 )
 
@@ -533,6 +540,8 @@ def generate_current_view(client, channel, summaries):
               "retrying", file=sys.stderr)
     if not parsed:
         return None, in_tok, out_tok
+    if not (parsed.get("shift_note") or "").strip():
+        parsed["shift_note"] = _first_sentence(parsed.get("stance_summary"))
     dates = sorted((r.get("published") or "")[:10] for r in window
                    if r.get("published"))
     view = {

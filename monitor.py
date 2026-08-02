@@ -327,6 +327,17 @@ def _unescape_strings(obj):
     return obj
 
 
+def _first_sentence(text):
+    """The leading sentence of a free-text field, whitespace-collapsed. Used by
+    both digests as the stand-in when a CURRENT VIEW synthesis comes back
+    without its one-line headline: the dashboard's Consensus panel shows that
+    field on its own, so a blunt restatement of the stance carries more than a
+    canned placeholder would."""
+    s = " ".join((text or "").split())
+    m = re.match(r".+?[.!?](?=\s|$)", s)
+    return m.group(0) if m else s
+
+
 # gemini-3.5-flash occasionally (probabilistically -- a retry of the
 # identical call often comes back clean) mangles accented non-ASCII
 # characters in long free-text fields. Observed forms, all specific to
@@ -362,12 +373,25 @@ def _unescape_strings(obj):
 #    corrupted file). The substitution never fires just once, so a real hit
 #    always leaves several fragments even though any single one of them
 #    could in principle be innocent.
+#  - a "%" + 3 digits with no closing marker: "%141ll%141spontja" for
+#    "álláspontja", "v%151gig" for "végig". Found 2026-08-02 in daancrypto's
+#    generate_current_view() output. Neither existing alternative caught it:
+#    "#\d{1,3};" needs the trailing ";", and letter-punct-letter needs a
+#    LETTER after the "%", not a digit. Unlike the "#\d;" placeholder this one
+#    is a stable per-char code (octal of the codepoint minus 128: á -> 141),
+#    but it is still detected-for-retry rather than decoded -- one clean retry
+#    is cheaper than trusting a reverse-engineered encoding. Must be anchored
+#    to an ADJACENT LETTER: a bare "%\d{2,3}" also matches the Turkish
+#    percent-first notation ("%70 olasılıkla", "%100 kârla") that @CelalKucuker
+#    tweets and monitor.py's own extraction quotes back into trades.json
+#    (47 such hits across the existing ledgers, vs 0 for the anchored form).
 # None of these are legitimate mid-word occurrences in Hungarian or English
 # prose, so a hit is an unambiguous corruption signal.
 _MANGLED_RE = re.compile(
     "[A-Za-zÀ-ÿ][)!:<#%][A-Za-zÀ-ÿ]"
     "|[A-Za-z]'[aeiouAEIOU]"
-    "|#\\d{1,3};")
+    "|#\\d{1,3};"
+    "|[A-Za-zÀ-ÿ]%\\d{3}|%\\d{3}[A-Za-zÀ-ÿ]")
 _MANGLED_CTRL_RE = re.compile(r"[\x00-\x1f]")   # full C0 range, no carve-outs
 _MANGLED_FRAG_RE = re.compile(r"(?<!\S)[b-df-rt-z](?!\S)")  # lowercase except a/e/s
 

@@ -40,6 +40,12 @@ Feeds (see FEEDS):
       with occasional explicit conditional entries + invalidation levels,
       mixed with off-topic banter/CT drama; very low frequency) ->
       data/donalt_summaries.json.
+  - cowen_x (Benjamin Cowen, Into The Cryptoverse founder; the X side of the
+      same analyst youtube_monitor.py's 'cowen' channel covers -- macro-first
+      and short-form here: Fed path, long-end yields, DXY, liquidity/labor
+      cycles, BTC vs midterm-year seasonality, plus ITC promo posts) ->
+      data/cowen_x_summaries.json. Key is cowen_x, NOT cowen: sentiment_history
+      shares one key namespace with the YouTube channel registry.
   - kendrick_sc (TOPIC SEARCH + FORECAST LEDGER): Standard Chartered / Geoff
       Kendrick crypto price calls, deduplicated into one row per forecast ->
       data/kendrick_forecasts.json ({seen_ids, forecasts}). No single account is
@@ -88,7 +94,7 @@ from monitor import (load_env, load_json, notify_telegram, TELEGRAM_ENVS,
                      MAX_VISION_IMAGES, GEMINI_INPUT_PER_1M, GEMINI_OUTPUT_PER_1M,
                      GEMINI_THINKING, GEMINI_DEEP_THINKING,
                      MODEL as EXTRACT_MODEL, EXTRACT_INPUT_PER_1M,
-                     EXTRACT_OUTPUT_PER_1M, EXTRACT_THINKING)
+                     EXTRACT_OUTPUT_PER_1M, EXTRACT_THINKING, _first_sentence)
 
 # --- config ---------------------------------------------------------------
 HOME = "/home/fbazsa/pilot_trader"
@@ -220,9 +226,15 @@ CURRENT_VIEW_BODY = (
     "- stance_summary: 2-4 sentences, IN HUNGARIAN, on his current overall "
     "view/thesis across the window -- what he is focused on and where he "
     "leans. Weigh the whole window, not just the newest post.\n"
-    "- shift_note: ONE sentence, IN HUNGARIAN, ONLY if his stance visibly "
-    "shifted somewhere across the window (e.g. turned more cautious, flipped "
-    "bullish). Empty string if there is no clear shift.\n"
+    "- shift_note: ALWAYS exactly ONE sentence, IN HUNGARIAN -- NEVER an empty "
+    "string, and NEVER meta-commentary about whether his view moved. If his "
+    "stance visibly shifted somewhere across the window, THAT shift is the "
+    "sentence: name it (e.g. turned more cautious, flipped bullish). If it "
+    "did not shift, write the single sharpest CONCRETE point of where he "
+    "stands right now instead -- the price level, catalyst or condition he is "
+    "waiting on. Do NOT write 'unchanged', 'consistent', 'no shift', 'held "
+    "his view' or any equivalent, and do not merely restate stance_summary "
+    "-- this sentence is read on its own, without it.\n"
     "Return ONLY valid JSON matching the schema. No markdown, no preamble."
 )
 
@@ -465,6 +477,38 @@ FEEDS = {f.key: f for f in [
         skip_langs=frozenset(),
         max_fetch=40,                    # very low frequency, ~1 own post/9 days
         current_view_file=os.path.join(DATA_DIR, "donalt_current_view.json"),
+    ),
+    Feed(
+        # NOT "cowen": sentiment_history.py keys its log on the registry key and
+        # both registries share that namespace, so this must not collide with
+        # youtube_monitor.CHANNELS["cowen"] (the same person's video digest).
+        key="cowen_x",
+        account="benjamincowen",         # @intocryptoverse does NOT exist (404)
+        display_name="Benjamin Cowen",
+        summaries_file=os.path.join(DATA_DIR, "cowen_x_summaries.json"),
+        analysis_persona=(
+            "You analyze a single X/Twitter post by @benjamincowen (Benjamin "
+            "Cowen), founder of Into The Cryptoverse (ITC) and a quantitative "
+            "macro analyst (PhD engineering, ex-NASA/Sandia). On X he is "
+            "MACRO-FIRST and much shorter-form than in his videos: Fed policy "
+            "path and rate decisions, the long end of the curve (10Y/30Y "
+            "yields), DXY, liquidity / business / labor cycles, and how "
+            "Bitcoin behaves against those -- including midterm-year "
+            "seasonality and comparisons to prior cycles -- plus scepticism "
+            "of popular narratives (e.g. 'Bitcoin lags M2', soft macro "
+            "indicators). He also posts ITC conference and speaking "
+            "announcements, and bare links to his own YouTube videos. If a "
+            "post is promotion or an announcement with no market content, "
+            "summarize only that -- do NOT force a market read onto it."),
+        vision_persona=(
+            "You read a macro or price chart image (yields, DXY, Fed path, "
+            "Bitcoin cycle comparisons) attached to a tweet by Benjamin Cowen "
+            "(Into The Cryptoverse)."),
+        # 50-post sample 2026-08-02: 36 own posts all lang=en, 0 non-English.
+        skip_langs=frozenset(),
+        max_fetch=40,                    # ~0.9 own posts/day + ~26% retweets
+                                         # -> ~3 weeks of catch-up headroom
+        current_view_file=os.path.join(DATA_DIR, "cowen_x_current_view.json"),
     ),
     Feed(
         key="kendrick_sc",
@@ -910,6 +954,8 @@ def generate_current_view(gemini_client, feed, summaries):
               "retrying", file=sys.stderr)
     if not parsed:
         return None, in_tok, out_tok
+    if not (parsed.get("shift_note") or "").strip():
+        parsed["shift_note"] = _first_sentence(parsed.get("stance_summary"))
     dates = sorted((r.get("created_at") or "")[:10] for r in window
                    if r.get("created_at"))
     view = {
