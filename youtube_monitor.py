@@ -467,9 +467,13 @@ def analyze(client, channel, title, transcript):
         in_tok += u.prompt_token_count or 0
         out_tok += (u.candidates_token_count or 0) + (u.thoughts_token_count or 0)
         parsed = _parse_json(resp)
-        if not (parsed and _looks_mangled(parsed)
-                and attempt < _MANGLED_MAX_ATTEMPTS - 1):
+        if not (parsed and _looks_mangled(parsed)):
             break
+        if attempt == _MANGLED_MAX_ATTEMPTS - 1:
+            print("  [give-up] analyze still mangled after "
+                  f"{_MANGLED_MAX_ATTEMPTS} attempts; dropping (the video stays "
+                  "unseen and is retried next run)", file=sys.stderr)
+            return None, in_tok, out_tok
         print("  [retry] mangled Hungarian text in analyze, retrying",
               file=sys.stderr)
     return parsed, in_tok, out_tok
@@ -533,9 +537,13 @@ def generate_current_view(client, channel, summaries):
         in_tok += u.prompt_token_count or 0
         out_tok += (u.candidates_token_count or 0) + (u.thoughts_token_count or 0)
         parsed = _parse_json(resp)
-        if not (parsed and _looks_mangled(parsed)
-                and attempt < _MANGLED_MAX_ATTEMPTS - 1):
+        if not (parsed and _looks_mangled(parsed)):
             break
+        if attempt == _MANGLED_MAX_ATTEMPTS - 1:
+            print("  [give-up] generate_current_view still mangled after "
+                  f"{_MANGLED_MAX_ATTEMPTS} attempts; keeping the previous view",
+                  file=sys.stderr)
+            return None, in_tok, out_tok
         print("  [retry] mangled Hungarian text in generate_current_view, "
               "retrying", file=sys.stderr)
     if not parsed:
@@ -654,6 +662,13 @@ def run_channel(channel, client, args):
                   f"(based on {view['based_on']['count']} videos); "
                   f"tokens in={cv_in} out={cv_out} (${cv_cost:.4f}) "
                   f"-> {channel.current_view_file}")
+        else:
+            # New videos landed but the synthesis failed, so the on-disk view (and
+            # the Consensus row built from it) silently keeps describing an older
+            # window. Say so loudly -- this used to be a no-op.
+            print(f"  [current-view FAILED] {channel.key}: kept the previous "
+                  f"{channel.current_view_file} -- it is now stale vs the ledger",
+                  file=sys.stderr)
 
 
 def main():

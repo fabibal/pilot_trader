@@ -825,9 +825,13 @@ def analyze_text(gemini_client, feed, date, text, author):
         i, o = _gemini_usage(resp)
         in_tok, out_tok = in_tok + i, out_tok + o
         parsed = _parse_gemini_json(resp)
-        if not (parsed and monitor._looks_mangled(parsed)
-                and attempt < _MANGLED_MAX_ATTEMPTS - 1):
+        if not (parsed and monitor._looks_mangled(parsed)):
             break
+        if attempt == _MANGLED_MAX_ATTEMPTS - 1:
+            print("  [give-up] analyze_text still mangled after "
+                  f"{_MANGLED_MAX_ATTEMPTS} attempts; dropping (the post stays "
+                  "unseen and is retried next run)", file=sys.stderr)
+            return None, in_tok, out_tok
         print("  [retry] mangled Hungarian text in analyze_text, retrying",
               file=sys.stderr)
     return parsed, in_tok, out_tok
@@ -866,9 +870,14 @@ def analyze_chart(gemini_client, feed, media_urls, date, text, author):
         i, o = _gemini_usage(resp)
         in_tok, out_tok = in_tok + i, out_tok + o
         parsed = _parse_gemini_json(resp)
-        if not (parsed and monitor._looks_mangled(parsed)
-                and attempt < _MANGLED_MAX_ATTEMPTS - 1):
+        if not (parsed and monitor._looks_mangled(parsed)):
             break
+        if attempt == _MANGLED_MAX_ATTEMPTS - 1:
+            print("  [give-up] analyze_chart still mangled after "
+                  f"{_MANGLED_MAX_ATTEMPTS} attempts; dropping the chart pass "
+                  "(the post is still stored, without chart fields)",
+                  file=sys.stderr)
+            return None, in_tok, out_tok
         print("  [retry] mangled Hungarian text in analyze_chart, retrying",
               file=sys.stderr)
     return parsed, in_tok, out_tok
@@ -990,9 +999,13 @@ def generate_current_view(gemini_client, feed, summaries):
         i, o = _gemini_usage(resp)
         in_tok, out_tok = in_tok + i, out_tok + o
         parsed = _parse_gemini_json(resp)
-        if not (parsed and monitor._looks_mangled(parsed)
-                and attempt < _MANGLED_MAX_ATTEMPTS - 1):
+        if not (parsed and monitor._looks_mangled(parsed)):
             break
+        if attempt == _MANGLED_MAX_ATTEMPTS - 1:
+            print("  [give-up] generate_current_view still mangled after "
+                  f"{_MANGLED_MAX_ATTEMPTS} attempts; keeping the previous view",
+                  file=sys.stderr)
+            return None, in_tok, out_tok
         print("  [retry] mangled Hungarian text in generate_current_view, "
               "retrying", file=sys.stderr)
     if not parsed:
@@ -1504,6 +1517,13 @@ def run_feed(feed, gemini_client, args):
                   f"(based on {view['based_on']['count']} posts); "
                   f"tokens in={cv_in} out={cv_out} (${cv_cost:.4f}) "
                   f"-> {feed.current_view_file}")
+        else:
+            # New posts landed but the synthesis failed, so the on-disk view (and
+            # the Consensus row built from it) silently keeps describing an older
+            # window. Say so loudly -- this used to be a no-op.
+            print(f"  [current-view FAILED] {feed.key}: kept the previous "
+                  f"{feed.current_view_file} -- it is now stale vs the ledger",
+                  file=sys.stderr)
 
 
 def main():
