@@ -99,11 +99,18 @@ from monitor import (load_env, load_json, notify_telegram, TELEGRAM_ENVS,
                      MAX_VISION_IMAGES, GEMINI_INPUT_PER_1M, GEMINI_OUTPUT_PER_1M,
                      GEMINI_THINKING, GEMINI_DEEP_THINKING,
                      MODEL as EXTRACT_MODEL, EXTRACT_INPUT_PER_1M,
-                     EXTRACT_OUTPUT_PER_1M, EXTRACT_THINKING, _first_sentence)
+                     EXTRACT_OUTPUT_PER_1M, EXTRACT_THINKING, _first_sentence,
+                     GeminiTally, alert_gemini_outage)
 
 # --- config ---------------------------------------------------------------
 HOME = "/home/fbazsa/pilot_trader"
 DATA_DIR = os.path.join(HOME, "data")
+
+# Every Gemini call this run, across all feeds. Each helper below swallows its
+# own APIError so one bad post cannot starve the rest of the feed, so this is
+# the only thing that can tell "quiet run" from "we were blind" -- main() pages
+# on it at the end. See monitor.GeminiTally.
+LLM_TALLY = GeminiTally()
 
 # GetXAPI advanced-search endpoint, used by TOPIC SEARCH feeds. monitor.py only
 # ever fetches user timelines, so (unlike GETXAPI_POSTS_PATH) this path is not
@@ -821,7 +828,9 @@ def analyze_text(gemini_client, feed, date, text, author):
             )
         except genai_errors.APIError as e:
             print(f"  [llm error] {type(e).__name__}: {e}", file=sys.stderr)
+            LLM_TALLY.fail()
             return None, in_tok, out_tok
+        LLM_TALLY.ok()
         i, o = _gemini_usage(resp)
         in_tok, out_tok = in_tok + i, out_tok + o
         parsed = _parse_gemini_json(resp)
@@ -866,7 +875,9 @@ def analyze_chart(gemini_client, feed, media_urls, date, text, author):
             )
         except genai_errors.APIError as e:
             print(f"  [vision error] {type(e).__name__}: {e}", file=sys.stderr)
+            LLM_TALLY.fail()
             return None, in_tok, out_tok
+        LLM_TALLY.ok()
         i, o = _gemini_usage(resp)
         in_tok, out_tok = in_tok + i, out_tok + o
         parsed = _parse_gemini_json(resp)
@@ -995,7 +1006,9 @@ def generate_current_view(gemini_client, feed, summaries):
             )
         except genai_errors.APIError as e:
             print(f"  [current-view error] {type(e).__name__}: {e}", file=sys.stderr)
+            LLM_TALLY.fail()
             return None, in_tok, out_tok
+        LLM_TALLY.ok()
         i, o = _gemini_usage(resp)
         in_tok, out_tok = in_tok + i, out_tok + o
         parsed = _parse_gemini_json(resp)
@@ -1140,7 +1153,9 @@ def triage_forecasts(gemini_client, text):
         )
     except genai_errors.APIError as e:
         print(f"  [triage error] {type(e).__name__}: {e}", file=sys.stderr)
+        LLM_TALLY.fail()
         return None, 0, 0
+    LLM_TALLY.ok()
     in_tok, out_tok = _gemini_usage(resp)
     return _parse_gemini_json(resp), in_tok, out_tok
 
@@ -1572,6 +1587,13 @@ def main():
                 notify_telegram(f"twitter_digest {feed.key} FAILED: {exc!r}")
             except Exception:
                 pass
+    # A wholesale Gemini failure never raises (each call site swallows its own
+    # APIError), so without this the run exits 0 having written nothing and the
+    # dashboard just keeps serving yesterday's cards. --dry-run is exempt: it is
+    # a manual probe, not the cron tick the dashboard depends on.
+    if not args.dry_run:
+        alert_gemini_outage(LLM_TALLY, "twitter_digest")
+
     if failed:
         print(f"feeds failed: {', '.join(failed)}", file=sys.stderr)
         sys.exit(1)

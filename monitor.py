@@ -1260,6 +1260,55 @@ def notify_telegram(reason):
     return ok
 
 
+class GeminiTally:
+    """Run-wide tally of Gemini calls that succeeded vs ones whose APIError was
+    swallowed at the call site.
+
+    Every Gemini helper in this project catches APIError per call and returns
+    None so one bad post/video cannot kill a whole run. The cost is that a TOTAL
+    outage (depleted prepay credits, revoked key, denied project) looks exactly
+    like a quiet run: nothing is written, nothing raises, and the only trace is
+    per-item stderr noise nobody reads. Counting both outcomes lets a run decide
+    at the end whether it was quiet or blind. Used by the digests via
+    alert_gemini_outage(); monitor.py's own check is inline on Interpreter."""
+
+    def __init__(self):
+        self.calls = 0
+        self.errors = 0
+
+    def ok(self):
+        self.calls += 1
+
+    def fail(self):
+        self.errors += 1
+
+
+# A run where every single call failed is unambiguous. A run that is merely
+# mostly-failing is judged on rate, but only once enough calls have happened
+# that the rate means something -- otherwise one flaky call on a 1-post night
+# pages at 100%.
+OUTAGE_MIN_CALLS = 5
+OUTAGE_FAIL_RATE = 0.8
+
+
+def alert_gemini_outage(tally, who):
+    """Page Telegram when a run's Gemini calls failed wholesale. Returns True if
+    it alerted. Mirrors the inline guard monitor.main() runs after extraction."""
+    total = tally.calls + tally.errors
+    if not tally.errors:
+        return False
+    total_outage = not tally.calls
+    mostly = total >= OUTAGE_MIN_CALLS and tally.errors / total >= OUTAGE_FAIL_RATE
+    if not (total_outage or mostly):
+        return False
+    scope = f"all {tally.errors}" if total_outage else f"{tally.errors}/{total}"
+    msg = (f"{who}: {scope} Gemini call(s) failed this run "
+           f"-- check GOOGLE_API_KEY/quota")
+    print(f"ERROR: {msg}", file=sys.stderr)
+    notify_telegram(msg)
+    return True
+
+
 def _staleness_alert(state):
     """If the last successful run is older than STALE_ALERT_HOURS, page Telegram.
     Runs at the start of each live run, so missed/failed prior runs are caught."""

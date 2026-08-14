@@ -79,11 +79,17 @@ import sentiment_history
 # alerting) so this stays DRY and consistent with the rest of the pipeline.
 from monitor import (load_env, load_json, notify_telegram, TELEGRAM_ENVS,
                      GEMINI_THINKING, _unescape_strings, _looks_mangled,
-                     _first_sentence)
+                     _first_sentence, GeminiTally, alert_gemini_outage)
 
 # --- config ---------------------------------------------------------------
 HOME = "/home/fbazsa/pilot_trader"
 DATA_DIR = os.path.join(HOME, "data")
+
+# Every Gemini call this run, across all channels. analyze()/generate_current_view()
+# each swallow their own APIError, so this is the only thing that can tell a
+# genuinely quiet run from a blind one -- main() pages on it. See
+# monitor.GeminiTally.
+LLM_TALLY = GeminiTally()
 WATCH_URL = "https://www.youtube.com/watch?v={vid}"
 
 # Gemini 3.5 Flash (NOT the tweet pipeline's cheap extraction-tier model):
@@ -462,7 +468,9 @@ def analyze(client, channel, title, transcript):
             )
         except genai_errors.APIError as e:
             print(f"  [llm error] {type(e).__name__}: {e}", file=sys.stderr)
+            LLM_TALLY.fail()
             return None, in_tok, out_tok
+        LLM_TALLY.ok()
         u = resp.usage_metadata
         in_tok += u.prompt_token_count or 0
         out_tok += (u.candidates_token_count or 0) + (u.thoughts_token_count or 0)
@@ -532,7 +540,9 @@ def generate_current_view(client, channel, summaries):
             )
         except genai_errors.APIError as e:
             print(f"  [current-view error] {type(e).__name__}: {e}", file=sys.stderr)
+            LLM_TALLY.fail()
             return None, in_tok, out_tok
+        LLM_TALLY.ok()
         u = resp.usage_metadata
         in_tok += u.prompt_token_count or 0
         out_tok += (u.candidates_token_count or 0) + (u.thoughts_token_count or 0)
@@ -718,6 +728,12 @@ def main():
                 notify_telegram(f"youtube_monitor {channel.key} FAILED: {exc!r}")
             except Exception:
                 pass
+    # A wholesale Gemini failure never raises (each call site swallows its own
+    # APIError), so without this the run exits 0 having written nothing and the
+    # dashboard keeps serving the previous cards. Mirrors twitter_digest.main().
+    if not args.dry_run:
+        alert_gemini_outage(LLM_TALLY, "youtube_monitor")
+
     if failed:
         print(f"channels failed: {', '.join(failed)}", file=sys.stderr)
         sys.exit(1)
