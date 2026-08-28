@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 """
-Multi-account trade-signal monitor for X portfolio bots, with LLM interpretation.
+Multi-account trade-signal monitor for X trade-call accounts, with LLM
+interpretation.
 
 Pipeline per tweet:
-  1. Skip @-replies (almost never the account's own new trade) — saves API cost.
-  2. Every remaining tweet is sent to Gemini (gemini-2.5-flash-lite) which
-     extracts ticker / action / size / entry price / trade date / portfolio
-     / confidence as schema-constrained JSON (always valid).
-  3. Signals with action == "none" or a null ticker are discarded.
-  4. Kept signals are tagged with their source account, written to
+  1. Every tweet (including @-replies — sells are often disclosed there) is
+     sent to Gemini (gemini-2.5-flash-lite) which extracts ticker / action /
+     size / entry price / trade date / portfolio / confidence as
+     schema-constrained JSON (always valid).
+  2. Signals with action == "none" or a null ticker are discarded.
+  3. Kept signals are tagged with their source account, written to
      ~/pilot_trader/trades.json (deduped by tweet id), then reconciled into
      ~/pilot_trader/positions.json.
 
@@ -52,25 +53,8 @@ from reconcile import reconcile, write_json_atomic
 # --- config ---------------------------------------------------------------
 # X bearer token is loaded from .env (X_BEARER_TOKEN) — never hardcoded.
 # Account identity/classification config is shared across the pipeline and
-# lives in accounts.py (single source of truth). @aifinancelabs is where the
-# DeepSeek portfolio experiment is published (no standalone DeepSeek handle).
+# lives in accounts.py (single source of truth).
 from accounts import ACCOUNTS, SOURCE_TYPE, POSTS_ONLY_ACCOUNTS
-# Slow accounts: fetch only if the last fetch was more than N hours ago (instead
-# of an exact-hour cron match, which fails entirely if that one cron run fails).
-# Absent => polled on every run (4h cron). The 3 Autopilot AI portfolios
-# (grok/claude/deepseek — they rebalance ~monthly, so 4h polling is wasteful) are
-# ~twice a day. ralliesarena is an AI portfolio too but posts daily trade
-# updates, so it is left ABSENT here (polled every run) like the influencers.
-# ⚠️ Use 11h, NOT 12h: a real fetch records last_fetch a few seconds AFTER the
-# cron slot (GetXAPI latency), so a 16:00->04:00 gap measures ~11h59m58s. With a
-# 12h threshold that is `< 12` => the 04:00 run SKIPS and the phase drifts. 11h
-# leaves a full ~1h cushion over the real ~12h gap, so the 2x/day cadence is
-# stable. The phase (WHICH two slots) is set by each account's seed last_fetch in
-# .monitor_state.json; the AI portfolios are seeded to the 04:00/16:00 UTC slots
-# so fresh data is guaranteed by the 04:00 run (finishes ~05:00 UTC = 07:00
-# Budapest, before the 08:00 Budapest target).
-POLL_MIN_INTERVAL_H = {"grkportfolio": 11, "theaiportfolios": 11,
-                       "aifinancelabs": 11}
 HOME = "/home/fbazsa/pilot_trader"
 DATA_DIR = os.path.join(HOME, "data")
 COST_LOG_FILE = os.path.join(DATA_DIR, "cost_log.json")
@@ -88,13 +72,8 @@ TELEGRAM_ENVS = (ENV_FILE, PAPER_ENV, SHARED_ENV, HOME_ENV)
 MONITOR_LOG = os.path.join(HOME, "monitor.log")
 STALE_ALERT_HOURS = 8        # alert if the last successful run is older than this
 RAW_FILES = {  # used by --backfill; accounts without a snapshot are skipped
-    "grkportfolio": os.path.join(HOME, "tweets_raw.json"),
-    "theaiportfolios": os.path.join(HOME, "tweets_theaiportfolios.json"),
-    "aifinancelabs": os.path.join(HOME, "tweets_aifinancelabs.json"),
     "IncomeSharks": os.path.join(HOME, "tweets_incomesharks.json"),
-    "CelalKucuker": os.path.join(HOME, "tweets_CelalKucuker.json"),
     "traderstewie": os.path.join(HOME, "tweets_traderstewie.json"),
-    "ralliesarena": os.path.join(HOME, "tweets_ralliesarena.json"),
 }
 MAX_FETCH = 100
 API_BASE = "https://api.twitter.com/2"
@@ -146,22 +125,14 @@ EXTRACTION_SYSTEM = (
     "You extract trade signals from tweets posted by trading accounts. Given one "
     "tweet (and the handle that posted it), decide whether it reports an "
     "actionable trade (or a currently-held position) and extract the details.\n"
-    "There are two kinds of accounts:\n"
-    "(A) AUTOMATED PORTFOLIO BOTS — they post their OWN executed trades / "
-    "holdings. Account-to-portfolio map: @grkportfolio = the Grok portfolio; "
-    "@theaiportfolios = the Claude portfolio; @aifinancelabs = an umbrella lab "
-    "account that posts updates for several model portfolios (Grok, Claude, "
-    "DeepSeek, ChatGPT) — for its tweets, infer the portfolio from the text "
-    "(e.g. 'DeepSeek's portfolio...' => deepseek).\n"
-    "(B) HUMAN TRADER / INFLUENCER — @IncomeSharks, @CelalKucuker and "
-    "@traderstewie. They post FREQUENT trade ideas/calls on stocks and/or "
-    "crypto, and mix pure analysis/opinion with actionable calls. They often "
-    "state entry prices, stop losses, and price targets. @CelalKucuker is "
-    "CRYPTO-HEAVY: most of its calls are on cryptocurrencies (e.g. BTC, XRP, "
-    "XLM, SUI, SOL, EIGEN) — set asset_type = \"crypto\" for these and use the "
-    "common symbol. @traderstewie is a US STOCK/ETF swing trader (e.g. SOXL, "
-    "AEHR, LWLG, INTC, RKLB) — set asset_type = \"stock\" for its calls. For "
-    "these influencers always set portfolio = null.\n"
+    "Every monitored account is a HUMAN TRADER / INFLUENCER — currently "
+    "@IncomeSharks and @traderstewie. They post FREQUENT trade ideas/calls on "
+    "stocks and/or crypto, and mix pure analysis/opinion with actionable calls. "
+    "They often state entry prices, stop losses, and price targets. "
+    "@traderstewie is a US STOCK/ETF swing trader (e.g. SOXL, AEHR, LWLG, INTC, "
+    "RKLB) — set asset_type = \"stock\" for its calls. Always set "
+    "portfolio = null (no monitored account posts on behalf of a named model "
+    "portfolio).\n"
     "OWN VIEW ONLY: extract a signal only when the ACCOUNT HOLDER is stating "
     "THEIR OWN trade or stance. If the tweet is reacting to, quoting, "
     "questioning, or disagreeing with SOMEONE ELSE'S call or price prediction "
@@ -214,10 +185,8 @@ EXTRACTION_SYSTEM = (
     "if no trade date is stated or implied.\n"
     "- confidence: how confident you are this is a real actionable trade signal "
     "(\"high\", \"medium\", \"low\", or \"none\").\n"
-    "- portfolio: for a portfolio bot, which model's portfolio the trade belongs "
-    "to — \"grok\", \"claude\", \"deepseek\", \"chatgpt\", or \"gemini\". Umbrella "
-    "feeds name the model explicitly (e.g. 'CLAUDE JUST BOUGHT', 'Gemini bought') "
-    "— attribute per tweet. null if unclear or for an influencer.\n"
+    "- portfolio: always null — no monitored account posts on behalf of a "
+    "named model portfolio.\n"
     "- holding_thesis: for a buy or position, ONE short sentence stating WHY "
     "the account likes/holds the asset (the bull case / conviction reason), if "
     "stated or clearly implied. null if none is given.\n"
@@ -383,8 +352,9 @@ def _first_sentence(text):
 #    is cheaper than trusting a reverse-engineered encoding. Must be anchored
 #    to an ADJACENT LETTER: a bare "%\d{2,3}" also matches the Turkish
 #    percent-first notation ("%70 olasılıkla", "%100 kârla") that @CelalKucuker
-#    tweets and monitor.py's own extraction quotes back into trades.json
-#    (47 such hits across the existing ledgers, vs 0 for the anchored form).
+#    (removed 2026-08-27) used to tweet and monitor.py's own extraction quoted
+#    back into trades.json (47 such hits in the existing ledger, vs 0 for the
+#    anchored form).
 # None of these are legitimate mid-word occurrences in Hungarian or English
 # prose, so a hit is an unambiguous corruption signal.
 _MANGLED_RE = re.compile(
@@ -500,10 +470,11 @@ class Interpreter:
                 + self.vision_output_tokens / 1_000_000 * GEMINI_OUTPUT_PER_1M)
 
 
-# Exit-phrasing detector for the reply gate. Word-boundary regex, not bare
-# substrings: "cut" as a substring matched "exeCUTe"/"hairCUT". Generous on
-# purpose — this gate protects the SELL side of the IBKR mirror, and a false
-# positive only costs one Gemini call.
+# Exit-phrasing detector for the reply gate below (currently unreachable: every
+# monitored account is "influencer" kind, which already bypasses that gate —
+# kept in case a non-influencer account is ever added back). Word-boundary
+# regex, not bare substrings: "cut" as a substring matched "exeCUTe"/"hairCUT".
+# Generous on purpose — a false positive only costs one Gemini call.
 SELL_PATTERN = re.compile(
     r"\b(sold|selling|sell|dumped|dumping|exited|exiting|exit|"
     r"trimmed|trimming|closed|closing|liquidated|liquidating|"
@@ -514,11 +485,9 @@ SELL_PATTERN = re.compile(
 # Retweet detector for the cross-account dedup gate. A retweet is a verbatim
 # copy of another account's tweet, so when the ORIGINAL author is itself a
 # monitored account we already ingest that tweet directly — re-interpreting the
-# RT only creates a duplicate signal (e.g. @aifinancelabs and @theaiportfolios
-# both RT-ing @grkportfolio's FTAI post = 3 identical Grok positions). The drop
-# is SCOPED to monitored authors: RTs of NON-monitored accounts are KEPT, since
-# they can be the sole source of a signal (e.g. an external account breaking a
-# Grok buy @grkportfolio never posted itself). .match() anchors at string start.
+# RT only creates a duplicate signal. The drop is SCOPED to monitored authors:
+# RTs of NON-monitored accounts are KEPT, since they can be the sole source of
+# a signal. .match() anchors at string start.
 RETWEET_PATTERN = re.compile(r"RT @(\w+):", re.IGNORECASE)
 _MONITORED_LC = {a.lower() for a in ACCOUNTS}
 
@@ -563,26 +532,6 @@ def is_duplicate_retweet(text):
     they can be the sole source of a signal. See RETWEET_PATTERN."""
     m = RETWEET_PATTERN.match((text or "").lstrip())
     return bool(m) and m.group(1).lower() in _MONITORED_LC
-
-
-def slow_fetch_skip(account, state, now):
-    """Pacing gate for POLL_MIN_INTERVAL_H accounts. Returns (skip, age_h).
-
-    skip=True when the account's last fetch was less than its min interval ago.
-    A never-fetched account (no last_fetch) is NOT skipped — so a missed cron
-    run can't strand it, and the first run seeds last_fetch. Unknown timestamps
-    fail open (do not skip)."""
-    min_h = POLL_MIN_INTERVAL_H.get(account)
-    if min_h is None:
-        return False, None
-    last = (state.get(account) or {}).get("last_fetch")
-    if not last:
-        return False, None
-    try:
-        age_h = (now - datetime.fromisoformat(last)).total_seconds() / 3600
-    except (ValueError, TypeError):
-        return False, None
-    return (age_h < min_h), age_h
 
 
 def merge_chart(parsed, chart):
@@ -968,9 +917,6 @@ def main():
                          "others. Without it, just limits the live fetch.")
     ap.add_argument("--test-telegram", action="store_true",
                     help="send a test alert to confirm Telegram is wired, then exit.")
-    ap.add_argument("--no-trade", action="store_true",
-                    help="do NOT execute trades on IBKR after the run (auto_trader "
-                         "still queues orders in no-trade mode for inspection).")
     args = ap.parse_args()
     if args.backfill_batch:            # --backfill-batch is now just --backfill
         args.backfill = True
@@ -1029,14 +975,6 @@ def main():
     attempted = 0            # accounts that reached the fetch (not slow-skipped)
     now = datetime.now(timezone.utc)
     for account in accounts:
-        # Slow accounts (POLL_MIN_INTERVAL_H): skip on a live run if fetched too
-        # recently. Backfill/dry-run/explicit --account always process.
-        if not (args.backfill or args.dry_run) and not args.account:
-            skip, age_h = slow_fetch_skip(account, run_state, now)
-            if skip:
-                print(f"[{account}] skipped (last fetch {age_h:.1f}h ago "
-                      f"< {POLL_MIN_INTERVAL_H[account]}h min)")
-                continue
         # High-water mark of tweet ids already PROCESSED in a prior run. GetXAPI
         # returns the full latest page every run (no server-side since_id), so
         # without this every non-signal tweet on the page is re-sent to the LLM
@@ -1193,19 +1131,6 @@ def main():
     # Append per-run cost telemetry (skip dry-run writes and zero-LLM runs).
     if not args.dry_run and (interp.calls or interp.vision_calls):
         log_cost(interp)
-
-    # Automatic execution: hand off to auto_trader (AI mirror -> IBKR paper) on
-    # every live run — NOT only when this run produced new signals: auto_trader
-    # also reconciles resting MOO orders and retries deferred sells/unsubmitted
-    # orders, which must not wait for the next run that happens to find a new
-    # signal. It returns cheaply (no IB connect) when there is nothing to do.
-    # Never on dry-run/backfill. A failure here must NOT fail the monitor run.
-    if not args.dry_run and not args.backfill:
-        try:
-            import auto_trader
-            auto_trader.run(no_trade=args.no_trade)
-        except Exception as e:                       # noqa: BLE001 - isolate
-            print(f"[auto_trader] execution step failed: {e!r}", file=sys.stderr)
 
 
 def log_cost(interp):

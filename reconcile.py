@@ -41,8 +41,8 @@ POSITIONS_FILE = os.path.join(HOME, "positions.json")
 GATED_CONFIDENCE = {"low", "none"}
 
 # Non-tradeable pseudo-tickers — market indices / commodities / forex / crypto
-# dominance the LLM sometimes lifts from macro commentary (e.g. CelalKucuker).
-# They are NOT positions; reject them so they never enter positions.json.
+# dominance the LLM sometimes lifts from macro commentary. They are NOT
+# positions; reject them so they never enter positions.json.
 NON_TRADEABLE_TICKERS = {
     "BTCDOMINANCE", "BTC.D", "ETH.D", "USDT.D", "TOTAL", "TOTAL2", "TOTAL3",
     "DXY", "XAUUSD", "XAGUSD", "SPX", "SPX500", "VIX", "DJI", "DJIA",

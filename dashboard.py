@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """
-Plotly Dash dashboard for the portfolio-bot trade monitor.
+Plotly Dash dashboard for the influencer trade-call / analysis-digest monitor.
 
 Reads:
-  * trades.json    — the signal event log (all-signals table)
-  * positions.json — reconciled (account, portfolio, ticker) positions
-                     (portfolio-summary cards + holdings pie)
+  * trades.json    — the signal event log (influencer signals + resolutions)
+  * positions.json — reconciled (account, ticker) positions
+  * data/*_summaries.json, *_current_view.json — the YouTube/X analysis digests
+  * data/reddit_strategies.json — the Reddit strategy miner
 
 Current/historical prices come from yfinance (cached 1h). Returns use the
 position's entry_price when known, else estimate entry from the close on the
@@ -33,34 +34,19 @@ from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 import pandas as pd
-import plotly.express as px
-import plotly.graph_objects as go
 import yfinance as yf
-from dash import ALL, Dash, ctx, dash_table, dcc, html, Input, Output, State
-from dash.exceptions import PreventUpdate
+from dash import Dash, dash_table, dcc, html, Input, Output
 
 import resolver
-
-# Live IBKR paper-account reads (optional). Imported guarded so the dashboard
-# still boots if ib_insync is absent; the IBKR tab then shows "Gateway offline".
-try:
-    import ibkr_connector as ibk
-except Exception:        # noqa: BLE001 - any import failure -> feature disabled
-    ibk = None
 
 HOME = "/home/fbazsa/pilot_trader"
 TRADES_FILE = "/home/fbazsa/pilot_trader/trades.json"
 POSITIONS_FILE = "/home/fbazsa/pilot_trader/positions.json"
-ORDERS_FILE = "/home/fbazsa/pilot_trader/data/orders.json"
-EQUITY_FILE = "/home/fbazsa/pilot_trader/data/equity_curve.json"
-BREAKER_FILE = "/home/fbazsa/pilot_trader/data/circuit_breaker.json"
 STATE_FILE = "/home/fbazsa/pilot_trader/.monitor_state.json"
 ENV_FILE = "/home/fbazsa/pilot_trader/.env"
 STALE_HOURS = 8           # cron runs every 4h; >8h means a run was missed
 REFRESH_MS = 60_000
 PORT = 8051
-DASH_CLIENT_ID = 20       # distinct from auto_trader (7) and test scripts (8-11)
-DASH_IB_TIMEOUT = 8       # short connect deadline so the tab degrades fast
 DOCKER_SOCKET = "/var/run/docker.sock"   # mounted into the container for stats/restart
 DASH_CONTAINER = "pilot_trader_dashboard"
 CONTAINER_STATS_TTL = 25  # cache container stats this many seconds
@@ -155,22 +141,13 @@ def get_getxapi_credits():
     return _credits_cache
 
 
-PORTFOLIO_LABELS = {"grok": "Grok", "claude": "Claude",
-                    "deepseek": "DeepSeek", "chatgpt": "ChatGPT",
-                    "gemini": "Gemini"}
-# Account classification + null-portfolio fallback are shared with monitor/
-# reconcile/auto_trader via accounts.py (single source of truth). Influencer
-# accounts are kept entirely separate from the AI portfolio views (own tab).
-from accounts import (ACCOUNT_DEFAULT_PF, INFLUENCER_ACCOUNTS,
-                      MIRROR_PORTFOLIOS, NON_AI_ACCOUNTS)
+# Account classification is shared with monitor/reconcile via accounts.py
+# (single source of truth).
+from accounts import INFLUENCER_ACCOUNTS
 
 
 def is_influencer(account):
     return account in INFLUENCER_ACCOUNTS
-
-
-def ai_positions(positions):
-    return [p for p in positions if p.get("account") not in NON_AI_ACCOUNTS]
 
 
 def influencer_positions(positions):
@@ -182,37 +159,6 @@ def _yf_symbol(ticker, asset_type):
     if asset_type == "crypto" and ticker and "-" not in ticker:
         return f"{ticker}-USD"
     return ticker
-
-
-# Analysis-only AI umbrellas whose model books are INDEPENDENT of the Autopilot
-# bots: their model sub-tabs are labeled separately so the books never blend
-# (e.g. @ralliesarena's Grok is a different $100K experiment from @grkportfolio's).
-# Keyed `account|model`; the value is the display prefix. NOTE: @aifinancelabs is
-# deliberately NOT here — it reports the SAME Autopilot books, which SHOULD merge.
-UMBRELLA_TAG = {"ralliesarena": "Rallies"}
-
-
-def _pf_key(account, base):
-    """Model-grouping key. Independent umbrellas (UMBRELLA_TAG) are namespaced
-    `account|model` so their books stay distinct from the mirrored bots."""
-    if account in UMBRELLA_TAG and base and base != "unknown":
-        return f"{account}|{base}"
-    return base
-
-
-def pf_of(p):
-    base = p.get("portfolio") or ACCOUNT_DEFAULT_PF.get(p.get("account"), "unknown")
-    return _pf_key(p.get("account"), base)
-
-
-def pf_label(key):
-    """Human label for a model-grouping key, including namespaced umbrella keys
-    (`ralliesarena|grok` -> 'Rallies: Grok')."""
-    if "|" in key:
-        account, base = key.split("|", 1)
-        return (f"{UMBRELLA_TAG.get(account, account)}: "
-                f"{PORTFOLIO_LABELS.get(base, base.title())}")
-    return PORTFOLIO_LABELS.get(key, key.title())
 
 
 def _days_held(opened_date):
@@ -241,8 +187,6 @@ C = {
     "sell_bg": "#2d1118",     # subtle dark-red row tint
 }
 MONO = "'Consolas', 'SF Mono', 'Menlo', monospace"
-PIE_COLORS = ["#58a6ff", "#3fb950", "#bc8cff", "#d29922", "#e3b341",
-              "#f85149", "#8cc665", "#39c5cf", "#ff7b72", "#79c0ff"]
 
 # --- price cache (1h TTL) so the 60s dashboard refresh doesn't hammer Yahoo ---
 PRICE_TTL = 3600
@@ -531,20 +475,6 @@ def load_positions():
         return []
 
 
-TABLE_COLUMNS = [
-    {"name": "DATE", "id": "date"},
-    {"name": "ACCOUNT", "id": "account"},
-    {"name": "PORTFOLIO", "id": "portfolio"},
-    {"name": "TICKER", "id": "ticker"},
-    {"name": "ACTION", "id": "signal_type"},
-    {"name": "CONF", "id": "confidence"},
-    {"name": "SIZE %", "id": "position_size_pct"},
-    {"name": "ENTRY $", "id": "entry_price"},
-    {"name": "RETURN %", "id": "return_pct"},
-    {"name": "LINK", "id": "link", "presentation": "markdown"},
-    {"name": "SUMMARY", "id": "reasoning"},
-]
-
 # Influencer (IncomeSharks) signals table — its own column set with the
 # influencer-specific fields (asset type, stop loss, target).
 INFLUENCER_TABLE_COLUMNS = [
@@ -590,88 +520,6 @@ def _stat_line(label, value_span):
     ], style={"fontSize": "0.82rem", "marginTop": "3px"})
 
 
-def portfolio_cards(positions, selected=None):
-    """Clickable per-portfolio summary cards. The card whose key == `selected`
-    is highlighted (blue border); clicking a card drives the Holdings pie +
-    position detail below (see the `pf-card` pattern-matching callback)."""
-    open_pos = [p for p in positions if p.get("status") == "open"]
-    by_pf = {}
-    for p in open_pos:
-        by_pf.setdefault(pf_of(p), []).append(p)
-
-    cards = []
-    for pf in sorted(by_pf):
-        if pf == "unknown":          # unattributed umbrella tweets: no model card
-            continue
-        ps = by_pf[pf]
-        rets, spy_rets = [], []
-        for p in ps:
-            r = compute_return(p["ticker"], p.get("entry_price"),
-                               p.get("trade_date"),
-                               (p.get("opened_at") or "")[:10],
-                               p.get("asset_type", "stock"))
-            d = p.get("trade_date") or (p.get("opened_at") or "")[:10]
-            if r:
-                rets.append((p["ticker"], r["val"]))
-                # Benchmark SPY over the SAME window as this position's return;
-                # a single min-date window overstates SPY for later entries.
-                s = spy_return_since(d) if d else None
-                if s is not None:
-                    spy_rets.append(s)
-        avg = round(sum(v for _, v in rets) / len(rets), 1) if rets else None
-        best = max(rets, key=lambda x: x[1]) if rets else None
-        worst = min(rets, key=lambda x: x[1]) if rets else None
-        spy = round(sum(spy_rets) / len(spy_rets), 1) if spy_rets else None
-        label = pf_label(pf)
-
-        sel = (pf == selected)
-        cards.append(html.Div(
-            id={"type": "pf-card", "index": pf},
-            n_clicks=0,
-            style={
-                "background": C["buy_bg"] if sel else C["card"],
-                "border": (f"1px solid {C['blue']}" if sel
-                           else f"1px solid {C['border']}"),
-                "boxShadow": f"0 0 0 1px {C['blue']}" if sel else "none",
-                "borderRadius": "8px", "padding": "14px 18px", "minWidth": "230px",
-                "flex": "1", "cursor": "pointer",
-                "transition": "border-color .15s, background .15s",
-            },
-            children=[
-                html.Div(label, style={
-                    "fontWeight": "bold", "fontSize": "0.95rem",
-                    "color": C["text"], "marginBottom": "8px",
-                    "borderBottom": f"1px solid {C['border']}", "paddingBottom": "6px",
-                    "textTransform": "uppercase", "letterSpacing": "0.05em"}),
-                _stat_line("open positions:",
-                           html.Span(str(len(ps)), style={"color": C["text"],
-                                                          "fontWeight": "bold"})),
-                _stat_line("avg est. return:", html.Span([
-                    html.Span(_fmt_pct(avg),
-                              style={"color": _color(avg), "fontWeight": "bold"}),
-                    html.Span(f"  vs S&P {_fmt_pct(spy)}",
-                              style={"color": C["dim"], "fontSize": "0.72rem"}),
-                ])),
-                _stat_line("best:",
-                           html.Span(f"{best[0]} {_fmt_pct(best[1])}" if best else "n/a",
-                                     style={"color": _color(best[1] if best else None)})),
-                _stat_line("worst:",
-                           html.Span(f"{worst[0]} {_fmt_pct(worst[1])}" if worst else "n/a",
-                                     style={"color": _color(worst[1] if worst else None)})),
-            ],
-        ))
-    if not cards:
-        return [html.Div("No open positions yet.", style={"color": C["dim"]})]
-    return cards
-
-
-def portfolios_in(positions):
-    # Drop "unknown" — an AI-umbrella tweet (e.g. @ralliesarena) the LLM could not
-    # attribute to a specific model has no model sub-tab of its own.
-    pfs = sorted({pf_of(p) for p in positions} - {"unknown"}) if positions else []
-    return pfs or ["grok", "claude", "deepseek"]
-
-
 # --- styled html tables (dark theme) ----------------------------------------
 _TH = {"color": C["dim"], "fontFamily": MONO, "fontSize": "0.68rem",
        "textTransform": "uppercase", "letterSpacing": "0.04em",
@@ -713,78 +561,6 @@ def _table(headers, rows, empty="No data", hide_sm=None):
 
 def _money(v):
     return f"${v:,.2f}" if v else "—"
-
-
-def position_detail_table(positions, portfolio):
-    rows = []
-    # Newest first: sort by trade_date (ISO dates sort chronologically), falling
-    # back to opened_at; positions with no date sort to the bottom.
-    ordered = sorted(positions,
-                     key=lambda q: q.get("trade_date")
-                     or (q.get("opened_at") or "")[:10] or "",
-                     reverse=True)
-    for p in ordered:
-        if p.get("status") != "open" or pf_of(p) != portfolio:
-            continue
-        tdate = p.get("trade_date") or (p.get("opened_at") or "")[:10] or None
-        tdate_disp = p.get("trade_date") or _local_date(p.get("opened_at")) or None
-        atype = p.get("asset_type", "stock")
-        sym = _yf_symbol(p["ticker"], atype)
-        entry, est = estimate_entry(p["ticker"], p.get("entry_price"),
-                                    p.get("trade_date"),
-                                    (p.get("opened_at") or "")[:10], atype)
-        cur = get_price(sym)
-        ret = round((cur - entry) / entry * 100, 1) if (entry and cur) else None
-        days = _days_held(tdate)
-        size = p.get("size_pct")
-        rows.append((
-            (p["ticker"], C["blue"]),
-            f"{size:.2f}%" if size is not None else "—",
-            tdate_disp or "—",
-            _money(entry) + ("*" if est and entry else ""),
-            _money(cur),
-            (_fmt_pct(ret), _color(ret)),
-            str(days) if days is not None else "—",
-        ))
-    return _table(["Ticker", "Size %", "Trade Date", "Entry", "Current",
-                   "Return %", "Days Held"], rows,
-                  empty=f"No open positions for {pf_label(portfolio)}",
-                  hide_sm={1, 2, 6})   # phones: drop size%/trade-date/days-held
-
-
-def closed_trades_table(positions, portfolio, limit=5):
-    """Recent closed trades for the SELECTED portfolio only (matches the pie +
-    position detail). The Portfolio column is dropped -- every row is `portfolio`."""
-    closed = [p for p in positions
-              if p.get("status") == "closed" and pf_of(p) == portfolio]
-    closed.sort(key=lambda p: p.get("closed_at") or "", reverse=True)
-    rows = []
-    for p in closed[:limit]:
-        opened = p.get("trade_date") or (p.get("opened_at") or "")[:10] or None
-        close_date = (p.get("closed_at") or "")[:10] or None
-        # Display in Budapest local time; pricing below keeps the UTC dates.
-        opened_disp = p.get("trade_date") or _local_date(p.get("opened_at")) or None
-        close_disp = _local_date(p.get("closed_at")) or None
-        atype = p.get("asset_type", "stock")
-        sym = _yf_symbol(p["ticker"], atype)
-        entry = p.get("entry_price")
-        if not entry and opened:
-            entry, _ = estimate_entry(p["ticker"], None, p.get("trade_date"),
-                                      opened, atype)
-        # exit price = close on the close date
-        exit_px = get_hist_close(sym, close_date) if close_date else None
-        ret = round((exit_px - entry) / entry * 100, 1) if (entry and exit_px) else None
-        rows.append((
-            (p["ticker"], C["blue"]),
-            opened_disp or "—",
-            close_disp or "—",
-            _money(entry),
-            _money(exit_px),
-            (_fmt_pct(ret), _color(ret)),
-        ))
-    return _table(["Ticker", "Opened", "Closed", "Entry", "Exit", "Return %"],
-                  rows, empty=f"No closed trades for {pf_label(portfolio)}",
-                  hide_sm={1, 2})   # phones: drop opened/closed dates
 
 
 # --- influencer (IncomeSharks) views ----------------------------------------
@@ -941,7 +717,6 @@ def influencer_winrate_card(resolutions):
 # Per-influencer descriptor + accent color (left border) for the header card.
 INFLUENCER_META = {
     "IncomeSharks": ("Stocks + crypto trade calls", C["blue"]),
-    "CelalKucuker": ("Crypto-heavy trade calls", C["yellow"]),
     "traderstewie": ("US equity swing setups", C["green"]),
 }
 
@@ -1059,209 +834,6 @@ def influencer_positions_table(resolutions):
                   hide_sm={1, 2, 6, 7})   # phones: drop asset/date/stop/target
 
 
-def holdings_figure(positions, portfolio):
-    """Pie of ALL open positions for the portfolio. Sized positions use their
-    real weight + a color; unsized ones get a neutral-grey placeholder slice
-    labeled 'TICKER ?' so the pie reflects the full book. The placeholder weight
-    is the average disclosed weight (purely for visual sizing) and is NOT counted
-    toward the disclosed-percentage label."""
-    open_pos = [p for p in positions
-                if pf_of(p) == portfolio and p["status"] == "open"]
-    label = pf_label(portfolio)
-    if not open_pos:
-        fig = go.Figure(go.Pie(labels=["no open positions"], values=[1],
-                               hole=0.45, textinfo="none",
-                               marker=dict(colors=[C["border"]])))
-    else:
-        sized = [p for p in open_pos if p.get("size_pct") is not None]
-        unsized = [p for p in open_pos if p.get("size_pct") is None]
-        disclosed = sum(p["size_pct"] for p in sized)
-        # placeholder weight ~ a typical holding so grey slices are visible
-        placeholder = round(disclosed / len(sized), 2) if sized else 1.0
-
-        labels, values, colors = [], [], []
-        for i, p in enumerate(sized):
-            labels.append(f"{p['ticker']} {p['size_pct']:.1f}%")
-            values.append(p["size_pct"])
-            colors.append(PIE_COLORS[i % len(PIE_COLORS)])
-        for p in unsized:
-            labels.append(f"{p['ticker']} ?")
-            values.append(placeholder)
-            colors.append(C["dim"])     # neutral grey for unknown weight
-
-        fig = go.Figure(go.Pie(
-            labels=labels, values=values, hole=0.45, sort=False,
-            textinfo="label", textfont=dict(family=MONO, color=C["text"]),
-            marker=dict(colors=colors, line=dict(color=C["bg"], width=2))))
-
-    total = sum(p["size_pct"] for p in open_pos if p.get("size_pct") is not None)
-    n_unsized = sum(1 for p in open_pos if p.get("size_pct") is None)
-    suffix = f", {n_unsized} unsized" if n_unsized else ""
-    fig.update_layout(
-        title=dict(
-            text=f"{label} — {len(open_pos)} open holdings "
-                 f"({total:.1f}% of book disclosed{suffix})",
-            font=dict(family=MONO, color=C["text"], size=14)),
-        paper_bgcolor=C["card"], plot_bgcolor=C["card"],
-        font=dict(family=MONO, color=C["text"]),
-        # Fixed height + no legend so the pie's footprint is IDENTICAL for every
-        # portfolio (1 holding or 12): the slice labels (textinfo="label") already
-        # name each holding, and a variable-length legend was what shifted the
-        # layout / squished the row between card selections.
-        height=380, showlegend=False,
-        margin=dict(l=20, r=20, t=50, b=20),
-    )
-    return fig
-
-
-# Stable per-portfolio colors (+ S&P) shared by the timeseries and bar charts.
-PF_COLORS = {"Grok": "#58a6ff", "Claude": "#bc8cff", "DeepSeek": "#3fb950",
-             "ChatGPT": "#e3b341", "S&P 500": "#f85149",
-             "My Paper": "#f0f6fc"}   # bright near-white: the paper mirror line
-
-
-def _dark_chart(fig, title, h=360):
-    fig.update_layout(
-        title=dict(text=title, font=dict(family=MONO, color=C["text"], size=14)),
-        paper_bgcolor=C["card"], plot_bgcolor=C["card"], height=h,
-        font=dict(family=MONO, color=C["text"], size=11),
-        # Legend horizontal, below the plot — never overlaps the chart area on
-        # narrow/mobile screens (plotly can't be CSS-media-queried); bottom
-        # margin grows to make room. _dark_chart is used only by the perf chart.
-        legend=dict(orientation="h", yanchor="top", y=-0.18,
-                    xanchor="left", x=0,
-                    font=dict(color=C["text"]), title_text=""),
-        margin=dict(l=50, r=20, t=50, b=72),
-        xaxis=dict(gridcolor=C["border"], linecolor=C["border"]),
-        yaxis=dict(gridcolor=C["border"], linecolor=C["border"], ticksuffix="%"),
-    )
-    return fig
-
-
-def _norm_date(val):
-    """Normalize an LLM-extracted date to a valid 'YYYY-MM-DD' string, or None.
-    Pads month-only ('YYYY-MM' -> 'YYYY-MM-01'); rejects anything that won't
-    parse. One bad date used to poison `start` and make yfinance throw for
-    every ticker (incl. SPY), blanking the whole chart."""
-    if not val:
-        return None
-    s = str(val)[:10]
-    if len(s) == 7:            # 'YYYY-MM' -> first of month
-        s += "-01"
-    try:
-        datetime.strptime(s, "%Y-%m-%d")
-        return s
-    except ValueError:
-        return None
-
-
-def _perf_rows(positions):
-    """Build cumulative equal-weight return % rows per portfolio + S&P 500 (list
-    of {date, portfolio, return}). Shared by the AI-tab chart and the Overview
-    chart. Returns (rows, start_date).
-
-    CLOSED positions are included, with their return frozen at the exit-date
-    price from the close date onward. Open-only made the chart survivorship-
-    biased: every sold winner/loser vanished, retroactively rewriting the
-    curve each time a portfolio exited something."""
-    entries = []   # (portfolio_label, yf_symbol, entry, open_date, close_date|None)
-    for p in positions:
-        status = p.get("status")
-        if status not in ("open", "closed"):
-            continue
-        if pf_of(p) == "unknown":    # unattributed umbrella tweets: no chart line
-            continue
-        atype = p.get("asset_type", "stock")
-        entry, _ = estimate_entry(p["ticker"], p.get("entry_price"),
-                                  p.get("trade_date"),
-                                  (p.get("opened_at") or "")[:10], atype)
-        od = _norm_date(p.get("trade_date")) or _norm_date((p.get("opened_at") or "")[:10])
-        cd = _norm_date((p.get("closed_at") or "")[:10]) \
-            if status == "closed" else None
-        if entry and od:
-            entries.append((pf_label(pf_of(p)),
-                            _yf_symbol(p["ticker"], atype), entry, od, cd))
-    if not entries:
-        return [], None
-
-    start = min(e[3] for e in entries)
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    idx = [d.strftime("%Y-%m-%d") for d in pd.bdate_range(start=start, end=today)]
-    # Batch all daily-series fetches into ONE yf.download (incl. the SPY
-    # benchmark) so the per-symbol get_price_series calls below hit warm cache
-    # instead of N sequential Yahoo round-trips.
-    warm_series({t for _, t, _, _, _ in entries} | {"SPY"}, start)
-    series = {t: get_price_series(t, start) for _, t, _, _, _ in entries}
-
-    rows = []
-    for pf in sorted({e[0] for e in entries}):
-        pf_entries = [e for e in entries if e[0] == pf]
-        for d in idx:
-            rets = []
-            for _, t, entry, od, cd in pf_entries:
-                if d < od:
-                    continue
-                # Closed positions freeze at their exit-date price: the
-                # realized return keeps contributing instead of vanishing.
-                px_d = _price_asof(series.get(t),
-                                   cd if (cd and d > cd) else d)
-                if px_d:
-                    rets.append((px_d - entry) / entry * 100)
-            if rets:
-                rows.append({"date": d, "portfolio": pf,
-                             "return": round(sum(rets) / len(rets), 2)})
-    # S&P 500 benchmark. Try SPY (ETF) then ^GSPC (index) as a fallback.
-    # Baseline off the FIRST available trading-day close (iloc[0]) — not the
-    # close "as of start", which is empty when start lands on a weekend/holiday
-    # and silently dropped the whole S&P line.
-    spy = get_price_series("SPY", start)
-    if spy is None or len(spy) == 0:
-        spy = get_price_series("^GSPC", start)
-    if spy is not None and len(spy):
-        base = float(spy.iloc[0])
-        for d in idx:
-            v = _price_asof(spy, d)
-            if v:
-                rows.append({"date": d, "portfolio": "S&P 500",
-                             "return": round((v - base) / base * 100, 2)})
-    return rows, start
-
-
-def _paper_perf_rows():
-    """Cumulative return % of the PAPER MIRROR from data/equity_curve.json,
-    indexed to the first recorded NetLiq point (list of {date, portfolio,
-    return} with portfolio='My Paper')."""
-    data = load_equity_curve()
-    pts = [d for d in data if d.get("netliq")]
-    if len(pts) < 1:
-        return []
-    base = pts[0]["netliq"]
-    if not base:
-        return []
-    return [{"date": d["date"], "portfolio": "My Paper",
-             "return": round((d["netliq"] - base) / base * 100, 2)} for d in pts]
-
-
-def overview_figure(positions):
-    """Unified normalized comparison: each AI portfolio + the PAPER MIRROR + S&P
-    500, all as cumulative return %. The headline 'who's winning' chart."""
-    rows, _ = _perf_rows(positions)
-    rows = (rows or []) + _paper_perf_rows()
-    if not rows:
-        return _dark_chart(px.line(), "Normalized performance — no data yet")
-    df = pd.DataFrame(rows)
-    fig = px.line(df, x="date", y="return", color="portfolio",
-                  color_discrete_map=PF_COLORS)
-    fig.update_traces(selector=dict(name="S&P 500"), line=dict(dash="dash"))
-    fig.update_traces(selector=dict(name="My Paper"),
-                      line=dict(width=3.5))
-    return _dark_chart(fig, "Normalized performance — portfolios vs paper mirror "
-                            "vs S&P 500 (cumulative %)", h=420)
-
-
-# initial scaffolding (AI portfolios only — influencers live in their own tab)
-_portfolios = portfolios_in(ai_positions(load_positions()))
-
 app = Dash(__name__)
 app.title = "Pilot Trader — Signal Monitor"
 
@@ -1309,11 +881,11 @@ app.index_string = """<!DOCTYPE html>
       ::-webkit-scrollbar-track { background: #0d1117; }
       ::-webkit-scrollbar-thumb { background: #30363d; border-radius: 5px; }
       /* --- influencer sub-tab bar ---------------------------------------- */
-      /* 12 sub-tabs do not fit one desktop row, and dcc.Tabs injects
+      /* 14 sub-tabs do not fit one desktop row, and dcc.Tabs injects
            .tab { flex: 1 1 0; min-width: 0 }
          so each tab SHRINKS below its own label width; with white-space:nowrap
          the labels then bleed into their neighbours and read as one word
-         ("IncomeSharksCelalKucukertraderstewie"). Stop the shrink, space the
+         ("IncomeSharkstraderstewieCowen(YT)"). Stop the shrink, space the
          tabs apart, and let the strip wrap onto a second row -- which also
          needs .tab-parent (overflow:hidden by default) to stop clipping it.
          These rules must stay ABOVE the max-width:760px block below: that block
@@ -1408,287 +980,6 @@ _TAB_SELECTED = {"backgroundColor": C["card"], "color": C["text"],
                  "alignItems": "center", "justifyContent": "center"}
 
 
-# --- IBKR paper portfolio (live from IB Gateway) ----------------------------
-def load_orders():
-    """Read the order ledger (data/orders.json); [] if missing/unreadable."""
-    if os.path.exists(ORDERS_FILE):
-        try:
-            with open(ORDERS_FILE) as f:
-                return json.load(f)
-        except (json.JSONDecodeError, OSError):
-            return []
-    return []
-
-
-# Cached singleton IB connection for the dashboard. Dash callbacks run in
-# multiple worker threads; a fresh connect (same clientId) per 60s refresh
-# collided when two threads/viewers overlapped. Instead we keep ONE connection
-# (clientId DASH_CLIENT_ID) on a persistent loop and serialize all access with a
-# lock, reconnecting only if the session dropped.
-_IB_LOCK = threading.Lock()
-_ib_state = {"ib": None, "loop": None}
-
-
-def _ibkr_call(fn):
-    """Run fn(ib) on the cached singleton connection under the lock. Reconnects
-    if needed. Raises on failure (caller maps that to 'Gateway offline')."""
-    if ibk is None:
-        raise RuntimeError("ibkr_connector unavailable")
-    import asyncio
-    with _IB_LOCK:
-        loop = _ib_state["loop"]
-        if loop is None or loop.is_closed():
-            loop = asyncio.new_event_loop()
-            _ib_state["loop"] = loop
-        asyncio.set_event_loop(loop)
-        ib = _ib_state["ib"]
-        if ib is None or not ib.isConnected():
-            ib = ibk.connect(client_id=DASH_CLIENT_ID, timeout=DASH_IB_TIMEOUT)
-            _ib_state["ib"] = ib
-        return fn(ib)
-
-
-def _ibkr_reset():
-    """Drop the cached connection so the next call reconnects fresh."""
-    with _IB_LOCK:
-        ib = _ib_state.get("ib")
-        if ib is not None:
-            try:
-                ib.disconnect()
-            except Exception:
-                pass
-        _ib_state["ib"] = None
-
-
-def ibkr_snapshot():
-    """Live (account, positions) via the cached singleton, or None if offline.
-    Never raises — failure resets the connection and returns None so the tab
-    degrades to 'Gateway offline'."""
-    try:
-        return _ibkr_call(lambda ib: (ibk.get_account_value(ib),
-                                      ibk.get_portfolio(ib)))
-    except Exception:        # noqa: BLE001 - offline is a normal state here
-        _ibkr_reset()
-        return None
-
-
-def _nan(v):
-    return v is None or (isinstance(v, float) and v != v)
-
-
-def _pnl_span(v, pct=False):
-    """Signed, colored money (or percent) span; '—' for None/NaN."""
-    if _nan(v):
-        return html.Span("—", style={"color": C["dim"]})
-    txt = f"{v:+.2f}%" if pct else f"${v:,.2f}"
-    return html.Span(txt, style={"color": _color(v), "fontWeight": "bold"})
-
-
-def ibkr_offline(detail="IB Gateway not reachable on 127.0.0.1:4002"):
-    return html.Div([
-        html.Span("● ", style={"color": C["red"], "fontWeight": "bold"}),
-        html.Span("Gateway offline", style={"color": C["red"],
-                                            "fontWeight": "bold"}),
-        html.Div(detail, style={"color": C["dim"], "fontSize": "0.78rem",
-                                "marginTop": "4px"}),
-    ], style={"background": C["card"], "border": f"1px solid {C['border']}",
-              "borderRadius": "8px", "padding": "14px 18px", "marginTop": "12px"})
-
-
-def ibkr_account_card(acct):
-    now = datetime.now(timezone.utc).astimezone(DISPLAY_TZ).strftime("%Y-%m-%d %H:%M:%S")
-    return html.Div(
-        style={"background": C["card"], "border": f"1px solid {C['border']}",
-               "borderRadius": "8px", "padding": "14px 18px", "minWidth": "320px",
-               "maxWidth": "460px", "marginTop": "12px"},
-        children=[
-            html.Div(f"Paper Account {acct.get('account', '')}", style={
-                "fontWeight": "bold", "fontSize": "0.95rem", "color": C["text"],
-                "marginBottom": "8px", "borderBottom": f"1px solid {C['border']}",
-                "paddingBottom": "6px", "textTransform": "uppercase",
-                "letterSpacing": "0.05em"}),
-            _stat_line("net liquidation:",
-                       html.Span(_money(acct.get("net_liquidation")),
-                                 style={"color": C["text"], "fontWeight": "bold"})),
-            _stat_line("available funds:",
-                       html.Span(_money(acct.get("available_funds")),
-                                 style={"color": C["text"]})),
-            _stat_line("total cash:",
-                       html.Span(_money(acct.get("total_cash")),
-                                 style={"color": C["text"]})),
-            _stat_line("today's P&L:", _pnl_span(acct.get("daily_pnl"))),
-            _stat_line("total P&L since start:", _pnl_span(acct.get("total_pnl"))),
-            html.Div(f"last updated {now} {DISPLAY_TZ.key.split('/')[-1]}",
-                     style={"color": C["dim"], "fontSize": "0.7rem",
-                            "marginTop": "8px"}),
-        ],
-    )
-
-
-def ibkr_positions_table(positions):
-    rows_data = []
-    for p in positions:
-        if p.get("sec_type") != "STK" or not p.get("position"):
-            continue
-        avg = p.get("avg_cost") or 0.0
-        cur = p.get("market_price") or 0.0
-        pnl_pct = ((cur - avg) / avg * 100) if avg else None
-        rows_data.append((p, pnl_pct))
-    # Sort by unrealized P&L descending.
-    rows_data.sort(key=lambda x: (x[0].get("unrealized_pnl") or 0.0), reverse=True)
-    rows = []
-    for p, pnl_pct in rows_data:
-        col = _color(pnl_pct)
-        rows.append([
-            (p["ticker"], C["blue"]),
-            f"{p['position']:g}",
-            _money(p.get("avg_cost")),
-            _money(p.get("market_price")),
-            _money(p.get("market_value")),
-            (_fmt_pct(pnl_pct), col),
-        ])
-    return _table(["Ticker", "Qty", "Avg Cost", "Current", "Mkt Value",
-                   "Unrealized P&L %"], rows, empty="No open positions.",
-                  hide_sm={1, 2, 4})   # phones: drop qty/avg-cost/mkt-value
-
-
-# Status -> color for the order tables (issues 5/9).
-_STATUS_COLOR = {
-    "filled": C["green"], "submitted": C["yellow"], "pending": C["yellow"],
-    "rejected": C["red"], "cancelled": C["dim"], "failed": C["red"],
-}
-
-
-def ibkr_pending_table(orders):
-    """Working orders waiting to execute — pending/submitted (incl. MOO orders
-    resting for the next open). Read from the ledger, no IB needed (issue 5)."""
-    pend = [o for o in orders if o.get("status") in ("pending", "submitted")]
-    pend.sort(key=lambda o: o.get("timestamp") or "", reverse=True)
-    rows = []
-    for o in pend:
-        qty = o.get("shares")
-        qtxt = f"{qty:g}" if qty else f"${o.get('quantity', 0):,.0f} notional"
-        rows.append([
-            _iso_to_local(o.get("timestamp"), "%Y-%m-%d %H:%M"),
-            (o.get("ticker", "?"), C["blue"]),
-            o.get("action", "?"),
-            qtxt,
-            (o.get("ib_status") or "queued", C["yellow"]),
-        ])
-    return _table(["Placed", "Ticker", "Action", "Qty", "IB Status"], rows,
-                  empty="No working orders (none waiting for the open).",
-                  hide_sm={0})   # phones: drop placed-timestamp
-
-
-def ibkr_history_table(orders, positions):
-    """Last 20 orders of ANY status (filled/pending/submitted/rejected/
-    cancelled/failed), color-coded by status (issue 9)."""
-    price_by_tkr = {p["ticker"]: p.get("market_price") for p in positions
-                    if p.get("market_price")}
-    allo = sorted(orders,
-                  key=lambda o: o.get("updated_at") or o.get("timestamp") or "",
-                  reverse=True)
-    rows = []
-    for o in allo[:20]:
-        tkr = o.get("ticker", "?")
-        status = o.get("status", "?")
-        fill = o.get("fill_price")
-        qty = o.get("filled_qty") or o.get("shares") or "—"
-        if fill:
-            cur = price_by_tkr.get(tkr) or get_price(tkr)
-            ret = ((cur - fill) / fill * 100) if (cur and fill) else None
-        else:
-            cur, ret = None, None
-        date = _iso_to_local(o.get("updated_at") or o.get("timestamp"),
-                             "%Y-%m-%d %H:%M")
-        rows.append([
-            date,
-            (tkr, C["blue"]),
-            o.get("action", "?"),
-            str(qty),
-            _money(fill) if fill else "—",
-            _money(cur) if cur else "—",
-            (_fmt_pct(ret), _color(ret)) if ret is not None else "—",
-            (status, _STATUS_COLOR.get(status, C["dim"])),
-        ])
-    return _table(["Date", "Ticker", "Action", "Qty", "Fill Price",
-                   "Current", "Return %", "Status"], rows,
-                  empty="No orders yet.",
-                  hide_sm={0, 3, 4})   # phones: drop date/qty/fill-price
-
-
-# --- redesign: data helpers -------------------------------------------------
-def load_equity_curve():
-    """Read data/equity_curve.json (daily NetLiq points); [] if missing."""
-    if os.path.exists(EQUITY_FILE):
-        try:
-            with open(EQUITY_FILE) as f:
-                return json.load(f) or []
-        except (json.JSONDecodeError, OSError):
-            return []
-    return []
-
-
-def _breaker_state():
-    """Read data/circuit_breaker.json; {} if missing."""
-    if os.path.exists(BREAKER_FILE):
-        try:
-            with open(BREAKER_FILE) as f:
-                return json.load(f) or {}
-        except (json.JSONDecodeError, OSError):
-            return {}
-    return {}
-
-
-def _json_safe(obj):
-    """Recursively replace NaN floats with None so a value survives the
-    dcc.Store JSON round-trip."""
-    if isinstance(obj, float):
-        return None if obj != obj else obj
-    if isinstance(obj, dict):
-        return {k: _json_safe(v) for k, v in obj.items()}
-    if isinstance(obj, list):
-        return [_json_safe(v) for v in obj]
-    return obj
-
-
-def portfolio_kpis(positions):
-    """Per-portfolio KPIs for the hero strip + leaderboard. Returns
-    (list[{label, ret, spy, delta, n_open, top}], overall_spy)."""
-    open_pos = [p for p in positions if p.get("status") == "open"]
-    by = {}
-    for p in open_pos:
-        by.setdefault(pf_of(p), []).append(p)
-    out, all_dates = [], []
-    for pf in sorted(by):
-        if pf == "unknown":          # unattributed umbrella tweets: skip KPI row
-            continue
-        ps, rets, spy_rets = by[pf], [], []
-        for p in ps:
-            r = compute_return(p["ticker"], p.get("entry_price"),
-                               p.get("trade_date"), (p.get("opened_at") or "")[:10],
-                               p.get("asset_type", "stock"))
-            d = p.get("trade_date") or (p.get("opened_at") or "")[:10]
-            if d:
-                all_dates.append(d)
-            if r:
-                rets.append((p["ticker"], r["val"]))
-                # Benchmark SPY over the SAME window as this position's return;
-                # a single min-date window overstates SPY for later entries.
-                s = spy_return_since(d) if d else None
-                if s is not None:
-                    spy_rets.append(s)
-        avg = round(sum(v for _, v in rets) / len(rets), 1) if rets else None
-        spy = round(sum(spy_rets) / len(spy_rets), 1) if spy_rets else None
-        delta = (round(avg - spy, 1)
-                 if (avg is not None and spy is not None) else None)
-        top = max(rets, key=lambda x: x[1])[0] if rets else None
-        out.append({"label": pf_label(pf), "ret": avg,
-                    "spy": spy, "delta": delta, "n_open": len(ps), "top": top})
-    overall_spy = spy_return_since(min(all_dates)) if all_dates else None
-    return out, overall_spy
-
-
 # --- redesign: components ---------------------------------------------------
 def _sep():
     """Dim ' · ' separator between status-bar segments."""
@@ -1745,10 +1036,10 @@ def _next_cron_run(now=None):
                                              microsecond=0)
 
 
-def status_row_1(store):
-    """Status bar row 1: live/stale + monitor last & next run + gateway (+halt).
+def status_row_1():
+    """Status bar row 1: live/stale + monitor last & next run.
     e.g. '● LIVE · monitor last run: 2026-06-03 14:02 CEST · next: 16:00 CEST
-    (~14m) · Gateway connected'."""
+    (~14m)'."""
     live_color, live_txt, last_txt = C["dim"], "NO DATA", "unknown"
     last = None
     try:
@@ -1770,11 +1061,8 @@ def status_row_1(store):
     nxt = _next_cron_run()
     next_local = _to_local(nxt, "%H:%M %Z")
     mins = (nxt - datetime.now(timezone.utc)).total_seconds() / 60
-    gw_ok = bool(store) and not store.get("offline")
-    gw_color = C["green"] if gw_ok else C["red"]
-    gw_txt = "Gateway connected" if gw_ok else "Gateway offline"
 
-    segs = [
+    return [
         html.Span("● ", style={"color": live_color, "fontWeight": "bold"}),
         html.Span(live_txt, style={"color": live_color, "fontWeight": "bold"}),
         _sep(),
@@ -1783,20 +1071,7 @@ def status_row_1(store):
         _sep(),
         html.Span("next: ", style={"color": C["dim"]}),
         html.Span(f"{next_local} (~{mins:.0f}m)", style={"color": C["text"]}),
-        _sep(),
-        html.Span(gw_txt, style={"color": gw_color, "fontWeight": "bold"}),
-        _sep(),
-        html.Span("Mirroring: ", style={"color": C["dim"]}),
-        html.Span(", ".join(PORTFOLIO_LABELS.get(p, p.title())
-                            for p in sorted(MIRROR_PORTFOLIOS)),
-                  style={"color": C["text"], "fontWeight": "bold"}),
     ]
-    br = _breaker_state()
-    if br.get("halted"):
-        segs += [_sep(), html.Span(
-            f"■ HALTED: {br.get('halt_reason', 'execution')}",
-            style={"color": C["red"], "fontWeight": "bold"})]
-    return segs
 
 
 def status_row_2():
@@ -1863,25 +1138,6 @@ def _kpi_tile(label, value, value_color, sub=None):
         html.Div(sub or "", style={"color": C["dim"], "fontSize": "0.7rem",
                                    "marginTop": "1px", "minHeight": "0.9rem"}),
     ])
-
-
-def leaderboard_table(kpis):
-    """Overview leaderboard: portfolio · return · vs SPY · #open · top holding,
-    sorted by return desc."""
-    rows = []
-    for k in sorted(kpis, key=lambda x: (x["ret"] is not None, x["ret"] or -1e9),
-                    reverse=True):
-        rows.append([
-            (k["label"], C["blue"]),
-            (_fmt_pct(k["ret"]), _color(k["ret"])),
-            (f"{k['delta']:+.1f}" if k["delta"] is not None else "—",
-             _color(k["delta"])),
-            str(k["n_open"]),
-            (k["top"] or "—", C["text"]),
-        ])
-    return _table(["Portfolio", "Return", "vs S&P", "# Open", "Top holding"],
-                  rows, empty="No open AI positions yet.",
-                  hide_sm={3})   # phones: drop # open
 
 
 # --- YouTube (Benjamin Cowen) analysis ------------------------------------
@@ -2842,85 +2098,6 @@ def reddit_stat_cards(rows):
                                   "gap": "10px", "marginTop": "10px"})
 
 
-def ibkr_exposure_card(orders, store):
-    """Exposure gauge: open BUY notional vs the $10k cap, + cash/invested split.
-    Exposure is NET per ticker (buys minus sells, floored at 0) — mirrors
-    order_manager._open_buy_notional, so closed positions don't count forever."""
-    net = {}
-    for o in orders:
-        if o.get("status") not in ("pending", "filled"):
-            continue
-        q = o.get("quantity", 0) or 0
-        t = o.get("ticker")
-        net[t] = net.get(t, 0.0) + (q if o.get("action") == "BUY" else -q)
-    open_buy = sum(v for v in net.values() if v > 0)
-    cap = 10_000.0
-    pct = min(open_buy / cap, 1.0) if cap else 0.0
-    bar_color = C["green"] if pct < 0.8 else C["yellow"] if pct < 1.0 else C["red"]
-    acct = (store or {}).get("account") or {}
-    nl, cash = acct.get("net_liquidation"), acct.get("total_cash")
-    invested = (nl - cash) if (nl and cash) else None
-    inv_txt = (f"  ·  invested {_money(invested)} / cash {_money(cash)}"
-               if invested is not None else "")
-    return html.Div(style={
-        "background": C["card"], "border": f"1px solid {C['border']}",
-        "borderRadius": "8px", "padding": "12px 16px", "marginTop": "4px"},
-        children=[
-            html.Div([
-                html.Span("Open BUY exposure  ", style={"color": C["dim"],
-                                                        "fontSize": "0.8rem"}),
-                html.Span(f"{_money(open_buy)} / {_money(cap)} "
-                          f"({pct*100:.0f}%)",
-                          style={"color": bar_color, "fontWeight": "bold",
-                                 "fontSize": "0.82rem"}),
-                html.Span(inv_txt, style={"color": C["dim"],
-                                          "fontSize": "0.72rem"}),
-            ]),
-            html.Div(style={"background": C["bg"], "borderRadius": "5px",
-                            "height": "10px", "marginTop": "7px",
-                            "border": f"1px solid {C['border']}",
-                            "overflow": "hidden"},
-                     children=html.Div(style={
-                         "width": f"{pct*100:.1f}%", "height": "100%",
-                         "background": bar_color})),
-        ])
-
-
-def ibkr_funnel(orders):
-    """Order-outcome funnel from the ledger: total → filled / pending / rejected
-    / cancelled."""
-    n = len(orders)
-    cnt = {s: sum(1 for o in orders if o.get("status") == s)
-           for s in ("filled", "pending", "submitted", "rejected", "cancelled",
-                     "failed")}
-    working = cnt["pending"] + cnt["submitted"]
-    parts = [("orders", n, C["text"]), ("filled", cnt["filled"], C["green"]),
-             ("working", working, C["yellow"]),
-             ("rejected", cnt["rejected"], C["red"]),
-             ("cancelled", cnt["cancelled"], C["dim"])]
-    children = []
-    for i, (label, val, col) in enumerate(parts):
-        if i:
-            children.append(html.Span(" → ", style={"color": C["dim"]}))
-        children.append(html.Span(f"{label} {val}",
-                                   style={"color": col, "fontWeight": "bold"}))
-    return html.Div(children, style={"fontSize": "0.82rem", "padding": "6px 2px"})
-
-
-def ibkr_halt_banner():
-    """Red banner if the circuit breaker has halted execution; else nothing."""
-    br = _breaker_state()
-    if not br.get("halted"):
-        return html.Span("")
-    return html.Div(
-        f"■ EXECUTION HALTED — {br.get('halt_reason', 'circuit breaker')} "
-        f"(resets next UTC day)",
-        style={"background": C["sell_bg"], "color": C["red"],
-               "border": f"1px solid {C['red']}", "borderRadius": "6px",
-               "padding": "8px 12px", "marginTop": "8px", "fontWeight": "bold",
-               "fontSize": "0.82rem"})
-
-
 # --- system status bar: Docker container stats + restart (via Docker socket) -
 # Same approach as ~/paper_trader/dashboard.py: talk to the Docker daemon over
 # its Unix socket (mounted into the container) for true per-container CPU/RAM.
@@ -3017,15 +2194,13 @@ app.layout = html.Div(
     style={"backgroundColor": C["bg"], "color": C["text"], "fontFamily": MONO,
            "minHeight": "100vh", "padding": "20px 26px"},
     children=[
-        dcc.Store(id="ibkr-store"),
-        dcc.Store(id="selected-pf", data=_portfolios[0]),
         dcc.Interval(id="interval", interval=REFRESH_MS, n_intervals=0),
 
         html.H2("Pilot Trader", style={"margin": 0, "color": C["text"],
                                        "fontFamily": MONO, "fontSize": "1.3rem"}),
 
         # System status bar — two clean rows in one panel:
-        #   row 1: live/stale · monitor last+next run · gateway
+        #   row 1: live/stale · monitor last+next run
         #   row 2: container CPU/RAM · GetXAPI credits · API costs · prices
         html.Div(style={"background": C["card"],
                         "border": f"1px solid {C['border']}",
@@ -3045,159 +2220,9 @@ app.layout = html.Div(
         html.Div(id="summary", style={"color": C["dim"], "fontSize": "0.76rem",
                                       "marginTop": "8px"}),
 
-        # Top-level tabs: Overview (landing; includes the paper account) · AI
-        # Portfolios · Influencers · Reddit. Wrapped in a horizontally
-        # scrollable container so the bar never wraps/breaks on mobile.
-        html.Div(style={"overflowX": "auto", "WebkitOverflowScrolling": "touch",
-                        "marginTop": "12px"},
-                 children=dcc.Tabs(
-                     id="main-tabs", value="overview", mobile_breakpoint=0,
-                     style={"display": "flex", "flexWrap": "nowrap"},
-                     children=[
-                         dcc.Tab(label="Overview", value="overview",
-                                 style=_TAB_STYLE, selected_style=_TAB_SELECTED),
-                         dcc.Tab(label="AI Portfolios", value="ai",
-                                 style=_TAB_STYLE, selected_style=_TAB_SELECTED),
-                         dcc.Tab(label="Influencers", value="influencers",
-                                 style=_TAB_STYLE, selected_style=_TAB_SELECTED),
-                         dcc.Tab(label="Reddit stratégiák", value="reddit",
-                                 style=_TAB_STYLE, selected_style=_TAB_SELECTED),
-                     ])),
-
-        # Overview tab (landing): normalized chart + leaderboard + the merged
-        # My Paper Account view (live IB Gateway reads; ledger-backed tables
-        # still render when the gateway is offline).
-        html.Div(id="overview-section", children=[
-            html.Div("Normalized Performance — portfolios vs paper mirror vs S&P",
-                     style=_SECTION_H),
-            dcc.Graph(id="overview-chart",
-                      config={"displayModeBar": False, "responsive": True},
-                      style={"width": "100%"}),
-            html.Div("Leaderboard", style=_SECTION_H),
-            html.Div(id="overview-leaderboard",
-                     style={"marginTop": "4px", "overflowX": "auto"}),
-
-            # --- My Paper Account (merged from the former tab) --------------
-            html.Div(id="ibkr-halt"),
-            html.Div("My Paper Account — Account Summary", style=_SECTION_H),
-            html.Div(id="ibkr-account"),
-            html.Div("Exposure", style=_SECTION_H),
-            html.Div(id="ibkr-exposure", style={"marginTop": "4px"}),
-            html.Div("Open Positions", style=_SECTION_H),
-            html.Div(id="ibkr-positions",
-                     style={"marginTop": "4px", "overflowX": "auto"}),
-            html.Div("Pending / Working Orders", style=_SECTION_H),
-            html.Div(id="ibkr-pending",
-                     style={"marginTop": "4px", "overflowX": "auto"}),
-            html.Div("Order Outcomes", style=_SECTION_H),
-            html.Div(id="ibkr-funnel", style={"marginTop": "4px"}),
-            html.Div("Order History (last 20)", style=_SECTION_H),
-            html.Div(id="ibkr-history",
-                     style={"marginTop": "4px", "overflowX": "auto"}),
-        ]),
-
-        html.Div(id="ai-section", style={"display": "none"}, children=[
-
-        # Click a card to select a portfolio (one selected at a time); the
-        # Holdings pie + position detail below reflect the selection.
-        html.Div("Portfolio Summary  ", style=_SECTION_H),
-        html.Div("click a portfolio card to view its holdings",
-                 style={"color": C["dim"], "fontSize": "0.72rem",
-                        "marginTop": "4px"}),
-        html.Div(id="portfolio-summary",
-                 style={"display": "flex", "flexWrap": "wrap", "gap": "14px",
-                        "marginTop": "12px"}),
-
-        # (Performance chart lives on the Overview tab — not duplicated here.)
-        # Holdings of the SELECTED card. Pie (40%, fixed) + position detail
-        # table (flexible) side by side; stacks vertically on mobile (.pie-row).
-        html.Div("Holdings", style=_SECTION_H),
-        html.Div(className="pie-row",
-                 style={"display": "flex", "flexDirection": "row",
-                        "alignItems": "flex-start", "gap": "20px",
-                        "marginTop": "6px", "flexWrap": "wrap"},
-                 children=[
-                     html.Div(className="pie-col",
-                              style={"flex": "0 0 40%", "maxWidth": "40%",
-                                     "minWidth": "300px"},
-                              children=[
-                                  dcc.Graph(id="holdings-pie",
-                                            config={"displayModeBar": False,
-                                                    "responsive": True},
-                                            style={"width": "100%",
-                                                   "height": "380px"}),
-                              ]),
-                     html.Div(id="position-detail",
-                              style={"flex": "1", "minWidth": "0",
-                                     "overflowX": "auto"}),
-                 ]),
-
-        html.Div("Recent Closed Trades", style=_SECTION_H),
-        html.Div(id="closed-trades", style={"marginTop": "4px",
-                                            "overflowX": "auto"}),
-
-        html.Div("All Signals", id="signals-header", style=_SECTION_H),
-        html.Div([
-            html.Span("Legend: ", style={"color": C["dim"]}),
-            html.Span("*", style={"color": C["text"], "fontWeight": "bold"}),
-            html.Span(" estimated entry (close on trade date)   ",
-                      style={"color": C["dim"]}),
-            html.Span("?", style={"color": C["dim"], "fontWeight": "bold"}),
-            html.Span(" low/none confidence (excluded from positions.json)",
-                      style={"color": C["dim"]}),
-        ], style={"fontSize": "0.72rem", "marginTop": "8px"}),
-        dash_table.DataTable(
-            id="signals-table",
-            columns=TABLE_COLUMNS,
-            sort_action="native",
-            filter_action="none",
-            page_size=25,
-            markdown_options={"link_target": "_blank"},
-            style_table={"overflowX": "auto", "marginTop": "10px"},
-            style_header={
-                "backgroundColor": C["card"], "color": C["text"],
-                "fontWeight": "bold", "fontFamily": MONO, "fontSize": "11px",
-                "border": f"1px solid {C['border']}", "textAlign": "left",
-                "letterSpacing": "0.04em",
-            },
-            style_cell={
-                "backgroundColor": C["bg"], "color": C["text"],
-                "fontFamily": MONO, "fontSize": "12px", "textAlign": "left",
-                "border": f"1px solid {C['border']}", "padding": "6px 8px",
-                "whiteSpace": "normal", "height": "auto", "maxWidth": "520px",
-            },
-            style_data={"backgroundColor": C["bg"]},
-            style_filter={"backgroundColor": C["card"], "color": C["text"]},
-            style_cell_conditional=[
-                {"if": {"column_id": "reasoning"}, "minWidth": "320px",
-                 "color": C["dim"]},
-            ],
-            style_data_conditional=[
-                {"if": {"filter_query": "{signal_type} = buy"},
-                 "backgroundColor": C["buy_bg"]},
-                {"if": {"filter_query": "{signal_type} = sell"},
-                 "backgroundColor": C["sell_bg"]},
-                {"if": {"filter_query": "{return_val} > 0",
-                        "column_id": "return_pct"},
-                 "color": C["green"], "fontWeight": "bold"},
-                {"if": {"filter_query": "{return_val} < 0",
-                        "column_id": "return_pct"},
-                 "color": C["red"], "fontWeight": "bold"},
-                {"if": {"column_id": "ticker"}, "color": C["blue"],
-                 "fontWeight": "bold"},
-                # Low/none-confidence signals (gated out of positions.json) are
-                # dimmed; their confidence cell carries a "?" marker.
-                {"if": {"filter_query": '{confidence} contains "?"'},
-                 "color": C["dim"], "fontWeight": "normal"},
-            ],
-        ),
-
-        ]),   # end ai-section
-
-        # --- Influencers tab -- hidden until selected ------------------------
-        html.Div(id="influencer-section", style={"display": "none"}, children=[
-            # One sub-tab per influencer handle (IncomeSharks / CelalKucuker /
-            # traderstewie): trade-call view with winrate + positions + signals.
+            # One sub-tab per destination: influencer trade-call accounts
+            # (IncomeSharks / traderstewie), the analysis-digest feeds, and the
+            # Consensus panel. Reddit strategies get their own tab at the end.
             html.Div(style={"overflowX": "auto",
                             "WebkitOverflowScrolling": "touch"},
                      children=dcc.Tabs(
@@ -3212,8 +2237,6 @@ app.layout = html.Div(
                              dcc.Tab(label="Consensus", value="Consensus",
                                      style=_TAB_STYLE, selected_style=_TAB_SELECTED),
                              dcc.Tab(label="IncomeSharks", value="IncomeSharks",
-                                     style=_TAB_STYLE, selected_style=_TAB_SELECTED),
-                             dcc.Tab(label="CelalKucuker", value="CelalKucuker",
                                      style=_TAB_STYLE, selected_style=_TAB_SELECTED),
                              dcc.Tab(label="traderstewie", value="traderstewie",
                                      style=_TAB_STYLE, selected_style=_TAB_SELECTED),
@@ -3237,6 +2260,8 @@ app.layout = html.Div(
                                      style=_TAB_STYLE, selected_style=_TAB_SELECTED),
                              dcc.Tab(label="Geoff Kendrick", value="GeoffKendrick",
                                      style=_TAB_STYLE, selected_style=_TAB_SELECTED),
+                             dcc.Tab(label="Reddit stratégiák", value="reddit",
+                                     style=_TAB_STYLE, selected_style=_TAB_SELECTED),
                          ])),
 
             # Consensus view: every digest feed's CURRENT VIEW side by side.
@@ -3249,7 +2274,7 @@ app.layout = html.Div(
             # best performer), shown for whichever sub-tab is selected.
             html.Div(id="influencer-header"),
 
-            # Trade-call view (IncomeSharks / CelalKucuker).
+            # Trade-call view (IncomeSharks / traderstewie).
             html.Div(id="influencer-trade-view", children=[
             html.Div(id="influencer-pos-header", style=_SECTION_H),
             html.Div(id="influencer-winrate"),
@@ -3468,15 +2493,11 @@ app.layout = html.Div(
                          style=_SECTION_H),
                 html.Div(id="kendrick-summaries", style={"marginTop": "4px"}),
             ]),
-        ]),
 
-        # (My Paper Account is no longer a separate tab — its components now
-        # render inside the Overview tab, fed by the same ibkr-store + ledger.)
-
-        # --- Reddit strategies tab -- hidden until selected ------------------
+        # --- Reddit strategies view -- hidden until selected -----------------
         # Strategies mined by scripts/reddit_miner.py (data/reddit_strategies.json):
         # stat strip + filters + a click-to-expand table.
-        html.Div(id="reddit-section", style={"display": "none"}, children=[
+        html.Div(id="reddit-view", style={"display": "none"}, children=[
             html.Div("Reddit stratégiák — koncentrált kereskedési stratégiák "
                      "(r/algotrading + crypto/TA subok)", style=_SECTION_H),
             html.Div(id="reddit-stats"),
@@ -3515,20 +2536,6 @@ app.layout = html.Div(
 
 
 @app.callback(
-    Output("overview-section", "style"),
-    Output("ai-section", "style"),
-    Output("influencer-section", "style"),
-    Output("reddit-section", "style"),
-    Input("main-tabs", "value"),
-)
-def switch_main_tab(tab):
-    show, hide = {"display": "block"}, {"display": "none"}
-    order = {"overview": 0, "ai": 1, "influencers": 2, "reddit": 3}
-    i = order.get(tab, 0)
-    return tuple(show if j == i else hide for j in range(4))
-
-
-@app.callback(
     Output("reddit-stats", "children"),
     Output("reddit-table", "children"),
     Output("reddit-sub", "options"),
@@ -3559,84 +2566,12 @@ def render_reddit(_n, min_conf, sub, tag):
 
 
 @app.callback(
-    Output("ibkr-account", "children"),
-    Output("ibkr-positions", "children"),
-    Output("ibkr-pending", "children"),
-    Output("ibkr-history", "children"),
-    Output("ibkr-exposure", "children"),
-    Output("ibkr-funnel", "children"),
-    Output("ibkr-halt", "children"),
-    Input("ibkr-store", "data"),
-    Input("main-tabs", "value"),
-)
-def refresh_ibkr(store, tab):
-    # Renders from the SHARED ibkr-store (no own IB connection); skips rendering
-    # work when the tab isn't visible. The order tables + exposure + funnel + halt
-    # are ledger/file-backed and render even when the gateway is offline. The
-    # paper account now lives on the Overview tab (merged from its own tab).
-    if tab != "overview":
-        raise PreventUpdate
-    orders = load_orders()
-    halt = ibkr_halt_banner()
-    funnel = ibkr_funnel(orders)
-    pending = ibkr_pending_table(orders)
-    if not store or store.get("offline"):
-        return (ibkr_offline(), "", pending, ibkr_history_table(orders, []),
-                ibkr_exposure_card(orders, store), funnel, halt)
-    acct, positions = store.get("account") or {}, store.get("positions") or []
-    return (ibkr_account_card(acct),
-            ibkr_positions_table(positions),
-            pending,
-            ibkr_history_table(orders, positions),
-            ibkr_exposure_card(orders, store),
-            funnel, halt)
-
-
-@app.callback(
-    Output("ibkr-store", "data"),
-    Input("interval", "n_intervals"),
-)
-def update_ibkr_store(_n):
-    """ONE shared IB fetch per 60s on the singleton connection — feeds the
-    status bar (always) and the Overview tab's paper-account view. Records a
-    daily NetLiq point for the equity curve."""
-    snap = ibkr_snapshot()
-    if snap is None:
-        return {"offline": True}
-    acct, positions = snap
-    try:
-        ibk.snapshot_equity(acct.get("net_liquidation"), acct.get("account", ""))
-    except Exception:        # noqa: BLE001 - snapshotting must never break the UI
-        pass
-    return _json_safe({"offline": False, "account": acct, "positions": positions})
-
-
-@app.callback(
     Output("status-row-1", "children"),
     Output("status-row-2", "children"),
     Input("interval", "n_intervals"),
-    Input("ibkr-store", "data"),
 )
-def refresh_status(_n, store):
-    return status_row_1(store), status_row_2()
-
-
-@app.callback(
-    Output("overview-chart", "figure"),
-    Output("overview-leaderboard", "children"),
-    Input("interval", "n_intervals"),
-    Input("main-tabs", "value"),
-)
-def refresh_overview(_n, tab):
-    if tab != "overview":
-        raise PreventUpdate
-    positions = ai_positions(load_positions())
-    # Warm the current-price cache for the leaderboard (the removed hero-strip
-    # callback used to do this on the shared interval).
-    warm_prices({_yf_symbol(p["ticker"], p.get("asset_type", "stock"))
-                 for p in positions} | {"SPY"})
-    kpis, _ = portfolio_kpis(positions)
-    return overview_figure(positions), leaderboard_table(kpis)
+def refresh_status(_n):
+    return status_row_1(), status_row_2()
 
 
 def _influencer_header(title, account):
@@ -3665,6 +2600,7 @@ def _influencer_header(title, account):
     Output("cowen-x-view", "style"),
     Output("glassnode-view", "style"),
     Output("kendrick-view", "style"),
+    Output("reddit-view", "style"),
     Output("influencer-pos-header", "children"),
     Output("influencer-sig-header", "children"),
     Input("influencer-subtabs", "value"),
@@ -3672,138 +2608,32 @@ def _influencer_header(title, account):
 def switch_influencer_subtab(account):
     show, hide = {"display": "block"}, {"display": "none"}
     if account == "Consensus":          # cross-feed summary, renders itself
-        return (hide,) * 11 + ("", "")
+        return (hide,) * 12 + ("", "")
     if account == "BenCowen":           # YouTube analysis view, not a trade view
-        return hide, show, hide, hide, hide, hide, hide, hide, hide, hide, hide, "", ""
+        return hide, show, hide, hide, hide, hide, hide, hide, hide, hide, hide, hide, "", ""
     if account == "JesseOlson":         # YouTube analysis view, not a trade view
-        return hide, hide, show, hide, hide, hide, hide, hide, hide, hide, hide, "", ""
+        return hide, hide, show, hide, hide, hide, hide, hide, hide, hide, hide, hide, "", ""
     if account == "KiYoungJu":          # X analysis view, not a trade view
-        return hide, hide, hide, show, hide, hide, hide, hide, hide, hide, hide, "", ""
+        return hide, hide, hide, show, hide, hide, hide, hide, hide, hide, hide, hide, "", ""
     if account == "JoaoWedson":         # X analysis view, not a trade view
-        return hide, hide, hide, hide, show, hide, hide, hide, hide, hide, hide, "", ""
+        return hide, hide, hide, hide, show, hide, hide, hide, hide, hide, hide, hide, "", ""
     if account == "DorkChicken":        # X analysis view, not a trade view
-        return hide, hide, hide, hide, hide, show, hide, hide, hide, hide, hide, "", ""
+        return hide, hide, hide, hide, hide, show, hide, hide, hide, hide, hide, hide, "", ""
     if account == "DaanCrypto":         # X analysis view, not a trade view
-        return hide, hide, hide, hide, hide, hide, show, hide, hide, hide, hide, "", ""
+        return hide, hide, hide, hide, hide, hide, show, hide, hide, hide, hide, hide, "", ""
     if account == "DonAlt":             # X analysis view, not a trade view
-        return hide, hide, hide, hide, hide, hide, hide, show, hide, hide, hide, "", ""
+        return hide, hide, hide, hide, hide, hide, hide, show, hide, hide, hide, hide, "", ""
     if account == "CowenX":             # X analysis view, not a trade view
-        return hide, hide, hide, hide, hide, hide, hide, hide, show, hide, hide, "", ""
+        return hide, hide, hide, hide, hide, hide, hide, hide, show, hide, hide, hide, "", ""
     if account == "Glassnode":          # X analysis view, not a trade view
-        return hide, hide, hide, hide, hide, hide, hide, hide, hide, show, hide, "", ""
+        return hide, hide, hide, hide, hide, hide, hide, hide, hide, show, hide, hide, "", ""
     if account == "GeoffKendrick":      # X topic-search analysis view
-        return hide, hide, hide, hide, hide, hide, hide, hide, hide, hide, show, "", ""
-    return (show, hide, hide, hide, hide, hide, hide, hide, hide, hide, hide,
+        return hide, hide, hide, hide, hide, hide, hide, hide, hide, hide, show, hide, "", ""
+    if account == "reddit":             # Reddit strategies view, renders itself
+        return hide, hide, hide, hide, hide, hide, hide, hide, hide, hide, hide, show, "", ""
+    return (show, hide, hide, hide, hide, hide, hide, hide, hide, hide, hide, hide,
             _influencer_header(f"{account} — Open Positions", account),
             _influencer_header(f"{account} — Signals", account))
-
-
-@app.callback(
-    Output("selected-pf", "data"),
-    Input({"type": "pf-card", "index": ALL}, "n_clicks"),
-    prevent_initial_call=True,
-)
-def select_pf(_clicks):
-    """Set the active portfolio when a summary card is clicked. The cards are
-    re-rendered every 60s (refresh), which resets their n_clicks to 0 and fires
-    this callback with a 0/None value — those re-render events are ignored so
-    the current selection survives; only a real click (n_clicks >= 1) updates
-    it. ctx.triggered_id is the clicked card's pattern id -> its `index` = pf."""
-    trig = ctx.triggered
-    if not trig or not trig[0].get("value"):
-        raise PreventUpdate
-    return ctx.triggered_id["index"]
-
-
-@app.callback(
-    Output("signals-table", "data"),
-    Output("summary", "children"),
-    Output("portfolio-summary", "children"),
-    Output("closed-trades", "children"),
-    Output("signals-header", "children"),
-    Input("interval", "n_intervals"),
-    Input("selected-pf", "data"),
-)
-def refresh(_n, portfolio):
-    df = load_trades()
-    positions = ai_positions(load_positions())   # AI views exclude influencers
-    # Fall back to the first card if the stored selection no longer exists
-    # (e.g. a portfolio closed all its positions between refreshes).
-    pfs = portfolios_in(positions)
-    if portfolio not in pfs:
-        portfolio = pfs[0]
-    # Batch live-price fetch for every symbol in play (one yf.download).
-    warm_prices({_yf_symbol(p["ticker"], p.get("asset_type", "stock"))
-                 for p in positions} | {"SPY"})
-    cards = portfolio_cards(positions, selected=portfolio)   # warm price cache
-    closed = closed_trades_table(positions, portfolio)
-    signals_header = f"{pf_label(portfolio)} — Signals"
-
-    if not df.empty:
-        df = df[~df["account"].isin(NON_AI_ACCOUNTS)]
-        # Filter to the portfolio selected in the Holdings sub-tab (effective
-        # portfolio = explicit value, else the account default — same as pf_of).
-        # Effective grouping key per signal — must match pf_of()/_pf_key() so the
-        # namespaced umbrella sub-tabs (e.g. "ralliesarena|grok") filter correctly.
-        eff_pf = df.apply(
-            lambda r: _pf_key(
-                r["account"],
-                r["portfolio"] if isinstance(r["portfolio"], str) and r["portfolio"]
-                else ACCOUNT_DEFAULT_PF.get(r["account"], "unknown")),
-            axis=1)
-        df = df[eff_pf == portfolio]
-    if df.empty:
-        return ([], "No signals yet.", cards, closed, signals_header)
-
-    df = df.sort_values("timestamp", ascending=False)
-    # Mark low/none-confidence rows (they are excluded from positions.json).
-    df["confidence"] = df["confidence"].apply(
-        lambda c: f"{c} ?" if isinstance(c, str) and c in ("low", "none") else c)
-
-    def row_return(r):
-        tks = r.get("tickers")
-        if not (isinstance(tks, list) and len(tks) == 1):
-            return ("", None)
-        # DataFrame rows carry NaN where trades.json had null -- coerce back to
-        # None so the guards and the estimated-entry (*) fallback behave.
-        ep = r.get("entry_price")
-        ep = None if (ep is None or ep != ep) else ep
-        td = r.get("trade_date")
-        td = td if isinstance(td, str) and td else None
-        if not ep and r.get("signal_type") != "buy":
-            return ("", None)
-        at = r.get("asset_type")
-        res = compute_return(tks[0], ep, td, r["timestamp"][:10],
-                             at if isinstance(at, str) else "stock")
-        if not res:
-            return ("", None)
-        return (f"{res['val']:+.1f}%" + ("*" if res["estimated"] else ""),
-                res["val"])
-
-    returns = df.apply(row_return, axis=1)
-    df["return_pct"] = [s for s, _ in returns]
-    df["return_val"] = [v for _, v in returns]
-
-    summary = (f"{len(df)} signals across {df['account'].nunique()} accounts · "
-               f"{len(positions)} reconciled positions · "
-               f"last tweet {_iso_to_local(df['timestamp'].iloc[0], '%Y-%m-%d %H:%M %Z')}")
-    cols = [c["id"] for c in TABLE_COLUMNS] + ["return_val"]
-    return (df[cols].to_dict("records"), summary, cards, closed, signals_header)
-
-
-@app.callback(
-    Output("holdings-pie", "figure"),
-    Output("position-detail", "children"),
-    Input("interval", "n_intervals"),
-    Input("selected-pf", "data"),
-)
-def refresh_pie(_n, portfolio):
-    positions = load_positions()
-    pfs = portfolios_in(ai_positions(positions))
-    if portfolio not in pfs:             # stale selection -> first card
-        portfolio = pfs[0]
-    return (holdings_figure(positions, portfolio),
-            position_detail_table(positions, portfolio))
 
 
 @app.callback(
@@ -3912,16 +2742,6 @@ WARM_INTERVAL_S = 1800
 
 def _warm_all():
     positions = load_positions()
-    ai = ai_positions(positions)
-    try:
-        warm_prices({_yf_symbol(p["ticker"], p.get("asset_type", "stock"))
-                     for p in ai} | {"SPY"})
-    except Exception:
-        pass
-    try:
-        overview_figure(ai)          # warms _series_cache via _perf_rows
-    except Exception:
-        pass
     infl = influencer_positions(positions)
     try:
         warm_prices({_yf_symbol(p["ticker"], p.get("asset_type", "stock"))

@@ -95,19 +95,24 @@ def test_trim_halves_when_no_size():
     assert p["size_pct"] == 4.0
 
 
-def test_null_portfolio_maps_to_account_default():
-    """A null-portfolio aifinancelabs event must key to 'deepseek', and merge
-    with an explicit-deepseek event into ONE position (no double-count)."""
+def test_null_portfolio_maps_to_account_default(monkeypatch):
+    """A null-portfolio event for an account with a configured default must key
+    to that default, and merge with an explicit-default event into ONE position
+    (no double-count). ACCOUNT_DEFAULT_PF is empty in production now (no
+    portfolio-kind account remains -- see accounts.py); monkeypatched here so
+    this fallback branch of reconcile.pf_of() keeps regression coverage."""
+    monkeypatch.setitem(reconcile.ACCOUNT_DEFAULT_PF, "fakeportfoliobot",
+                        "deepseek")
     pos = _run([
-        _event("aifinancelabs", "AMD", "buy", "2026-01-01T00:00:00Z",
+        _event("fakeportfoliobot", "AMD", "buy", "2026-01-01T00:00:00Z",
                portfolio=None, entry=150),
-        _event("aifinancelabs", "AMD", "position", "2026-01-05T00:00:00Z",
+        _event("fakeportfoliobot", "AMD", "position", "2026-01-05T00:00:00Z",
                portfolio="deepseek", size=6),
     ])
-    assert ("aifinancelabs", "deepseek", "AMD") in pos
-    assert ("aifinancelabs", None, "AMD") not in pos
+    assert ("fakeportfoliobot", "deepseek", "AMD") in pos
+    assert ("fakeportfoliobot", None, "AMD") not in pos
     assert len(pos) == 1
-    assert pos[("aifinancelabs", "deepseek", "AMD")]["size_pct"] == 6
+    assert pos[("fakeportfoliobot", "deepseek", "AMD")]["size_pct"] == 6
 
 
 def test_low_confidence_gated_out():
