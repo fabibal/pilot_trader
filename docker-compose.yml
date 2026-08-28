@@ -7,13 +7,16 @@ services:
     container_name: pilot_trader_dashboard
     restart: unless-stopped
 
-    # Host networking is REQUIRED for the IBKR Paper Portfolio tab: IB Gateway
-    # listens on the host's 127.0.0.1:4002 and only trusts loopback
-    # (jts.ini TrustedIPs=127.0.0.1), so a bridge-networked container (different
-    # source IP) is rejected. With host mode the container shares the host net
-    # namespace -> connects as 127.0.0.1 -> trusted. `ports:` is incompatible
-    # with host mode (and unnecessary): dashboard.py binds 0.0.0.0:8051 directly
-    # on the host, so it's still reachable at e.g. <LAN_IP>:8051.
+    # Host networking: originally REQUIRED for the IBKR Paper Portfolio tab (IB
+    # Gateway only trusts loopback, so a bridge-networked container's different
+    # source IP was rejected). That integration was retired 2026-08-27 (see
+    # CLAUDE.md "IBKR mirror (retired)") — this dashboard no longer talks to IB
+    # Gateway at all, so host mode is no longer strictly required. Left as-is
+    # rather than switching to bridge + `ports:`, since that also means
+    # re-plumbing the NPM/ufw setup documented in CLAUDE.md; revisit if anyone
+    # wants to simplify it deliberately. `ports:` stays incompatible with host
+    # mode (and unnecessary): dashboard.py binds 0.0.0.0:8051 directly on the
+    # host, so it's still reachable at e.g. <LAN_IP>:8051.
     network_mode: host
 
     environment:
@@ -41,8 +44,11 @@ services:
       resources:
         limits:
           cpus: "0.5"
-          # 512M (was 384M): ib_insync + an IB API connection per refresh +
-          # the background price-cache warmer; 384M ran ~91% full (OOM risk).
+          # 512M (was 384M): originally ib_insync + an IB API connection per
+          # refresh + the background price-cache warmer; 384M ran ~91% full
+          # (OOM risk). The IBKR piece is gone (2026-08-27), but left at 512M
+          # rather than reverting unmeasured — the price-cache warmer alone
+          # was never isolated from the old figure.
           memory: 512M
 
     logging:
