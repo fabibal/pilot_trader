@@ -1161,8 +1161,8 @@ def load_youtube_summaries():
 def _load_current_view(path):
     """Rolling 'current view' synthesis written by twitter_digest.py /
     youtube_monitor.py for one feed (see CURRENT_VIEW_SCHEMA in either file).
-    Missing, corrupt, or not-yet-generated file -> {} (the banner just doesn't
-    render -- see _current_view_banner)."""
+    Missing, corrupt, or not-yet-generated file -> {} (consensus_section then
+    renders a dimmed 'no view generated yet' row -- see _consensus_row)."""
     try:
         with open(path) as f:
             data = json.load(f)
@@ -1240,47 +1240,6 @@ def _yt_card(v):
                                                 "fontSize": "0.7rem"})]
                   + [_yt_chip(t) for t in themes],
                   style={"marginTop": "6px"}) if themes else html.Span()),
-    ])
-
-
-def _current_view_banner(view):
-    """Rolling 'current stance' banner (see CURRENT_VIEW_SCHEMA in
-    twitter_digest.py / youtube_monitor.py), shown above a feed's post/video
-    cards. A full-border card (vs. the individual cards' left-accent border)
-    so it reads as a distinct header rather than another entry in the list.
-    Empty span if no view has been generated yet (e.g. right after the feed
-    was added, before its first cron run that processed new posts)."""
-    if not view:
-        return html.Span()
-    sent = (view.get("overall_sentiment") or "neutral").lower()
-    color = _YT_SENTIMENT.get(sent, C["dim"])
-    based_on = view.get("based_on") or {}
-    count, from_date, to_date = (based_on.get("count"), based_on.get("from_date"),
-                                 based_on.get("to_date"))
-    stamp = (f"as of {to_date}  ·  based on {count} posts since {from_date}"
-             if count else "")
-    return html.Div(style={
-        "background": C["card"], "border": f"1px solid {color}",
-        "borderRadius": "8px", "padding": "12px 16px", "marginTop": "10px"},
-        children=[
-        html.Div(style={"display": "flex", "justifyContent": "space-between",
-                        "alignItems": "flex-start", "gap": "12px"}, children=[
-            html.Span("CURRENT VIEW", style={"color": C["dim"],
-                      "fontSize": "0.68rem", "fontWeight": "bold",
-                      "letterSpacing": "0.06em"}),
-            html.Span(sent.upper(), style={
-                "background": color, "color": C["bg"], "borderRadius": "10px",
-                "padding": "1px 10px", "fontSize": "0.66rem", "fontWeight": "bold",
-                "whiteSpace": "nowrap", "letterSpacing": "0.04em"}),
-        ]),
-        html.Div(view.get("stance_summary") or "", style={"color": C["text"],
-                 "fontSize": "0.84rem", "marginTop": "8px", "lineHeight": "1.5"}),
-        (html.Div(view.get("shift_note"), style={"color": C["yellow"],
-                  "fontSize": "0.76rem", "marginTop": "8px", "lineHeight": "1.4",
-                  "fontStyle": "italic"})
-         if view.get("shift_note") else html.Span()),
-        (html.Div(stamp, style={"color": C["dim"], "fontSize": "0.68rem",
-                  "marginTop": "8px"}) if stamp else html.Span()),
     ])
 
 
@@ -1849,7 +1808,11 @@ def _consensus_row(label, view, unit="posts"):
     many fed the synthesis, and its shift_note -- the digests' one-line
     headline, which is the shift where there was one and otherwise the sharpest
     concrete point of the current stance (never a "no change" placeholder), and
-    the one field no sub-tab lets you compare across feeds."""
+    the one field no sub-tab lets you compare across feeds. When a
+    stance_summary exists the row becomes a native <details> (no callback) that
+    expands to show it in full -- that paragraph is what the old per-sub-tab
+    CURRENT VIEW banner used to show; collapsed by default is what keeps 9
+    sources a glance instead of a wall of text."""
     sent = (view.get("overall_sentiment") or "").lower()
     color = _YT_SENTIMENT.get(sent, C["dim"])
     based_on = view.get("based_on") or {}
@@ -1863,10 +1826,11 @@ def _consensus_row(label, view, unit="posts"):
     # Rows top-align, not centre: shift_note is shown IN FULL and wraps to 2-3
     # lines on a narrow window, which would otherwise leave the chip and dates
     # floating mid-row.
-    return html.Div(style={
+    row_style = {
         "display": "grid", "gridTemplateColumns": _CONSENSUS_GRID, "gap": "10px",
         "alignItems": "start", "padding": "10px 12px",
-        "borderBottom": f"1px solid {C['border']}"}, children=[
+        "borderBottom": f"1px solid {C['border']}"}
+    cells = [
         html.Div(label, style={"color": C["text"], "fontSize": "0.78rem",
                                "fontWeight": "bold"}),
         html.Div(html.Span(sent.upper() if sent else "—", style={
@@ -1880,7 +1844,16 @@ def _consensus_row(label, view, unit="posts"):
                         "whiteSpace": "nowrap"}),
         html.Div(note, style={"color": C["dim"] if not view else C["text"],
                               "fontSize": "0.74rem", "lineHeight": "1.4"}),
-    ])
+    ]
+    stance = view.get("stance_summary")
+    if not stance:
+        return html.Div(cells, style=row_style)
+    summary = html.Summary(cells, style={**row_style, "cursor": "pointer",
+                                         "listStyle": "none"})
+    body = html.Div(stance, style={
+        "color": C["text"], "fontSize": "0.82rem", "lineHeight": "1.5",
+        "padding": "0 12px 14px", "borderBottom": f"1px solid {C['border']}"})
+    return html.Details([summary, body])
 
 
 def consensus_section():
@@ -1910,9 +1883,9 @@ def consensus_section():
         children.append(_consensus_head())
         children.extend(_consensus_row(label, v, unit) for label, v, unit in group)
     children.append(html.Div(
-        "Each row is that feed's rolling CURRENT VIEW, identical to the banner "
-        "on its own sub-tab. AS OF is the newest post the view rests on, not "
-        "when it was generated.",
+        "Each row is that feed's rolling CURRENT VIEW -- click a row for its "
+        "full stance. AS OF is the newest post the view rests on, not when it "
+        "was generated.",
         style={"color": C["dim"], "fontSize": "0.68rem", "padding": "10px 12px",
                "lineHeight": "1.45"}))
     # minWidth keeps the four fixed columns (444px + gaps) from squeezing the
@@ -2662,43 +2635,32 @@ def refresh_influencers(_n, account):
     if account == "Consensus":       # rendered by refresh_consensus, not here
         return "", [], None, None, [], [], [], [], [], [], [], [], [], []
     if account == "BenCowen":
-        children = ([_current_view_banner(load_youtube_current_view())]
-                    + youtube_section(load_youtube_summaries()))
+        children = youtube_section(load_youtube_summaries())
         return "", [], None, None, children, [], [], [], [], [], [], [], [], []
     if account == "JesseOlson":
-        children = ([_current_view_banner(load_jesse_olson_current_view())]
-                    + youtube_section(load_jesse_olson_summaries(),
-                                      empty_label="Jesse Olson"))
+        children = youtube_section(load_jesse_olson_summaries(),
+                                    empty_label="Jesse Olson")
         return "", [], None, None, [], children, [], [], [], [], [], [], [], []
     if account == "KiYoungJu":
-        children = ([_current_view_banner(load_ki_current_view())]
-                    + twitter_section(load_twitter_summaries()))
+        children = twitter_section(load_twitter_summaries())
         return "", [], None, None, [], [], children, [], [], [], [], [], [], []
     if account == "JoaoWedson":
-        children = ([_current_view_banner(load_joao_current_view())]
-                    + twitter_section(load_joao_summaries(), who="@joao_wedson"))
+        children = twitter_section(load_joao_summaries(), who="@joao_wedson")
         return ("", [], None, None, [], [], [], children, [], [], [], [], [], [])
     if account == "DorkChicken":
-        children = ([_current_view_banner(load_dorkchicken_current_view())]
-                    + twitter_section(load_dorkchicken_summaries(), who="@DorkChicken"))
+        children = twitter_section(load_dorkchicken_summaries(), who="@DorkChicken")
         return ("", [], None, None, [], [], [], [], children, [], [], [], [], [])
     if account == "DaanCrypto":
-        children = ([_current_view_banner(load_daancrypto_current_view())]
-                    + twitter_section(load_daancrypto_summaries(), who="@DaanCrypto"))
+        children = twitter_section(load_daancrypto_summaries(), who="@DaanCrypto")
         return ("", [], None, None, [], [], [], [], [], children, [], [], [], [])
     if account == "DonAlt":
-        children = ([_current_view_banner(load_donalt_current_view())]
-                    + twitter_section(load_donalt_summaries(), who="@DonAlt"))
+        children = twitter_section(load_donalt_summaries(), who="@DonAlt")
         return ("", [], None, None, [], [], [], [], [], [], children, [], [], [])
     if account == "CowenX":
-        children = ([_current_view_banner(load_cowen_x_current_view())]
-                    + twitter_section(load_cowen_x_summaries(),
-                                      who="@benjamincowen"))
+        children = twitter_section(load_cowen_x_summaries(), who="@benjamincowen")
         return ("", [], None, None, [], [], [], [], [], [], [], children, [], [])
     if account == "Glassnode":
-        children = ([_current_view_banner(load_glassnode_current_view())]
-                    + twitter_section(load_glassnode_summaries(),
-                                      who="@glassnode"))
+        children = twitter_section(load_glassnode_summaries(), who="@glassnode")
         return ("", [], None, None, [], [], [], [], [], [], [], [], children, [])
     if account == "GeoffKendrick":
         return ("", [], None, None, [], [], [], [], [], [], [], [], [],
