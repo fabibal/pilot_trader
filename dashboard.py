@@ -1754,8 +1754,9 @@ _CONSENSUS_SOURCES = [
     ("Glassnode",   "crypto", load_glassnode_current_view,   "posts"),
 ]
 
-# Decisive views first: neutral is 55-84% of every feed's per-post reads, so
-# sorting it last keeps the rows that actually say something at the top.
+# Decisive-first ordering for the tally line only ("4 neutral · 2 mixed ·
+# 1 bearish" reads better than a random dict order); row order itself is by
+# recency, see consensus_section's `order`.
 _CONSENSUS_RANK = {"bearish": 0, "bullish": 1, "mixed": 2, "neutral": 3}
 
 # Staleness is measured from the NEWEST POST behind a view, not from when it was
@@ -1861,11 +1862,12 @@ def consensus_section():
     """Cross-feed CURRENT VIEW summary — see the _CONSENSUS_SOURCES comment.
     A feed whose view has not been generated yet still gets a row (dimmed), so a
     silently broken digest is visible rather than just absent."""
+    # Freshest first: rows are sorted purely by AS OF recency (age ascending),
+    # not by sentiment. A view with no parseable to_date sorts last.
     def order(label_view):
         view = label_view[1]
-        sent = (view.get("overall_sentiment") or "").lower()
         age = _consensus_age_days((view.get("based_on") or {}).get("to_date"))
-        return (_CONSENSUS_RANK.get(sent, 9), 999 if age is None else age)
+        return 999 if age is None else age
 
     rows = [(label, cls, loader() or {}, unit)
             for label, cls, loader, unit in _CONSENSUS_SOURCES]
