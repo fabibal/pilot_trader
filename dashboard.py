@@ -1795,7 +1795,7 @@ def _consensus_tally(views):
 
 
 def _consensus_head():
-    cells = ["SOURCE", "VIEW", "AS OF", "BASIS", "HEADLINE"]
+    cells = ["SOURCE", "VIEW", "AS OF", "BASIS", "STANCE"]
     return html.Div(style={"display": "grid",
                            "gridTemplateColumns": _CONSENSUS_GRID,
                            "gap": "10px", "padding": "0 12px 6px",
@@ -1805,14 +1805,12 @@ def _consensus_head():
 
 def _consensus_row(label, view, unit="posts"):
     """One feed's stance: sentiment chip, how old the underlying posts are, how
-    many fed the synthesis, and its shift_note -- the digests' one-line
-    headline, which is the shift where there was one and otherwise the sharpest
-    concrete point of the current stance (never a "no change" placeholder), and
-    the one field no sub-tab lets you compare across feeds. When a
-    stance_summary exists the row becomes a native <details> (no callback) that
-    expands to show it in full -- that paragraph is what the old per-sub-tab
-    CURRENT VIEW banner used to show; collapsed by default is what keeps 9
-    sources a glance instead of a wall of text."""
+    many fed the synthesis, and its full stance -- shift_note (the sharpest
+    concrete point / the visible shift, never a "no change" placeholder) as a
+    bold lead-in, followed by the full stance_summary paragraph. Always shown
+    in full, no click needed: this is the one place that lets you compare
+    every feed's actual reasoning, not just a one-line headline, without
+    leaving the tab."""
     sent = (view.get("overall_sentiment") or "").lower()
     color = _YT_SENTIMENT.get(sent, C["dim"])
     based_on = view.get("based_on") or {}
@@ -1821,16 +1819,29 @@ def _consensus_row(label, view, unit="posts"):
     age_color = (C["dim"] if age is None or age <= _STALE_WARN_D
                  else C["red"] if age >= _STALE_BAD_D else C["yellow"])
     as_of = f"{to_date}  ·  {age}d" if to_date and age is not None else "—"
-    note = (_one_line(view.get("shift_note"))
-            or ("no view generated yet" if not view else "—"))
-    # Rows top-align, not centre: shift_note is shown IN FULL and wraps to 2-3
-    # lines on a narrow window, which would otherwise leave the chip and dates
-    # floating mid-row.
-    row_style = {
+    headline = _one_line(view.get("shift_note"))
+    stance = _one_line(view.get("stance_summary"))
+    if stance:
+        stance_cell = html.Div([
+            (html.Div(headline, style={"color": C["text"], "fontWeight": "bold",
+                      "fontSize": "0.76rem", "lineHeight": "1.4"})
+             if headline else html.Span()),
+            html.Div(stance, style={"color": C["text"], "fontSize": "0.76rem",
+                     "lineHeight": "1.5",
+                     "marginTop": "4px" if headline else "0"}),
+        ])
+    else:
+        stance_cell = html.Div(
+            headline or ("no view generated yet" if not view else "—"),
+            style={"color": C["dim"] if not view else C["text"],
+                   "fontSize": "0.76rem", "lineHeight": "1.4"})
+    # Rows top-align, not centre: the stance cell is shown IN FULL and wraps to
+    # several lines, which would otherwise leave the chip and dates floating
+    # mid-row.
+    return html.Div(style={
         "display": "grid", "gridTemplateColumns": _CONSENSUS_GRID, "gap": "10px",
         "alignItems": "start", "padding": "10px 12px",
-        "borderBottom": f"1px solid {C['border']}"}
-    cells = [
+        "borderBottom": f"1px solid {C['border']}"}, children=[
         html.Div(label, style={"color": C["text"], "fontSize": "0.78rem",
                                "fontWeight": "bold"}),
         html.Div(html.Span(sent.upper() if sent else "—", style={
@@ -1842,18 +1853,8 @@ def _consensus_row(label, view, unit="posts"):
         html.Div(f"{count} {unit}" if count else "—",
                  style={"color": C["dim"], "fontSize": "0.7rem",
                         "whiteSpace": "nowrap"}),
-        html.Div(note, style={"color": C["dim"] if not view else C["text"],
-                              "fontSize": "0.74rem", "lineHeight": "1.4"}),
-    ]
-    stance = view.get("stance_summary")
-    if not stance:
-        return html.Div(cells, style=row_style)
-    summary = html.Summary(cells, style={**row_style, "cursor": "pointer",
-                                         "listStyle": "none"})
-    body = html.Div(stance, style={
-        "color": C["text"], "fontSize": "0.82rem", "lineHeight": "1.5",
-        "padding": "0 12px 14px", "borderBottom": f"1px solid {C['border']}"})
-    return html.Details([summary, body])
+        stance_cell,
+    ])
 
 
 def consensus_section():
@@ -1883,14 +1884,13 @@ def consensus_section():
         children.append(_consensus_head())
         children.extend(_consensus_row(label, v, unit) for label, v, unit in group)
     children.append(html.Div(
-        "Each row is that feed's rolling CURRENT VIEW -- click a row for its "
-        "full stance. AS OF is the newest post the view rests on, not when it "
-        "was generated.",
+        "Each row is that feed's rolling CURRENT VIEW in full. AS OF is the "
+        "newest post the view rests on, not when it was generated.",
         style={"color": C["dim"], "fontSize": "0.68rem", "padding": "10px 12px",
                "lineHeight": "1.45"}))
     # minWidth keeps the four fixed columns (444px + gaps) from squeezing the
-    # now-untruncated HEADLINE column to nothing on a phone; the card's
-    # overflow-x then scrolls, the same fallback the wide tables use.
+    # STANCE column to nothing on a phone; the card's overflow-x then scrolls,
+    # the same fallback the wide tables use.
     return [html.Div(html.Div(children, style={"minWidth": "780px"}), style={
         "background": C["card"], "border": f"1px solid {C['border']}",
         "borderRadius": "8px", "marginTop": "10px", "overflowX": "auto"})]
