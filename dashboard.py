@@ -1266,6 +1266,7 @@ DAANCRYPTO_SUMMARIES_FILE = os.path.join(DATA_DIR, "daancrypto_summaries.json")
 DONALT_SUMMARIES_FILE = os.path.join(DATA_DIR, "donalt_summaries.json")
 COWEN_X_SUMMARIES_FILE = os.path.join(DATA_DIR, "cowen_x_summaries.json")
 GLASSNODE_SUMMARIES_FILE = os.path.join(DATA_DIR, "glassnode_summaries.json")
+TRUECRYPTO_SUMMARIES_FILE = os.path.join(DATA_DIR, "truecrypto_summaries.json")
 KENDRICK_FORECASTS_FILE = os.path.join(DATA_DIR, "kendrick_forecasts.json")
 KI_CURRENT_VIEW_FILE = os.path.join(DATA_DIR, "ki_young_ju_current_view.json")
 JOAO_CURRENT_VIEW_FILE = os.path.join(DATA_DIR, "joao_wedson_current_view.json")
@@ -1275,6 +1276,8 @@ DONALT_CURRENT_VIEW_FILE = os.path.join(DATA_DIR, "donalt_current_view.json")
 COWEN_X_CURRENT_VIEW_FILE = os.path.join(DATA_DIR, "cowen_x_current_view.json")
 GLASSNODE_CURRENT_VIEW_FILE = os.path.join(DATA_DIR,
                                            "glassnode_current_view.json")
+TRUECRYPTO_CURRENT_VIEW_FILE = os.path.join(DATA_DIR,
+                                            "truecrypto_current_view.json")
 
 
 def _load_summaries(path):
@@ -1324,6 +1327,13 @@ def load_glassnode_summaries():
     return _load_summaries(GLASSNODE_SUMMARIES_FILE)
 
 
+def load_truecrypto_summaries():
+    """@Truecrypto (BTC price structure/range trading) post analyses --
+    require_market_signal filtered, so this is already just the subset with
+    a real number in it."""
+    return _load_summaries(TRUECRYPTO_SUMMARIES_FILE)
+
+
 def load_ki_current_view():
     return _load_current_view(KI_CURRENT_VIEW_FILE)
 
@@ -1350,6 +1360,10 @@ def load_cowen_x_current_view():
 
 def load_glassnode_current_view():
     return _load_current_view(GLASSNODE_CURRENT_VIEW_FILE)
+
+
+def load_truecrypto_current_view():
+    return _load_current_view(TRUECRYPTO_CURRENT_VIEW_FILE)
 
 
 def load_kendrick_forecasts():
@@ -1733,14 +1747,14 @@ def kendrick_forecast_section(forecasts, limit=12):
 # no dependency on data/sentiment_history.json (that log is the substrate for a
 # future timeline, not for this snapshot).
 #
-# All nine read the same market today, so one tally is meaningful; rows are
+# All ten read the same market today, so one tally is meaningful; rows are
 # still grouped by asset class, because tallying a crypto stance together with an
 # equities stance would be nonsense the day a non-crypto feed is added.
 #
 # Cowen appears TWICE by design (YT + X): the two feeds cover the same analyst
 # but not the same content -- the videos are long-form cycle work, the tweets are
 # same-day macro reactions -- and seeing them disagree is itself informative. It
-# does mean one person carries 2 of 8 votes in the tally.
+# does mean one person carries 2 of 9 votes in the tally.
 _CONSENSUS_SOURCES = [
     # label, asset class, current-view loader, what based_on.count counts
     ("Cowen (YT)",  "crypto", load_youtube_current_view,     "videos"),
@@ -1752,6 +1766,7 @@ _CONSENSUS_SOURCES = [
     ("DaanCrypto",  "crypto", load_daancrypto_current_view,  "posts"),
     ("DonAlt",      "crypto", load_donalt_current_view,      "posts"),
     ("Glassnode",   "crypto", load_glassnode_current_view,   "posts"),
+    ("Truecrypto",  "crypto", load_truecrypto_current_view,  "posts"),
 ]
 
 # Decisive-first ordering for the tally line only ("4 neutral · 2 mixed ·
@@ -2233,6 +2248,8 @@ app.layout = html.Div(
                                      style=_TAB_STYLE, selected_style=_TAB_SELECTED),
                              dcc.Tab(label="Glassnode", value="Glassnode",
                                      style=_TAB_STYLE, selected_style=_TAB_SELECTED),
+                             dcc.Tab(label="Truecrypto", value="Truecrypto",
+                                     style=_TAB_STYLE, selected_style=_TAB_SELECTED),
                              dcc.Tab(label="Geoff Kendrick", value="GeoffKendrick",
                                      style=_TAB_STYLE, selected_style=_TAB_SELECTED),
                              dcc.Tab(label="Reddit stratégiák", value="reddit",
@@ -2450,6 +2467,25 @@ app.layout = html.Div(
                 html.Div(id="glassnode-summaries", style={"marginTop": "4px"}),
             ]),
 
+            # Truecrypto view: X/Twitter post analysis cards (analysis only —
+            # BTC price structure/range trading, ETF flows; never
+            # traded/mirrored). require_market_signal filtered upstream, so
+            # this only ever shows posts with a real number in them.
+            html.Div(id="truecrypto-view", style={"display": "none"}, children=[
+                html.Div(["Twitter Analysis — Truecrypto",
+                          html.A("→ @Truecrypto",
+                                 href="https://x.com/Truecrypto",
+                                 target="_blank", rel="noopener noreferrer",
+                                 style={"color": C["blue"], "marginLeft": "14px",
+                                        "textTransform": "none",
+                                        "letterSpacing": "normal",
+                                        "textDecoration": "none",
+                                        "fontWeight": "normal",
+                                        "fontSize": "0.8rem"})],
+                         style=_SECTION_H),
+                html.Div(id="truecrypto-summaries", style={"marginTop": "4px"}),
+            ]),
+
             # Geoff Kendrick view: X/Twitter TOPIC-SEARCH analysis cards (analysis
             # only — every account's coverage of Standard Chartered's Geoff
             # Kendrick crypto research; never traded/mirrored). Multi-author, so
@@ -2574,6 +2610,7 @@ def _influencer_header(title, account):
     Output("donalt-view", "style"),
     Output("cowen-x-view", "style"),
     Output("glassnode-view", "style"),
+    Output("truecrypto-view", "style"),
     Output("kendrick-view", "style"),
     Output("reddit-view", "style"),
     Output("influencer-pos-header", "children"),
@@ -2583,30 +2620,32 @@ def _influencer_header(title, account):
 def switch_influencer_subtab(account):
     show, hide = {"display": "block"}, {"display": "none"}
     if account == "Consensus":          # cross-feed summary, renders itself
-        return (hide,) * 12 + ("", "")
+        return (hide,) * 13 + ("", "")
     if account == "BenCowen":           # YouTube analysis view, not a trade view
-        return hide, show, hide, hide, hide, hide, hide, hide, hide, hide, hide, hide, "", ""
+        return hide, show, hide, hide, hide, hide, hide, hide, hide, hide, hide, hide, hide, "", ""
     if account == "JesseOlson":         # YouTube analysis view, not a trade view
-        return hide, hide, show, hide, hide, hide, hide, hide, hide, hide, hide, hide, "", ""
+        return hide, hide, show, hide, hide, hide, hide, hide, hide, hide, hide, hide, hide, "", ""
     if account == "KiYoungJu":          # X analysis view, not a trade view
-        return hide, hide, hide, show, hide, hide, hide, hide, hide, hide, hide, hide, "", ""
+        return hide, hide, hide, show, hide, hide, hide, hide, hide, hide, hide, hide, hide, "", ""
     if account == "JoaoWedson":         # X analysis view, not a trade view
-        return hide, hide, hide, hide, show, hide, hide, hide, hide, hide, hide, hide, "", ""
+        return hide, hide, hide, hide, show, hide, hide, hide, hide, hide, hide, hide, hide, "", ""
     if account == "DorkChicken":        # X analysis view, not a trade view
-        return hide, hide, hide, hide, hide, show, hide, hide, hide, hide, hide, hide, "", ""
+        return hide, hide, hide, hide, hide, show, hide, hide, hide, hide, hide, hide, hide, "", ""
     if account == "DaanCrypto":         # X analysis view, not a trade view
-        return hide, hide, hide, hide, hide, hide, show, hide, hide, hide, hide, hide, "", ""
+        return hide, hide, hide, hide, hide, hide, show, hide, hide, hide, hide, hide, hide, "", ""
     if account == "DonAlt":             # X analysis view, not a trade view
-        return hide, hide, hide, hide, hide, hide, hide, show, hide, hide, hide, hide, "", ""
+        return hide, hide, hide, hide, hide, hide, hide, show, hide, hide, hide, hide, hide, "", ""
     if account == "CowenX":             # X analysis view, not a trade view
-        return hide, hide, hide, hide, hide, hide, hide, hide, show, hide, hide, hide, "", ""
+        return hide, hide, hide, hide, hide, hide, hide, hide, show, hide, hide, hide, hide, "", ""
     if account == "Glassnode":          # X analysis view, not a trade view
-        return hide, hide, hide, hide, hide, hide, hide, hide, hide, show, hide, hide, "", ""
+        return hide, hide, hide, hide, hide, hide, hide, hide, hide, show, hide, hide, hide, "", ""
+    if account == "Truecrypto":         # X analysis view, not a trade view
+        return hide, hide, hide, hide, hide, hide, hide, hide, hide, hide, show, hide, hide, "", ""
     if account == "GeoffKendrick":      # X topic-search analysis view
-        return hide, hide, hide, hide, hide, hide, hide, hide, hide, hide, show, hide, "", ""
+        return hide, hide, hide, hide, hide, hide, hide, hide, hide, hide, hide, show, hide, "", ""
     if account == "reddit":             # Reddit strategies view, renders itself
-        return hide, hide, hide, hide, hide, hide, hide, hide, hide, hide, hide, show, "", ""
-    return (show, hide, hide, hide, hide, hide, hide, hide, hide, hide, hide, hide,
+        return hide, hide, hide, hide, hide, hide, hide, hide, hide, hide, hide, hide, show, "", ""
+    return (show, hide, hide, hide, hide, hide, hide, hide, hide, hide, hide, hide, hide,
             _influencer_header(f"{account} — Open Positions", account),
             _influencer_header(f"{account} — Signals", account))
 
@@ -2625,47 +2664,51 @@ def switch_influencer_subtab(account):
     Output("donalt-summaries", "children"),
     Output("cowen-x-summaries", "children"),
     Output("glassnode-summaries", "children"),
+    Output("truecrypto-summaries", "children"),
     Output("kendrick-summaries", "children"),
     Input("interval", "n_intervals"),
     Input("influencer-subtabs", "value"),
 )
 def refresh_influencers(_n, account):
     # Cowen (YT) / Cowen (X) / Jesse Olson / Ki Young Ju / Joao Wedson /
-    # DorkChicken / DaanCrypto / DonAlt / Glassnode / Geoff Kendrick are
-    # analysis-only views, not traders: no header card / positions / signals —
-    # just the cards.
+    # DorkChicken / DaanCrypto / DonAlt / Glassnode / Truecrypto / Geoff
+    # Kendrick are analysis-only views, not traders: no header card /
+    # positions / signals — just the cards.
     if account == "Consensus":       # rendered by refresh_consensus, not here
-        return "", [], None, None, [], [], [], [], [], [], [], [], [], []
+        return "", [], None, None, [], [], [], [], [], [], [], [], [], [], []
     if account == "BenCowen":
         children = youtube_section(load_youtube_summaries())
-        return "", [], None, None, children, [], [], [], [], [], [], [], [], []
+        return "", [], None, None, children, [], [], [], [], [], [], [], [], [], []
     if account == "JesseOlson":
         children = youtube_section(load_jesse_olson_summaries(),
                                     empty_label="Jesse Olson")
-        return "", [], None, None, [], children, [], [], [], [], [], [], [], []
+        return "", [], None, None, [], children, [], [], [], [], [], [], [], [], []
     if account == "KiYoungJu":
         children = twitter_section(load_twitter_summaries())
-        return "", [], None, None, [], [], children, [], [], [], [], [], [], []
+        return "", [], None, None, [], [], children, [], [], [], [], [], [], [], []
     if account == "JoaoWedson":
         children = twitter_section(load_joao_summaries(), who="@joao_wedson")
-        return ("", [], None, None, [], [], [], children, [], [], [], [], [], [])
+        return ("", [], None, None, [], [], [], children, [], [], [], [], [], [], [])
     if account == "DorkChicken":
         children = twitter_section(load_dorkchicken_summaries(), who="@DorkChicken")
-        return ("", [], None, None, [], [], [], [], children, [], [], [], [], [])
+        return ("", [], None, None, [], [], [], [], children, [], [], [], [], [], [])
     if account == "DaanCrypto":
         children = twitter_section(load_daancrypto_summaries(), who="@DaanCrypto")
-        return ("", [], None, None, [], [], [], [], [], children, [], [], [], [])
+        return ("", [], None, None, [], [], [], [], [], children, [], [], [], [], [])
     if account == "DonAlt":
         children = twitter_section(load_donalt_summaries(), who="@DonAlt")
-        return ("", [], None, None, [], [], [], [], [], [], children, [], [], [])
+        return ("", [], None, None, [], [], [], [], [], [], children, [], [], [], [])
     if account == "CowenX":
         children = twitter_section(load_cowen_x_summaries(), who="@benjamincowen")
-        return ("", [], None, None, [], [], [], [], [], [], [], children, [], [])
+        return ("", [], None, None, [], [], [], [], [], [], [], children, [], [], [])
     if account == "Glassnode":
         children = twitter_section(load_glassnode_summaries(), who="@glassnode")
-        return ("", [], None, None, [], [], [], [], [], [], [], [], children, [])
+        return ("", [], None, None, [], [], [], [], [], [], [], [], children, [], [])
+    if account == "Truecrypto":
+        children = twitter_section(load_truecrypto_summaries(), who="@Truecrypto")
+        return ("", [], None, None, [], [], [], [], [], [], [], [], [], children, [])
     if account == "GeoffKendrick":
-        return ("", [], None, None, [], [], [], [], [], [], [], [], [],
+        return ("", [], None, None, [], [], [], [], [], [], [], [], [], [],
                 kendrick_forecast_section(load_kendrick_forecasts()))
     positions = load_positions()
     warm_prices({_yf_symbol(p["ticker"], p.get("asset_type", "stock"))
@@ -2676,7 +2719,7 @@ def refresh_influencers(_n, account):
             influencer_signals_data(load_trades(), account=account),
             influencer_positions_table(resolutions),
             influencer_winrate_card(resolutions),
-            [], [], [], [], [], [], [], [], [], [])
+            [], [], [], [], [], [], [], [], [], [], [])
 
 
 @app.callback(
@@ -2686,7 +2729,7 @@ def refresh_influencers(_n, account):
 )
 def refresh_consensus(_n, account):
     """Kept separate from refresh_influencers deliberately: that callback already
-    fans 14 outputs across 11 branches, and this panel shares none of them."""
+    fans 15 outputs across 12 branches, and this panel shares none of them."""
     if account != "Consensus":
         return []
     return [html.Div("Consensus — current stance across every analysis feed",

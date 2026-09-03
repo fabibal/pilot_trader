@@ -51,6 +51,14 @@ Feeds (see FEEDS):
       cohorts and cost-basis models. The only company account here: ~7% of its
       posts are product/corporate news, handled by the persona prompt like
       DonAlt's off-topic banter) -> data/glassnode_summaries.json.
+  - truecrypto (Truecrypto; crypto trader -- BTC price structure/range
+      trading, ETF flows) -> data/truecrypto_summaries.json. Added
+      2026-09-03. ~68% of his volume is off-topic (motivational filler,
+      stock/macro, trading-psychology anecdotes, paid-tool promo), so this
+      is the first feed with require_market_signal=True: a stricter pre-LLM
+      gate (_has_market_signal) that only lets a post through if its text
+      carries a concrete number AND a crypto keyword -- everything else
+      never reaches Gemini at all.
   - kendrick_sc (TOPIC SEARCH + FORECAST LEDGER): Standard Chartered / Geoff
       Kendrick crypto price calls, deduplicated into one row per forecast ->
       data/kendrick_forecasts.json ({seen_ids, forecasts}). No single account is
@@ -366,6 +374,14 @@ class Feed:
     # kendrick_sc) skips the feature -- forecast-ledger feeds already have
     # their own "current state" view: the forecast table itself.
     current_view_file: str = None
+    # Opt-in stricter pre-LLM gate (see _has_market_signal): text must carry a
+    # concrete number (price/%/level) AND a crypto keyword, or the post is
+    # dropped before ever reaching Gemini. Per-feed, default False -- every
+    # other feed keeps using the plain _has_analyzable_content check. Added
+    # for truecrypto (see its persona comment): ~68% of his volume is
+    # off-topic motivational/promo content _has_analyzable_content can't tell
+    # apart from real market commentary since it has real text either way.
+    require_market_signal: bool = False
 
     @property
     def is_search(self):
@@ -561,6 +577,53 @@ FEEDS = {f.key: f for f in [
         current_view_file=os.path.join(DATA_DIR, "glassnode_current_view.json"),
     ),
     Feed(
+        # A prior 2026-06 audit (scripts/audit_truecrypto.py, since removed
+        # in the pre-public cleanup) ran this account through monitor.py's
+        # ACTIONABLE-signal schema and found almost nothing (7 calls / 200
+        # posts, 86.5% neutral) -- the wrong bar; this analysis-only digest
+        # pattern didn't exist yet then. Re-evaluated fresh 2026-09-03
+        # against THIS pattern: 25-post sample, only 32% genuine crypto
+        # content (32% pure motivational filler unrelated to markets, 16%
+        # off-topic stock/macro, 12% trading-psychology anecdotes, 8%
+        # explicit promo for his own paid "True Vibration" tool). Initially
+        # recommended against adding on that noise/cost ratio -- reconsidered
+        # after designing require_market_signal (see the Feed field and
+        # _has_market_signal): with it, only the ~20% that's genuine BTC
+        # content with a real number reaches Gemini at all, and 2
+        # spot-checked price claims ("low-$60Ks to $78K in 3 days, above
+        # $81K" and "break $80K...rejected, lose $77K...bought back") both
+        # matched real BTC-USD data closely. One overstated claim found too
+        # (his pinned tweet's "8x since the Nov 2022 low" was really ~7.3x)
+        # -- not egregious, but real; the persona below does not give
+        # promotional posts a pass just because they cite a number.
+        key="truecrypto",
+        account="Truecrypto",
+        display_name="Truecrypto",
+        summaries_file=os.path.join(DATA_DIR, "truecrypto_summaries.json"),
+        analysis_persona=(
+            "You analyze a single X/Twitter post by @Truecrypto, a crypto "
+            "trader focused on Bitcoin price structure and range trading "
+            "(support/resistance, monthly-open levels, liquidity sweeps, "
+            "regime/cycle shifts) and BTC/ETH ETF flow data. Most of his "
+            "volume is NOT market content: frequent generic motivational/"
+            "self-improvement posts unrelated to markets, trading-psychology "
+            "anecdotes, and recurring promotion of his own paid tool ('True "
+            "Vibration'). If a post is promotional -- even one that states a "
+            "price or percentage while pitching the tool -- treat it as "
+            "promo and summarize only that; do NOT let the presence of a "
+            "number turn a promotional post into a market read. If a post "
+            "has no real market content, summarize only that."),
+        vision_persona=(
+            "You read a Bitcoin price or technical-level chart image "
+            "attached to a tweet by Truecrypto (crypto trader)."),
+        skip_langs=frozenset(),          # 25-post sample 2026-09-03: 100% en
+        max_fetch=60,                    # ~5 originals/day + ~4.4 RT/day raw
+        current_view_file=os.path.join(DATA_DIR, "truecrypto_current_view.json"),
+        require_market_signal=True,      # ~68% of his volume is off-topic/
+                                         # promo filler _has_analyzable_content
+                                         # can't catch (real text either way)
+    ),
+    Feed(
         key="kendrick_sc",
         account="",                      # topic search: no single timeline
         display_name="Geoff Kendrick / Standard Chartered",
@@ -729,6 +792,38 @@ def _has_analyzable_content(tw):
     return bool(words)
 
 
+# Stricter gate for Feed.require_market_signal=True (see truecrypto). Text
+# must carry a concrete number AND a crypto keyword. Evaluated 2026-09-03 on
+# a real 25-post sample: 25/25 pass _has_analyzable_content (has real text
+# either way -- can't tell a motivational quote from a price call), vs 5/25
+# passing this gate, all 5 genuine BTC content with real, spot-checked-
+# accurate levels. A looser number-only version (no keyword requirement)
+# passed 9/25 -- it let general stock/macro posts (Apple, Broadcom, Brent
+# crude) through too, since those also carry $/% figures; the keyword
+# requirement is what filters those back out.
+_PRICE_RE = re.compile(r"\$\s?[\d,]+(?:\.\d+)?\s?[kKmMbBtT]?\b")
+_PCT_RE = re.compile(r"\b\d+(?:\.\d+)?\s?%")
+_BARE_LEVEL_RE = re.compile(r"\b\d{2,3}[kK]\b|\b\d{4,}(?:\.\d+)?\b")
+_CRYPTO_KW_RE = re.compile(r"bitcoin|\bbtc\b|ethereum|\beth\b|crypto|altcoin",
+                           re.I)
+
+
+def _has_market_signal(tw):
+    """Unlike _has_analyzable_content, a photo does NOT auto-pass here --
+    deliberately: a promo post can carry screenshots with no price in the
+    caption (observed: a 4-photo product-promo post from truecrypto with no
+    $/%/keyword match at all), and the whole point of this gate is to keep
+    that kind of post from ever reaching Gemini. Tradeoff: a genuine
+    chart-only post with an unlabeled level and no numeric caption text also
+    gets dropped -- an accepted false-negative for a cost/noise-conscious
+    gate, not an oversight."""
+    text = tw.get("text", "")
+    has_num = bool(_PRICE_RE.search(text) or _PCT_RE.search(text)
+                   or _BARE_LEVEL_RE.search(text))
+    has_kw = bool(_CRYPTO_KW_RE.search(text))
+    return has_num and has_kw
+
+
 def select_candidates(raw, seen_ids, feed, seen_sigs=frozenset()):
     """Apply the requirement filters: no replies, no retweets, no skip-language
     posts (or, if only_langs is set, ONLY those langs), has content, not already
@@ -761,8 +856,9 @@ def select_candidates(raw, seen_ids, feed, seen_sigs=frozenset()):
         if (feed.only_langs and lang not in feed.only_langs
                 and lang not in ("", "und", "qme", "zxx")):
             continue                                  # not an allowed language
-        if not _has_analyzable_content(tw):
-            continue                                  # contentless
+        gate = _has_market_signal if feed.require_market_signal else _has_analyzable_content
+        if not gate(tw):
+            continue                                  # contentless / no market signal
         # Plain search feeds collapse verbatim reposts by text signature.
         # Forecast-ledger feeds skip this -- they dedup SEMANTICALLY (by the
         # extracted forecast), so differently-worded reports of one call still
