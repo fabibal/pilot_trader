@@ -348,16 +348,20 @@ def fetch_posts(subreddit, token, limit):
 
 # --- main ------------------------------------------------------------------
 def gather_candidates(subreddits, token, seen, limit):
-    """Fetch each subreddit and return [(custom_id, post), ...] for posts not in
-    `seen` (deduped by id across subs). custom_id = '<sub>__<post_id>' -- unique
-    and within the Batch API's id charset."""
-    candidates, queued = [], set()
+    """Fetch each subreddit and return (candidates, n_failed) where candidates is
+    [(custom_id, post), ...] for posts not in `seen` (deduped by id across subs).
+    custom_id = '<sub>__<post_id>' -- unique and within the Batch API's id
+    charset. n_failed counts subreddits whose fetch raised, so the caller can
+    tell "nothing new" apart from "the data source is down" -- see
+    alert_fetch_outage()."""
+    candidates, queued, failed = [], set(), 0
     for sub in subreddits:
         try:
             posts = fetch_posts(sub, token, limit)
         except (urllib.error.HTTPError, urllib.error.URLError) as e:
             print(f"[r/{sub}] fetch failed ({getattr(e, 'code', e)}); skipping",
                   file=sys.stderr)
+            failed += 1
             continue
         new = 0
         for p in posts:
@@ -368,7 +372,32 @@ def gather_candidates(subreddits, token, seen, limit):
             candidates.append((f"{sub}__{pid}", p))
             new += 1
         print(f"[r/{sub}] {len(posts)} posts, {new} new")
-    return candidates
+    return candidates, failed
+
+
+def alert_fetch_outage(n_failed, n_total):
+    """Page Telegram when EVERY subreddit fetch failed. Returns True if it
+    alerted.
+
+    Without this a dead data source is indistinguishable from a quiet week: each
+    failure is a stderr line, gather_candidates() returns nothing, main() prints
+    "No new posts to analyze." and exits 0. That is exactly how the RedditAPI
+    subscription running out of credits (HTTP 402 on every subreddit) went
+    unnoticed from 2026-08-06 to 2026-09-04 -- ~29 days of a silently empty
+    Reddit tab on the dashboard. Same failure shape, and the same fix, as the
+    wholesale-Gemini-failure guard the two digests got on 2026-08-14
+    (monitor.alert_gemini_outage) -- that one covers the LLM side of this
+    script, this one covers the fetch side.
+
+    Deliberately only fires on a TOTAL outage: a single subreddit 404ing or
+    rate-limiting is normal and self-heals on the next daily run."""
+    if not n_total or n_failed < n_total:
+        return False
+    msg = (f"reddit_miner: all {n_total} subreddit fetch(es) failed this run "
+           f"-- check REDDITAPI_TOKEN / api.redditapis.com credits")
+    print(f"ERROR: {msg}", file=sys.stderr)
+    notify_telegram(msg)
+    return True
 
 
 def build_records(parsed, min_confidence):
@@ -453,8 +482,11 @@ def main():
 
     print(f"Mining {len(subreddits)} subreddit(s) top/{TIMEFRAME}, "
           f"limit {args.limit}/sub; {len(seen)} ids already seen")
-    candidates = gather_candidates(subreddits, token, seen, args.limit)
+    candidates, n_failed = gather_candidates(subreddits, token, seen, args.limit)
     if not candidates:
+        # A total fetch outage also lands here, so alert BEFORE the quiet exit.
+        if alert_fetch_outage(n_failed, len(subreddits)):
+            sys.exit(1)
         print("No new posts to analyze.")
         return
 

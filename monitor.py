@@ -103,20 +103,27 @@ EXTRACT_OUTPUT_PER_1M = 0.40         # $ / 1M output tokens
 # Vision model for chart-image analysis (Haiku 4.5 does NOT accept images).
 # Only used for influencer tweets that carry a chart photo. Pricier per token,
 # so it runs as an ADD-ON to the cheap Haiku text pass, never as a replacement.
-# (Gemini 3.5 Flash via Google AI Studio / google-genai — replaced Sonnet 5 here
+# (Gemini Flash via Google AI Studio / google-genai — replaced Sonnet 5 here
 # 2026-07: multimodal + json-schema structured output, no Anthropic vision spend.
-# thinking_budget=0 mirrors the old "thinking disabled" behavior — Gemini 3.5
-# Flash also thinks by default (medium), which would eat the tight max_output_tokens
+# thinking_budget=0 mirrors the old "thinking disabled" behavior — Gemini Flash
+# also thinks by default (medium), which would eat the tight max_output_tokens
 # budgets meant for JSON only.)
-VISION_MODEL = "gemini-3.5-flash"
+# 2026-09-04: 3.5-flash -> 3.7-flash. Half the input / 2.4x cheaper output price
+# (see GEMINI_*_PER_1M below), accepts thinking_budget=0 unchanged, and it is
+# already the model youtube_monitor.py runs on. A/B'd on 4 real Glassnode chart
+# posts before the swap: 4/4 identical chart_trend, 43% cheaper, and the
+# summaries carried MORE concrete figures than 3.5-flash's. twitter_digest.MODEL
+# moved in the same commit — the two share the price constants below, so they
+# have to stay on the same model or the cost logs go wrong.
+VISION_MODEL = "gemini-3.7-flash"
 GEMINI_THINKING = genai_types.ThinkingConfig(thinking_budget=0)     # off
 # Opt-in dynamic thinking for the dense, low-volume analysis reads where the
 # reasoning pays off (YouTube/Cowen TA, Kendrick forecasts) — NOT vision, NOT the
 # high-volume per-tweet feeds (ki/joao). Callers that use it MUST give
 # max_output_tokens room for thinking + JSON or the json output truncates.
 GEMINI_DEEP_THINKING = genai_types.ThinkingConfig(thinking_budget=-1)   # dynamic
-GEMINI_INPUT_PER_1M = 1.50           # $ / 1M input tokens (gemini-3.5-flash)
-GEMINI_OUTPUT_PER_1M = 9.00          # $ / 1M output tokens, incl. thinking tokens
+GEMINI_INPUT_PER_1M = 0.75           # $ / 1M input tokens (gemini-3.7-flash)
+GEMINI_OUTPUT_PER_1M = 3.75          # $ / 1M output tokens, incl. thinking tokens
 MAX_VISION_IMAGES = 2                # cap images/tweet to bound vision cost
 
 # --- LLM extraction --------------------------------------------------------

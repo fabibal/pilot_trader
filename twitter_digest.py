@@ -125,12 +125,24 @@ LLM_TALLY = GeminiTally()
 # imported from there. $0.001/call, ~20 tweets/page.
 GETXAPI_SEARCH_PATH = "/twitter/tweet/advanced_search"
 
-# Gemini 3.5 Flash (a step up from the cheap gemini-2.5-flash-lite the
+# Gemini 3.7 Flash (a step up from the cheap gemini-2.5-flash-lite the
 # tweet-signal pipeline and this file's own Kendrick triage use): we want a
 # careful read of dense on-chain commentary, and the vision pass needs a
 # multimodal model anyway. Same model the Cowen YouTube digest uses. Both calls
-# pin thinking_config=GEMINI_THINKING (budget 0) — Gemini 3.5 Flash thinks by
+# pin thinking_config=GEMINI_THINKING (budget 0) — Gemini Flash thinks by
 # default, which would eat the tight max_output_tokens and truncate the JSON output.
+# 2026-09-04: was gemini-3.5-flash. Swapped after an A/B on 20 real posts across
+# 5 feeds (joao/dorkchicken/daancrypto/glassnode/cowen_x) + 4 Glassnode charts:
+# 60% cheaper on text, 43% on vision, slightly faster, 18/20 identical
+# overall_sentiment (both disagreements were defensible neutral-vs-bearish
+# reads, not errors) and 4/4 identical chart_trend. Quality is if anything
+# better -- 3.7 kept concrete levels ("41 500 - 45 000 dollár, október 6-16")
+# that 3.5 dropped. It also did NOT reproduce 3.5-flash's Hungarian
+# accent-mangling: 2 of the 20 text calls tripped _looks_mangled on 3.5, 0 on
+# 3.7 (see monitor._MANGLED_RE for what that costs -- a 3x retry and, on a
+# persistent hit, a dropped post or a stale CURRENT VIEW).
+# NOTE: monitor.VISION_MODEL must move with this one -- they share
+# GEMINI_INPUT_PER_1M / GEMINI_OUTPUT_PER_1M for cost reporting.
 # 2026-07-13 cost review: Batch Mode (50% off) evaluated and rejected here --
 # at this feed set's real volume the saving is single-digit $/mo, not worth
 # the async submit/poll/expiry machinery this file doesn't have, and 2026
@@ -140,7 +152,7 @@ GETXAPI_SEARCH_PATH = "/twitter/tweet/advanced_search"
 # feed's analysis_system is 400-450 tokens, far under every documented
 # minimum (Gemini's implicit/explicit caching needs >=2048 tokens on 2.5
 # Flash, >=4096 on 3.5 Flash). Revisit only if either changes materially.
-MODEL = "gemini-3.5-flash"
+MODEL = "gemini-3.7-flash"
 
 # --- LLM analysis ---------------------------------------------------------
 # The system prompt is shared across feeds EXCEPT for a 1-2 sentence persona
