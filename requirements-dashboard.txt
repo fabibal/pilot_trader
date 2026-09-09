@@ -1,0 +1,6 @@
+# Direct dependencies matching the audited host environment.
+dash==4.1.0
+plotly==6.7.0
+pandas==3.0.3
+yfinance==1.4.1
+tzdata==2026.2

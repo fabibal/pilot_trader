@@ -7,15 +7,13 @@ Fetches Google's official deprecations page (the plain-text markdown variant,
 model this pipeline actually calls RIGHT NOW (read live from monitor.py /
 youtube_monitor.py / twitter_digest.py's own MODEL constants -- never a
 separately hand-maintained list, so this can't drift out of sync with
-production config). Pages Telegram if any tracked model is within WARN_DAYS
+production config). Logs a warning if any tracked model is within WARN_DAYS
 of its announced shutdown date, or already past it.
 
   python scripts/check_model_deprecations.py            # normal run
-  python scripts/check_model_deprecations.py --dry-run  # print, don't alert
+  python scripts/check_model_deprecations.py --dry-run  # compatibility flag; all output is local
 
-Requires TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID (loaded via monitor.TELEGRAM_ENVS,
-same as every other pipeline component). Run with the project venv:
-/home/fbazsa/pilot_trader/.venv/bin/python scripts/check_model_deprecations.py
+Requires no notification credentials. Output goes to stdout/stderr.
 """
 import argparse
 import re
@@ -29,10 +27,9 @@ sys.path.insert(0, "/home/fbazsa/pilot_trader")
 import monitor
 import youtube_monitor
 import twitter_digest
-from monitor import load_env, notify_telegram, TELEGRAM_ENVS
 
 DEPRECATIONS_URL = "https://ai.google.dev/gemini-api/docs/deprecations.md.txt"
-WARN_DAYS = 30
+WARN_DAYS = 60  # monthly polling must leave time to act after a new announcement
 _MODEL_CELL_RE = re.compile(r"^`([^`]+)`$")
 
 
@@ -44,6 +41,11 @@ def fetch_deprecations():
     req = urllib.request.Request(DEPRECATIONS_URL, headers={"User-Agent": "Mozilla/5.0"})
     with urllib.request.urlopen(req, timeout=20) as resp:
         text = resp.read().decode("utf-8")
+    return parse_deprecations(text)
+
+
+def parse_deprecations(text):
+    """Reject document drift instead of reporting an unparsed table as healthy."""
 
     out = {}
     for line in text.splitlines():
@@ -61,17 +63,16 @@ def fetch_deprecations():
             try:
                 shutdown_date = datetime.strptime(cells[2], "%B %d, %Y").date()
             except ValueError:
-                pass  # unrecognized date format -- skip rather than guess
+                raise ValueError(f"Unrecognized shutdown date for {model_m.group(1)}: {cells[2]}") from None
         repl_m = _MODEL_CELL_RE.match(cells[3])
         out[model_m.group(1)] = (shutdown_date, repl_m.group(1) if repl_m else None)
+    if not out:
+        raise ValueError("No model rows found in deprecations document")
     return out
 
 
 def models_in_use():
-    """Every Gemini model string this pipeline actually calls, read live so
-    this list can never go stale. scripts/reddit_miner.py's MODEL is always
-    monitor.MODEL by construction (`MODEL = EXTRACT_MODEL`), so it needs no
-    separate entry here."""
+    """Every model called by an active pipeline, read from its constants."""
     return sorted({
         monitor.MODEL, monitor.VISION_MODEL,
         youtube_monitor.MODEL,
@@ -82,15 +83,17 @@ def models_in_use():
 def main():
     ap = argparse.ArgumentParser(description="Monthly Gemini model deprecation check")
     ap.add_argument("--dry-run", action="store_true",
-                    help="print findings, do not send a Telegram alert")
+                    help="compatibility flag; checks only print local diagnostics")
     args = ap.parse_args()
-
-    for p in TELEGRAM_ENVS:
-        load_env(p)
 
     deprecations = fetch_deprecations()
     today = datetime.now(timezone.utc).date()
     in_use = models_in_use()
+    missing = set(in_use) - deprecations.keys()
+    if missing:
+        message = f"Model status unknown (missing from deprecations table): {', '.join(sorted(missing))}"
+        print(message, file=sys.stderr)
+        sys.exit(1)
 
     warnings = []
     for model in in_use:
@@ -114,8 +117,7 @@ def main():
     message = "\n".join(lines)
     print(message)
 
-    if not args.dry_run:
-        notify_telegram(message)
+    sys.exit(1)  # scheduled checks must expose an impending shutdown to cron
 
 
 if __name__ == "__main__":
@@ -123,12 +125,6 @@ if __name__ == "__main__":
         main()
     except (SystemExit, KeyboardInterrupt):
         raise
-    except BaseException as exc:                  # log + page, then non-zero exit
-        try:
-            for p in TELEGRAM_ENVS:
-                load_env(p)
-            notify_telegram(f"check_model_deprecations.py FAILED: {exc!r}")
-        except Exception:
-            pass
+    except BaseException:
         traceback.print_exc()
         sys.exit(1)

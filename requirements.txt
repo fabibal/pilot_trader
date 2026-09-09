@@ -1,0 +1,4 @@
+-r requirements-dashboard.txt
+# The native-video pipeline requires Part.media_processing / AGENTIC support.
+# Version present in the audited environment; avoid an unbounded SDK upgrade.
+google-genai==2.22.0

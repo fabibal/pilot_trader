@@ -85,12 +85,15 @@ from google.genai import types as genai_types
 from google.genai import errors as genai_errors
 
 from reconcile import write_json_atomic
-import sentiment_history
-# Reuse monitor.py's small, already-tested helpers (env/json loaders, Telegram
-# alerting) so this stays DRY and consistent with the rest of the pipeline.
-from monitor import (load_env, load_json, notify_telegram, TELEGRAM_ENVS,
+# Reuse monitor.py's small, already-tested helpers (env/json loaders, local
+# outage reporting) so this stays DRY and consistent with the rest of the pipeline.
+from ingestion_queue import PendingInputs, discover, report_discovery_errors
+from storage import load_ledger, single_writer
+from llm_support import parse_response, token_usage
+from digest_state import refresh_current_view
+from monitor import (load_env, ENV_FILE,
                      GEMINI_THINKING, _unescape_strings, _looks_mangled,
-                     _first_sentence, GeminiTally, alert_gemini_outage)
+                     _first_sentence, GeminiTally, report_gemini_outage)
 
 # --- config ---------------------------------------------------------------
 HOME = "/home/fbazsa/pilot_trader"
@@ -98,7 +101,7 @@ DATA_DIR = os.path.join(HOME, "data")
 
 # Every Gemini call this run, across all channels. analyze()/generate_current_view()
 # each swallow their own APIError, so this is the only thing that can tell a
-# genuinely quiet run from a blind one -- main() pages on it. See
+# genuinely quiet run from a blind one -- main() logs errors on it. See
 # monitor.GeminiTally.
 LLM_TALLY = GeminiTally()
 WATCH_URL = "https://www.youtube.com/watch?v={vid}"
@@ -341,25 +344,31 @@ def _drop_shorts_duplicates(videos):
     by title with the trailing marker stripped; keeps the non-suffixed entry
     when both are present in this batch, else keeps whichever one is (e.g. the
     main video's pair already scrolled out of the RSS window)."""
-    by_key = {}
-    for v in videos:
-        stripped = _SHORTS_SUFFIX_RE.sub("", v["title"]).strip()
-        by_key.setdefault(stripped, []).append(v)
-    keep = []
-    for stripped, group in by_key.items():
-        main = [v for v in group if v["title"].strip() == stripped]
-        keep.append(main[0] if main else group[0])
+    # Identical titles on different days are different sessions. Only collapse
+    # the observed mobile/main pair close together in publication time.
+    keep = [v for v in videos if not (
+        _SHORTS_SUFFIX_RE.search(v["title"])
+        and any(_same_upload_pair(v, other) for other in videos))]
     keep.sort(key=lambda v: v["published"] or "", reverse=True)
     return keep
 
 
-# --- Analysis -----------------------------------------------------------
-def _parse_json(resp):
+def _same_upload_pair(a, b):
+    if a["video_id"] == b["video_id"]:
+        return False
+    at, bt = a.get("title") or "", b.get("title") or ""
+    if bool(_SHORTS_SUFFIX_RE.search(at)) == bool(_SHORTS_SUFFIX_RE.search(bt)):
+        return False
+    if _SHORTS_SUFFIX_RE.sub("", at).strip() != _SHORTS_SUFFIX_RE.sub("", bt).strip():
+        return False
     try:
-        return _unescape_strings(json.loads(resp.text))
-    except (json.JSONDecodeError, TypeError, ValueError):
-        return None
+        delta = datetime.fromisoformat(a["published"]) - datetime.fromisoformat(b["published"])
+        return abs(delta.total_seconds()) <= 600
+    except (ValueError, TypeError, KeyError):
+        return False
 
+
+# --- Analysis -----------------------------------------------------------
 
 # Gemini has occasionally mangled accented Hungarian characters in long
 # free-text fields on past models (see monitor._looks_mangled); a retry of
@@ -402,14 +411,18 @@ def analyze(client, channel, video):
             print(f"  [llm error] {type(e).__name__}: {e}", file=sys.stderr)
             LLM_TALLY.fail()
             return None, in_tok, out_tok
-        LLM_TALLY.ok()
-        u = resp.usage_metadata
-        in_tok += u.prompt_token_count or 0
-        out_tok += (u.candidates_token_count or 0) + (u.thoughts_token_count or 0)
-        parsed = _parse_json(resp)
-        if not (parsed and _looks_mangled(parsed)):
+        i, o = token_usage(resp)
+        in_tok += i
+        out_tok += o
+        parsed = parse_response(resp, ANALYSIS_SCHEMA, _unescape_strings)
+        if parsed is None:
+            LLM_TALLY.fail()
+            return None, in_tok, out_tok
+        if not _looks_mangled(parsed):
+            LLM_TALLY.ok()
             break
         if attempt == _MANGLED_MAX_ATTEMPTS - 1:
+            LLM_TALLY.fail()
             print("  [give-up] analyze still mangled after "
                   f"{_MANGLED_MAX_ATTEMPTS} attempts; dropping (the video stays "
                   "unseen and is retried next run)", file=sys.stderr)
@@ -474,14 +487,18 @@ def generate_current_view(client, channel, summaries):
             print(f"  [current-view error] {type(e).__name__}: {e}", file=sys.stderr)
             LLM_TALLY.fail()
             return None, in_tok, out_tok
-        LLM_TALLY.ok()
-        u = resp.usage_metadata
-        in_tok += u.prompt_token_count or 0
-        out_tok += (u.candidates_token_count or 0) + (u.thoughts_token_count or 0)
-        parsed = _parse_json(resp)
-        if not (parsed and _looks_mangled(parsed)):
+        i, o = token_usage(resp)
+        in_tok += i
+        out_tok += o
+        parsed = parse_response(resp, CURRENT_VIEW_SCHEMA, _unescape_strings)
+        if parsed is None:
+            LLM_TALLY.fail()
+            return None, in_tok, out_tok
+        if not _looks_mangled(parsed):
+            LLM_TALLY.ok()
             break
         if attempt == _MANGLED_MAX_ATTEMPTS - 1:
+            LLM_TALLY.fail()
             print("  [give-up] generate_current_view still mangled after "
                   f"{_MANGLED_MAX_ATTEMPTS} attempts; keeping the previous view",
                   file=sys.stderr)
@@ -532,31 +549,44 @@ def process(videos, client, channel):
     return records, total_in, total_out
 
 
+@single_writer(lambda channel, client, args: channel.summaries_file)
+@report_discovery_errors
 def run_channel(channel, client, args):
     """Process one channel end-to-end: fetch -> filter -> analyze (native
     video) -> write ledger -> (maybe) regenerate the rolling current view."""
     print(f"\n=== {channel.display_name} ===")
-    summaries = load_json(channel.summaries_file, [])
-    if not isinstance(summaries, list):
-        summaries = []
+    summaries = load_ledger(channel.summaries_file, [])
     seen = {r.get("video_id") for r in summaries}
 
-    feed = fetch_feed(channel)
+    pending = PendingInputs(channel.summaries_file, "video_id", args.dry_run)
+    pending.acknowledge(seen - set(args.force or []))
+    feed = discover(pending, lambda: fetch_feed(channel), [])
+    feed = list({**pending.rows, **{v["video_id"]: v for v in feed}}.values())
     print(f"Feed: {len(feed)} videos in channel RSS")
 
     if args.force:
-        by_id = {v["video_id"]: v for v in feed}
+        # Old forced videos may have scrolled out of RSS; retain their dates
+        # and titles instead of overwriting them with null/ID placeholders.
+        by_id = {v["video_id"]: v for v in summaries}
+        by_id.update({v["video_id"]: v for v in feed})
         todo = [by_id.get(vid, {
                     "video_id": vid, "title": vid, "published": None,
                     "url": WATCH_URL.format(vid=vid)})
-                for vid in args.force]
+                for vid in dict.fromkeys(args.force)]
     else:
         todo = [v for v in feed if v["video_id"] not in seen]
+        if channel.drop_shorts_dupes:
+            todo = [v for v in todo if not any(_same_upload_pair(v, old) for old in summaries)]
+        pending.add(todo)
         if args.limit is not None:
             todo = todo[:args.limit]
 
+    pending.add(todo)
     if not todo:
         print("No new videos to process.")
+        if not args.dry_run:
+            refresh_current_view(client, channel, summaries, _select_current_view_window, generate_current_view,
+                                 INPUT_PER_1M, OUTPUT_PER_1M)
         return
 
     print(f"Processing {len(todo)} video(s)"
@@ -583,27 +613,11 @@ def run_channel(channel, client, args):
                     key=lambda r: r.get("published") or "", reverse=True)
     os.makedirs(DATA_DIR, exist_ok=True)
     write_json_atomic(channel.summaries_file, merged)
+    pending.acknowledge(by_id)
     print(f"Wrote {len(merged)} summaries -> {channel.summaries_file}")
 
-    if channel.current_view_file:
-        view, cv_in, cv_out = generate_current_view(client, channel, merged)
-        if view:
-            cv_cost = (cv_in / 1_000_000 * INPUT_PER_1M
-                       + cv_out / 1_000_000 * OUTPUT_PER_1M)
-            write_json_atomic(channel.current_view_file, view)
-            # ...and append it to the shared, never-overwritten history log.
-            sentiment_history.append_view(channel.key, view)
-            print(f"Current view: {view['overall_sentiment']} "
-                  f"(based on {view['based_on']['count']} videos); "
-                  f"tokens in={cv_in} out={cv_out} (${cv_cost:.4f}) "
-                  f"-> {channel.current_view_file}")
-        else:
-            # New videos landed but the synthesis failed, so the on-disk view (and
-            # the Consensus row built from it) silently keeps describing an older
-            # window. Say so loudly -- this used to be a no-op.
-            print(f"  [current-view FAILED] {channel.key}: kept the previous "
-                  f"{channel.current_view_file} -- it is now stale vs the ledger",
-                  file=sys.stderr)
+    refresh_current_view(client, channel, merged, _select_current_view_window, generate_current_view,
+                                 INPUT_PER_1M, OUTPUT_PER_1M)
 
 
 def main():
@@ -618,12 +632,13 @@ def main():
     ap.add_argument("--dry-run", action="store_true",
                     help="analyze and print, but do not write the summaries file")
     args = ap.parse_args()
+    if args.limit is not None and args.limit < 0:
+        ap.error("--limit must be nonnegative")
 
     if args.force and not args.channel:
         ap.error("--force requires --channel (one channel at a time)")
 
-    for p in TELEGRAM_ENVS:                       # loads GOOGLE_API_KEY + alerts
-        load_env(p)
+    load_env(ENV_FILE)
     if not os.environ.get("GOOGLE_API_KEY"):
         print("GOOGLE_API_KEY is not set. Add it to ~/pilot_trader/.env "
               "and re-run.", file=sys.stderr)
@@ -638,27 +653,24 @@ def main():
         except (SystemExit, KeyboardInterrupt):
             raise
         except Exception as exc:
-            # Single-channel run: hard-fail (the top-level handler pages +
+            # Single-channel run: hard-fail (the top-level handler logs +
             # exits). All-channels run: one channel's transient outage must
             # NOT starve the other channel for the whole cron tick -- log +
-            # page for this channel, keep going, then exit non-zero so the
+            # log for this channel, keep going, then exit non-zero so the
             # failure still surfaces. Mirrors twitter_digest.py's main().
             if len(channels) == 1:
                 raise
             traceback.print_exc()
             failed.append(channel.key)
-            try:
-                notify_telegram(f"youtube_monitor {channel.key} FAILED: {exc!r}")
-            except Exception:
-                pass
     # A wholesale Gemini failure never raises (each call site swallows its own
     # APIError), so without this the run exits 0 having written nothing and the
     # dashboard keeps serving the previous cards. Mirrors twitter_digest.main().
     if not args.dry_run:
-        alert_gemini_outage(LLM_TALLY, "youtube_monitor")
+        report_gemini_outage(LLM_TALLY, "youtube_monitor")
 
-    if failed:
-        print(f"channels failed: {', '.join(failed)}", file=sys.stderr)
+    if failed or LLM_TALLY.errors:
+        print(f"channels failed: {', '.join(failed) or 'none'}; "
+              f"failed Gemini operations: {LLM_TALLY.errors}", file=sys.stderr)
         sys.exit(1)
 
 
@@ -667,12 +679,6 @@ if __name__ == "__main__":
         main()
     except (SystemExit, KeyboardInterrupt):
         raise
-    except BaseException as exc:                  # log + page, then non-zero exit
-        try:
-            for p in TELEGRAM_ENVS:
-                load_env(p)
-            notify_telegram(f"youtube_monitor.py FAILED: {exc!r}")
-        except Exception:
-            pass
+    except BaseException:
         traceback.print_exc()
         sys.exit(1)

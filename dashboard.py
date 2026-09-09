@@ -6,7 +6,6 @@ Reads:
   * trades.json    — the signal event log (influencer signals + resolutions)
   * positions.json — reconciled (account, ticker) positions
   * data/*_summaries.json, *_current_view.json — the YouTube/X analysis digests
-  * data/reddit_strategies.json — the Reddit strategy miner
 
 Current/historical prices come from yfinance (cached 1h). Returns use the
 position's entry_price when known, else estimate entry from the close on the
@@ -47,7 +46,7 @@ ENV_FILE = "/home/fbazsa/pilot_trader/.env"
 STALE_HOURS = 8           # cron runs every 4h; >8h means a run was missed
 REFRESH_MS = 60_000
 PORT = 8051
-DOCKER_SOCKET = "/var/run/docker.sock"   # mounted into the container for stats/restart
+DOCKER_SOCKET = "/var/run/docker.sock"   # optional; not mounted by default
 DASH_CONTAINER = "pilot_trader_dashboard"
 CONTAINER_STATS_TTL = 25  # cache container stats this many seconds
 CRON_HOURS = [0, 4, 8, 12, 16, 20]       # monitor.py cron slots (UTC)
@@ -86,12 +85,8 @@ GETXAPI_BASE = "https://api.getxapi.com"
 CREDITS_REFRESH_MS = 3_600_000   # 60 min — don't hammer the credits API
 CREDITS_LOW_USD = 1.00           # below this, show the balance in red
 
-# Anthropic spend telemetry written per run by monitor.log_cost().
+# LLM spend telemetry written per run by monitor.log_cost().
 COST_LOG_FILE = "/home/fbazsa/pilot_trader/data/cost_log.json"
-# Reddit-miner Anthropic spend, written per run by scripts/reddit_miner.py
-# (one record/run: {timestamp, in_tok, out_tok, total_usd}). Separate ledger so
-# the Reddit cost is shown distinctly from the tweet-pipeline API costs.
-REDDIT_COST_LOG_FILE = "/home/fbazsa/pilot_trader/data/reddit_cost_log.json"
 
 
 def _load_env(path):
@@ -104,7 +99,9 @@ def _load_env(path):
         if not line or line.startswith("#") or "=" not in line:
             continue
         k, v = line.split("=", 1)
-        os.environ.setdefault(k.strip(), v.strip().strip('"').strip("'"))
+        # The dashboard needs only the read-only credit display's credential.
+        if k.strip() == "GETXAPI_KEY":
+            os.environ.setdefault(k.strip(), v.strip().strip('"').strip("'"))
 
 
 _load_env(ENV_FILE)
@@ -281,7 +278,7 @@ def get_hist_close(ticker, date_str):
     now = time.time()
     key = (ticker, date_str)
     hit = _hist_cache.get(key)
-    if hit and (hit[0] is not None or now - hit[1] < PRICE_TTL):
+    if hit and now - hit[1] < PRICE_TTL:
         return hit[0]
     price = _fetch_hist_close(ticker, date_str)
     _hist_cache[key] = (price, now)
@@ -482,6 +479,8 @@ INFLUENCER_TABLE_COLUMNS = [
     {"name": "TICKER", "id": "ticker"},
     {"name": "ASSET", "id": "asset_type"},
     {"name": "ACTION", "id": "signal_type"},
+    {"name": "SIDE", "id": "side"},
+    {"name": "ENTRY STATUS", "id": "entry_status"},
     {"name": "CONF", "id": "confidence"},
     {"name": "ENTRY $", "id": "entry_price"},
     {"name": "STOP $", "id": "stop_loss"},
@@ -589,7 +588,9 @@ def influencer_signals_data(df, account=None):
             "date": r.get("date"),
             "ticker": r.get("ticker"),
             "asset_type": r.get("asset_type") or "unknown",
-            "signal_type": r.get("signal_type"),
+            "signal_type": _s(r.get("position_action")) if isinstance(r.get("position_action"), str) else r.get("signal_type"),
+            "side": _s(r.get("side")),
+            "entry_status": _s(r.get("entry_status")),
             "confidence": r.get("confidence"),
             "entry_price": _m(r.get("entry_price")),
             "stop_loss": _m(r.get("stop_loss")),
@@ -618,7 +619,9 @@ def influencer_resolutions(positions, account=None):
     closed calls computed the win rate only over calls they hadn't talked
     about since. If `account` is given, restrict to that one handle."""
     out = []
-    for p in influencer_positions(positions):
+    cycles = [cycle for position in positions
+              for cycle in [*position.get("prior_cycles", []), position]]
+    for p in influencer_positions(cycles):
         status = p.get("status")
         if status not in ("open", "closed"):
             continue
@@ -703,8 +706,8 @@ def influencer_winrate_card(resolutions):
     if c["total"] and c["no_stop"] / c["total"] * 100 >= NO_STOP_CAVEAT_PCT:
         lines.append(html.Div(
             f"{c['no_stop'] / c['total'] * 100:.0f}% of calls have no "
-            f"stop-loss set (a loss can't be recorded for those under "
-            f"current logic)",
+            f"stop-loss set (only an explicit losing close can record "
+            f"a loss for those calls)",
             style={"color": C["yellow"], "fontSize": "0.76rem",
                    "marginTop": "4px", "fontStyle": "italic"}))
 
@@ -746,8 +749,7 @@ def _influencer_returns(account, resolutions):
             tdate = p.get("trade_date") or (p.get("opened_at") or "")[:10] or None
             entry = get_hist_close(sym, tdate) if tdate else None
         cur = get_price(sym)
-        rr.append((p["ticker"], round((cur - entry) / entry * 100, 1)
-                   if (entry and cur) else None))
+        rr.append((p["ticker"], resolver.return_pct(p, entry, cur)))
     return rr
 
 
@@ -809,7 +811,7 @@ def influencer_positions_table(resolutions):
         else:
             est = False
         cur = get_price(sym)
-        ret = round((cur - entry) / entry * 100, 1) if (entry and cur) else None
+        ret = resolver.return_pct(p, entry, cur)
         tdate = p.get("trade_date") or _local_date(p.get("opened_at")) or None
         if res:
             label, ckey = _STATUS_LABEL[res["status"]]
@@ -817,7 +819,7 @@ def influencer_positions_table(resolutions):
         else:
             status_cell = ("live", C["blue"])
         rows.append((
-            (p["ticker"], C["blue"]),
+            (p["ticker"] + (" SHORT" if p.get("side") == "short" else ""), C["blue"]),
             atype,
             tdate or "—",
             _money(entry) + ("*" if est and entry else ""),
@@ -987,7 +989,7 @@ def _sep():
 
 
 def _cost_sums():
-    """(today, month, all-time) Anthropic spend from data/cost_log.json."""
+    """(today, month, all-time) LLM spend from data/cost_log.json."""
     try:
         with open(COST_LOG_FILE) as f:
             log = json.load(f)
@@ -1009,20 +1011,6 @@ def _cost_sums():
     return d, m, t
 
 
-def _reddit_cost_month():
-    """Current-month Reddit-miner Anthropic spend (USD) from
-    data/reddit_cost_log.json. 0.0 if the ledger is missing/corrupt (the segment
-    just reads $0.00 until the next reddit_miner run writes a record)."""
-    try:
-        with open(REDDIT_COST_LOG_FILE) as f:
-            log = json.load(f)
-        if not isinstance(log, list):
-            log = []
-    except (json.JSONDecodeError, OSError):
-        log = []
-    month = datetime.now(timezone.utc).strftime("%Y-%m")
-    return sum((r.get("total_usd") or 0.0) for r in log
-               if (r.get("timestamp") or "")[:7] == month)
 
 
 def _next_cron_run(now=None):
@@ -1075,10 +1063,7 @@ def status_row_1():
 
 
 def status_row_2():
-    """Status bar row 2: container CPU/RAM + GetXAPI credits + Reddit/API costs
-    + prices. e.g. 'CPU 0.1% · RAM 278/384MB · GetXAPI: $9.83 credits · Reddit:
-    $0.00/mo · API Costs: today $0.80 / mo $4.13 · Prices as of: 17:44 CEST
-    (yfinance, 1h cache)'."""
+    """Container stats, GetXAPI credits, trade-monitor LLM costs and prices."""
     cs = container_stat()
     if cs.get("ok"):
         cpu = f"{cs['cpu_pct']:.1f}%" if cs["cpu_pct"] is not None else "--"
@@ -1110,11 +1095,7 @@ def status_row_2():
         html.Span("GetXAPI: ", style={"color": C["dim"]}),
         html.Span(bal_txt, style={"color": bal_color, "fontWeight": "bold"}),
         _sep(),
-        html.Span("Reddit: ", style={"color": C["dim"]}),
-        html.Span(f"${_reddit_cost_month():.2f}/mo",
-                  style={"color": C["text"]}),
-        _sep(),
-        html.Span("API Costs: ", style={"color": C["dim"]}),
+        html.Span("Trade monitor LLM: ", style={"color": C["dim"]}),
         html.Span(f"today ${d:,.2f} / mo ${m:,.2f}",
                   style={"color": C["text"]}),
         _sep(),
@@ -1211,7 +1192,7 @@ def _yt_card(v):
         "padding": "12px 16px", "marginTop": "10px"}, children=[
         html.Div(style={"display": "flex", "justifyContent": "space-between",
                         "alignItems": "flex-start", "gap": "12px"}, children=[
-            html.A(v.get("title") or v.get("video_id"), href=v.get("url"),
+            html.A(v.get("title") or v.get("video_id"), href=_safe_href(v.get("url")),
                    target="_blank", rel="noopener noreferrer",
                    style={"color": C["text"], "fontWeight": "bold",
                           "fontSize": "0.9rem", "textDecoration": "none"}),
@@ -1780,6 +1761,9 @@ _CONSENSUS_RANK = {"bearish": 0, "bullish": 1, "mixed": 2, "neutral": 3}
 # stances non-comparable if you don't show it.
 _STALE_WARN_D = 3        # older than this -> yellow
 _STALE_BAD_D = 7         # this old or more -> red
+_CONSENSUS_HEADER_STYLE = {"color": C["dim"], "fontFamily": MONO,
+                           "fontSize": "0.66rem", "textTransform": "uppercase",
+                           "letterSpacing": "0.04em", "whiteSpace": "nowrap"}
 _CONSENSUS_GRID = "128px 84px 148px 84px minmax(0,1fr)"
 
 
@@ -1816,7 +1800,7 @@ def _consensus_head():
                            "gridTemplateColumns": _CONSENSUS_GRID,
                            "gap": "10px", "padding": "0 12px 6px",
                            "borderBottom": f"1px solid {C['border']}"},
-                    children=[html.Div(c, style=_RTH) for c in cells])
+                    children=[html.Div(c, style=_CONSENSUS_HEADER_STYLE) for c in cells])
 
 
 def _consensus_row(label, view, unit="posts"):
@@ -1913,182 +1897,7 @@ def consensus_section():
         "borderRadius": "8px", "marginTop": "10px", "overflowX": "auto"})]
 
 
-# --- Reddit trading-strategy miner output ---------------------------------
-# Mirrors the YouTube section: read scripts/reddit_miner.py's JSON ledger and
-# render it with the same GitHub-dark helpers as the rest of the app.
-REDDIT_STRATEGIES_FILE = os.path.join(DATA_DIR, "reddit_strategies.json")
-
-# Per-subreddit badge tint (any unlisted sub falls back to blue).
-_REDDIT_SUB_COLOR = {
-    "algotrading": C["blue"], "CryptoMarkets": C["orange"],
-    "BitcoinMarkets": C["yellow"], "ethtrader": C["purple"],
-    "technicalanalysis": C["green"], "CryptoCurrency": C["orange"],
-}
-# Shared grid template: the header and every row use it so columns line up.
-_REDDIT_GRID = ("104px minmax(0,1.7fr) 56px 88px 84px minmax(0,1.5fr) "
-                "46px 40px")
-_RTH = {"color": C["dim"], "fontFamily": MONO, "fontSize": "0.66rem",
-        "textTransform": "uppercase", "letterSpacing": "0.04em",
-        "whiteSpace": "nowrap"}
-_FILTER_LABEL = {"color": C["dim"], "fontSize": "0.7rem",
-                 "textTransform": "uppercase", "letterSpacing": "0.05em",
-                 "marginBottom": "4px"}
-
-
-def load_reddit_strategies():
-    """Strategies mined from Reddit (written by scripts/reddit_miner.py). Missing
-    or corrupt file -> [] (the tab just shows 'no data')."""
-    try:
-        with open(REDDIT_STRATEGIES_FILE) as f:
-            data = json.load(f)
-        return data if isinstance(data, list) else []
-    except (OSError, json.JSONDecodeError):
-        return []
-
-
-def _conf_color(c):
-    if not isinstance(c, (int, float)):
-        return C["dim"]
-    return C["green"] if c >= 0.8 else C["yellow"] if c >= 0.65 else C["red"]
-
-
-def _reddit_badge(sub):
-    color = _REDDIT_SUB_COLOR.get(sub, C["blue"])
-    return html.Span(f"r/{sub}", style={
-        "display": "inline-block", "background": C["bg"],
-        "border": f"1px solid {color}", "color": color, "borderRadius": "10px",
-        "padding": "1px 7px", "fontSize": "0.66rem", "fontWeight": "bold",
-        "whiteSpace": "nowrap", "overflow": "hidden", "textOverflow": "ellipsis"})
-
-
-def _reddit_chip(text):
-    return html.Span(text, style={
-        "display": "inline-block", "background": C["bg"],
-        "border": f"1px solid {C['border']}", "borderRadius": "10px",
-        "padding": "1px 7px", "margin": "0 4px 0 0", "fontSize": "0.64rem",
-        "color": C["dim"], "whiteSpace": "nowrap"})
-
-
-def _flag_chip(text):
-    # Red-tinted, wraps (red-flag phrases are sentences, not one-word tags).
-    return html.Span(text, style={
-        "display": "inline-block", "background": C["bg"],
-        "border": f"1px solid {C['red']}", "borderRadius": "10px",
-        "padding": "1px 8px", "margin": "2px 5px 2px 0", "fontSize": "0.66rem",
-        "color": C["red"], "whiteSpace": "normal", "lineHeight": "1.35"})
-
-
-def _reddit_detail(rec):
-    """Panel revealed when a row is expanded: summary + entry/exit + claimed
-    performance + red flags + found_at."""
-    def field(label, val):
-        return html.Div([
-            html.Span(f"{label}: ", style={"color": C["dim"],
-                                           "fontWeight": "bold"}),
-            html.Span(val or "—"),
-        ], style={"fontSize": "0.76rem", "marginTop": "4px",
-                  "lineHeight": "1.4", "color": C["text"]})
-    found = (_iso_to_local(rec["found_at"], "%Y-%m-%d %H:%M")
-             if rec.get("found_at") else "—")
-    flags = rec.get("red_flags") or []
-    return html.Div(style={
-        "background": C["bg"], "borderBottom": f"1px solid {C['border']}",
-        "padding": "10px 14px"}, children=[
-        html.Div(rec.get("summary") or "", style={
-            "fontSize": "0.8rem", "color": C["text"], "lineHeight": "1.45"}),
-        field("Entry", rec.get("entry")),
-        field("Exit", rec.get("exit")),
-        field("Performance", rec.get("performance_claim")),
-        (html.Div([html.Span("⚠ Red flags: ", style={
-            "color": C["red"], "fontWeight": "bold", "fontSize": "0.72rem"})]
-            + [_flag_chip(f) for f in flags], style={"marginTop": "8px"})
-         if flags else html.Span()),
-        html.Div(f"found {found}", style={"color": C["dim"],
-                                          "fontSize": "0.68rem",
-                                          "marginTop": "8px"}),
-    ])
-
-
-def _reddit_row(rec):
-    conf = rec.get("confidence")
-    conf_pct = f"{conf*100:.0f}%" if isinstance(conf, (int, float)) else "—"
-    tags = rec.get("tags") or []
-    title = rec.get("title") or rec.get("post_id") or "(untitled)"
-
-    def icon(on):
-        return html.Span("✓" if on else "·", style={
-            "color": C["green"] if on else C["dim"], "textAlign": "center"})
-
-    cells = [
-        _reddit_badge(rec.get("subreddit") or "?"),
-        html.A(title, href=_safe_href(rec.get("url")), target="_blank",
-               rel="noopener noreferrer", style={
-                   "color": C["text"], "textDecoration": "none",
-                   "display": "block", "overflow": "hidden",
-                   "textOverflow": "ellipsis", "whiteSpace": "nowrap"}),
-        html.Span(conf_pct, style={"color": _conf_color(conf),
-                                   "fontWeight": "bold"}),
-        html.Span(rec.get("asset") or "—", style={
-            "color": C["blue"], "overflow": "hidden",
-            "textOverflow": "ellipsis", "whiteSpace": "nowrap"}),
-        html.Span(rec.get("timeframe") or "—", style={"color": C["text"],
-                                                      "whiteSpace": "nowrap"}),
-        html.Div([_reddit_chip(t) for t in tags[:4]] or "—", style={
-            "overflow": "hidden", "whiteSpace": "nowrap"}),
-        icon(rec.get("has_backtest")),
-        icon(rec.get("has_code")),
-    ]
-    summary = html.Summary(cells, style={
-        "display": "grid", "gridTemplateColumns": _REDDIT_GRID, "gap": "10px",
-        "alignItems": "center", "padding": "7px 10px", "cursor": "pointer",
-        "fontSize": "0.78rem", "fontFamily": MONO,
-        "borderBottom": f"1px solid {C['border']}", "listStyle": "none"})
-    return html.Details([summary, _reddit_detail(rec)],
-                        style={"background": C["card"]})
-
-
-def reddit_strategy_table(rows):
-    """Header + one expandable <details> row per strategy (click to expand)."""
-    if not rows:
-        return html.Div("No strategies match the current filters.",
-                        style={"color": C["dim"], "fontSize": "0.8rem",
-                               "padding": "10px 2px"})
-    header = html.Div(
-        [html.Div(h, style=_RTH) for h in
-         ["subreddit", "title", "conf", "asset", "timeframe", "tags",
-          "test", "code"]],
-        style={"display": "grid", "gridTemplateColumns": _REDDIT_GRID,
-               "gap": "10px", "padding": "6px 10px", "background": C["bg"],
-               "borderBottom": f"1px solid {C['border']}"})
-    return html.Div([header] + [_reddit_row(r) for r in rows], style={
-        "border": f"1px solid {C['border']}", "borderRadius": "8px",
-        "overflow": "hidden", "marginTop": "12px"})
-
-
-def reddit_stat_cards(rows):
-    """KPI strip over the filtered rows: total · avg confidence · #backtested ·
-    #with-code (Hungarian labels, uppercased by _kpi_tile)."""
-    n = len(rows)
-    confs = [r["confidence"] for r in rows
-             if isinstance(r.get("confidence"), (int, float))]
-    avg = sum(confs) / len(confs) if confs else None
-    bt = sum(1 for r in rows if r.get("has_backtest"))
-    code = sum(1 for r in rows if r.get("has_code"))
-    tiles = [
-        _kpi_tile("Összes stratégia", str(n), C["text"]),
-        _kpi_tile("Átlagos confidence",
-                  f"{avg*100:.0f}%" if avg is not None else "—",
-                  _conf_color(avg)),
-        _kpi_tile("Backtestelt", str(bt), C["green"] if bt else C["dim"],
-                  f"{bt/n*100:.0f}% of {n}" if n else None),
-        _kpi_tile("Van kód", str(code), C["green"] if code else C["dim"],
-                  f"{code/n*100:.0f}% of {n}" if n else None),
-    ]
-    return html.Div(tiles, style={"display": "flex", "flexWrap": "wrap",
-                                  "gap": "10px", "marginTop": "10px"})
-
-
-# --- system status bar: Docker container stats + restart (via Docker socket) -
+# --- system status bar: optional Docker container stats --------------------
 # Same approach as ~/paper_trader/dashboard.py: talk to the Docker daemon over
 # its Unix socket (mounted into the container) for true per-container CPU/RAM.
 class _UnixSocketHTTPConn(_http_client.HTTPConnection):
@@ -2212,7 +2021,7 @@ app.layout = html.Div(
 
             # One sub-tab per destination: influencer trade-call accounts
             # (IncomeSharks / traderstewie), the analysis-digest feeds, and the
-            # Consensus panel. Reddit strategies get their own tab at the end.
+            # Consensus panel.
             html.Div(style={"overflowX": "auto",
                             "WebkitOverflowScrolling": "touch"},
                      children=dcc.Tabs(
@@ -2251,8 +2060,6 @@ app.layout = html.Div(
                              dcc.Tab(label="Truecrypto", value="Truecrypto",
                                      style=_TAB_STYLE, selected_style=_TAB_SELECTED),
                              dcc.Tab(label="Geoff Kendrick", value="GeoffKendrick",
-                                     style=_TAB_STYLE, selected_style=_TAB_SELECTED),
-                             dcc.Tab(label="Reddit stratégiák", value="reddit",
                                      style=_TAB_STYLE, selected_style=_TAB_SELECTED),
                          ])),
 
@@ -2505,75 +2312,11 @@ app.layout = html.Div(
                 html.Div(id="kendrick-summaries", style={"marginTop": "4px"}),
             ]),
 
-        # --- Reddit strategies view -- hidden until selected -----------------
-        # Strategies mined by scripts/reddit_miner.py (data/reddit_strategies.json):
-        # stat strip + filters + a click-to-expand table.
-        html.Div(id="reddit-view", style={"display": "none"}, children=[
-            html.Div("Reddit stratégiák — koncentrált kereskedési stratégiák "
-                     "(r/algotrading + crypto/TA subok)", style=_SECTION_H),
-            html.Div(id="reddit-stats"),
-            html.Div(style={"display": "flex", "flexWrap": "wrap", "gap": "20px",
-                            "alignItems": "flex-start", "marginTop": "18px"},
-                     children=[
-                html.Div(style={"flex": "1 1 280px", "minWidth": "240px"},
-                         children=[
-                    html.Div("Min. confidence", style=_FILTER_LABEL),
-                    dcc.Slider(id="reddit-conf", min=0.5, max=1.0, step=0.05,
-                               value=0.5,
-                               marks={v: {"label": f"{int(v * 100)}%",
-                                          "style": {"color": C["dim"],
-                                                    "fontSize": "0.6rem"}}
-                                      for v in [0.5, 0.6, 0.7, 0.8, 0.9, 1.0]},
-                               tooltip={"placement": "bottom",
-                                        "always_visible": False}),
-                ]),
-                html.Div(style={"flex": "1 1 200px", "minWidth": "180px"},
-                         children=[
-                    html.Div("Subreddit", style=_FILTER_LABEL),
-                    dcc.Dropdown(id="reddit-sub", placeholder="Mind",
-                                 clearable=True),
-                ]),
-                html.Div(style={"flex": "1 1 200px", "minWidth": "180px"},
-                         children=[
-                    html.Div("Tag", style=_FILTER_LABEL),
-                    dcc.Dropdown(id="reddit-tag", placeholder="Mind",
-                                 clearable=True),
-                ]),
-            ]),
-            html.Div(id="reddit-table"),
-        ]),
+
     ],
 )
 
 
-@app.callback(
-    Output("reddit-stats", "children"),
-    Output("reddit-table", "children"),
-    Output("reddit-sub", "options"),
-    Output("reddit-tag", "options"),
-    Input("interval", "n_intervals"),
-    Input("reddit-conf", "value"),
-    Input("reddit-sub", "value"),
-    Input("reddit-tag", "value"),
-)
-def render_reddit(_n, min_conf, sub, tag):
-    """Filter data/reddit_strategies.json by confidence + subreddit + tag, then
-    render the KPI strip and the expandable table. Dropdown options are derived
-    from the FULL set so a filter never hides its own current value. Refreshes on
-    the shared 60s interval like every other tab."""
-    strategies = load_reddit_strategies()
-    subs = sorted({s.get("subreddit") for s in strategies if s.get("subreddit")})
-    tags = sorted({t for s in strategies for t in (s.get("tags") or [])})
-    sub_opts = [{"label": f"r/{s}", "value": s} for s in subs]
-    tag_opts = [{"label": t, "value": t} for t in tags]
-    mc = min_conf if isinstance(min_conf, (int, float)) else 0.5
-    rows = [s for s in strategies
-            if (s.get("confidence") or 0) >= mc
-            and (not sub or s.get("subreddit") == sub)
-            and (not tag or tag in (s.get("tags") or []))]
-    rows.sort(key=lambda r: r.get("found_at") or "", reverse=True)
-    return (reddit_stat_cards(rows), reddit_strategy_table(rows),
-            sub_opts, tag_opts)
 
 
 @app.callback(
@@ -2612,42 +2355,21 @@ def _influencer_header(title, account):
     Output("glassnode-view", "style"),
     Output("truecrypto-view", "style"),
     Output("kendrick-view", "style"),
-    Output("reddit-view", "style"),
     Output("influencer-pos-header", "children"),
     Output("influencer-sig-header", "children"),
     Input("influencer-subtabs", "value"),
 )
 def switch_influencer_subtab(account):
-    show, hide = {"display": "block"}, {"display": "none"}
-    if account == "Consensus":          # cross-feed summary, renders itself
-        return (hide,) * 13 + ("", "")
-    if account == "BenCowen":           # YouTube analysis view, not a trade view
-        return hide, show, hide, hide, hide, hide, hide, hide, hide, hide, hide, hide, hide, "", ""
-    if account == "JesseOlson":         # YouTube analysis view, not a trade view
-        return hide, hide, show, hide, hide, hide, hide, hide, hide, hide, hide, hide, hide, "", ""
-    if account == "KiYoungJu":          # X analysis view, not a trade view
-        return hide, hide, hide, show, hide, hide, hide, hide, hide, hide, hide, hide, hide, "", ""
-    if account == "JoaoWedson":         # X analysis view, not a trade view
-        return hide, hide, hide, hide, show, hide, hide, hide, hide, hide, hide, hide, hide, "", ""
-    if account == "DorkChicken":        # X analysis view, not a trade view
-        return hide, hide, hide, hide, hide, show, hide, hide, hide, hide, hide, hide, hide, "", ""
-    if account == "DaanCrypto":         # X analysis view, not a trade view
-        return hide, hide, hide, hide, hide, hide, show, hide, hide, hide, hide, hide, hide, "", ""
-    if account == "DonAlt":             # X analysis view, not a trade view
-        return hide, hide, hide, hide, hide, hide, hide, show, hide, hide, hide, hide, hide, "", ""
-    if account == "CowenX":             # X analysis view, not a trade view
-        return hide, hide, hide, hide, hide, hide, hide, hide, show, hide, hide, hide, hide, "", ""
-    if account == "Glassnode":          # X analysis view, not a trade view
-        return hide, hide, hide, hide, hide, hide, hide, hide, hide, show, hide, hide, hide, "", ""
-    if account == "Truecrypto":         # X analysis view, not a trade view
-        return hide, hide, hide, hide, hide, hide, hide, hide, hide, hide, show, hide, hide, "", ""
-    if account == "GeoffKendrick":      # X topic-search analysis view
-        return hide, hide, hide, hide, hide, hide, hide, hide, hide, hide, hide, show, hide, "", ""
-    if account == "reddit":             # Reddit strategies view, renders itself
-        return hide, hide, hide, hide, hide, hide, hide, hide, hide, hide, hide, hide, show, "", ""
-    return (show, hide, hide, hide, hide, hide, hide, hide, hide, hide, hide, hide, hide,
-            _influencer_header(f"{account} — Open Positions", account),
-            _influencer_header(f"{account} — Signals", account))
+    panels = ["trades", "BenCowen", "JesseOlson", "KiYoungJu", "JoaoWedson",
+              "DorkChicken", "DaanCrypto", "DonAlt", "CowenX", "Glassnode",
+              "Truecrypto", "GeoffKendrick"]
+    selected = "trades" if account in INFLUENCER_ACCOUNTS else account
+    styles = tuple({"display": "block" if panel == selected else "none"}
+                   for panel in panels)
+    headers = ((_influencer_header(f"{account} — Open Positions", account),
+                _influencer_header(f"{account} — Signals", account))
+               if selected == "trades" else ("", ""))
+    return styles + headers
 
 
 @app.callback(
@@ -2674,7 +2396,11 @@ def refresh_influencers(_n, account):
     # DorkChicken / DaanCrypto / DonAlt / Glassnode / Truecrypto / Geoff
     # Kendrick are analysis-only views, not traders: no header card /
     # positions / signals — just the cards.
-    if account == "Consensus":       # rendered by refresh_consensus, not here
+    if account == "Consensus" or account not in {
+        *INFLUENCER_ACCOUNTS, "BenCowen", "JesseOlson", "KiYoungJu",
+        "JoaoWedson", "DorkChicken", "DaanCrypto", "DonAlt", "CowenX",
+        "Glassnode", "Truecrypto", "GeoffKendrick",
+    }:
         return "", [], None, None, [], [], [], [], [], [], [], [], [], [], []
     if account == "BenCowen":
         children = youtube_section(load_youtube_summaries())
@@ -2717,7 +2443,12 @@ def refresh_influencers(_n, account):
     resolutions = influencer_resolutions(positions, account=account)
     return (influencer_header_card(account, resolutions=resolutions),
             influencer_signals_data(load_trades(), account=account),
-            influencer_positions_table(resolutions),
+            html.Div([influencer_positions_table(resolutions),
+                      html.Details([html.Summary("Setups / needs review — excluded from win rate"),
+                                    html.Ul([html.Li(f"{p['ticker']} · {p.get('side', 'long')} · {p['status']} · "
+                                                    f"target {_money(p.get('target'))}, stop {_money(p.get('stop_loss'))}")
+                                             for p in positions if p.get("account") == account
+                                             and p.get("status") in ("setup", "review")])])]),
             influencer_winrate_card(resolutions),
             [], [], [], [], [], [], [], [], [], [], [])
 

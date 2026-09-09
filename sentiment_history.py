@@ -9,11 +9,8 @@ alongside those files. It does not change them: the banner and the Consensus
 panel still read the per-feed current_view files, this is purely an additional
 log (the substrate for a future sentiment timeline).
 
-ONE shared file rather than one per feed: every consumer wants all sources
-together, and the two writers never run concurrently (cron: youtube_monitor
-09:00 UTC, twitter_digest 09:30 UTC). A read-modify-write race is therefore only
-possible when a manual run overlaps a cron run, and it costs one lost record,
-not a corrupt file (writes go through write_json_atomic) -- not worth a lock.
+ONE shared file with a sidecar lock serializes writers across X/YouTube
+and overlapping manual/cron runs. Corrupt history is preserved for recovery.
 
 Records are keyed by source + the window they summarize. Re-running a feed with
 --force regenerates a view over the IDENTICAL window (same `based_on`), which is
@@ -31,6 +28,7 @@ import json
 import os
 
 from reconcile import write_json_atomic
+from storage import load_ledger, ledger_lock
 
 HOME = "/home/fbazsa/pilot_trader"
 DATA_DIR = os.path.join(HOME, "data")
@@ -61,7 +59,7 @@ def _record(source, view):
 
 def load_history():
     """Every recorded view in write order (oldest first). Missing or corrupt
-    file -> [] (the log just starts over; it is never on a critical path)."""
+    file -> [] for readers. Writers use strict reads to preserve corrupt files."""
     try:
         with open(HISTORY_FILE) as f:
             data = json.load(f)
@@ -90,16 +88,17 @@ def append_view(source, view):
     summaries and current_view files by the time this is called, so a failure
     here must not fail the run."""
     try:
-        history = load_history()
-        rec = _record(source, view)
-        prior = [i for i, r in enumerate(history) if r.get("source") == source]
-        if prior and history[prior[-1]].get("based_on") == rec["based_on"]:
-            history[prior[-1]] = rec        # same window -> re-synthesis
-        else:
-            history.append(rec)
-            history = _trim(history)
-        os.makedirs(DATA_DIR, exist_ok=True)
-        write_json_atomic(HISTORY_FILE, history)
+        with ledger_lock(HISTORY_FILE, blocking=True):
+            history = load_ledger(HISTORY_FILE, [])
+            rec = _record(source, view)
+            prior = [i for i, r in enumerate(history) if r.get("source") == source]
+            if prior and history[prior[-1]].get("based_on") == rec["based_on"]:
+                history[prior[-1]] = rec        # same window -> re-synthesis
+            else:
+                history.append(rec)
+                history = _trim(history)
+            os.makedirs(DATA_DIR, exist_ok=True)
+            write_json_atomic(HISTORY_FILE, history)
         return True
     except Exception as e:                  # noqa: BLE001 - log-only, see above
         print(f"  [sentiment-history] not recorded: {type(e).__name__}: {e}")

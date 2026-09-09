@@ -104,5 +104,24 @@ def test_corrupt_file_does_not_break_the_run(tmp_path, monkeypatch):
     with open(path, "w") as f:
         f.write("{not json")
     assert sh.load_history() == []
-    assert sh.append_view("cowen", _view()) is True
-    assert len(sh.load_history()) == 1
+    assert sh.append_view("cowen", _view()) is False
+    with open(path) as f:
+        assert f.read() == "{not json"
+
+
+def _append_worker(source):
+    for day in range(1, 9):
+        assert sh.append_view(source, _view(to_date=f'2026-09-{day:02}'))
+
+
+def test_parallel_processes_do_not_lose_history(tmp_path, monkeypatch):
+    import multiprocessing
+    _isolate(tmp_path, monkeypatch)
+    context = multiprocessing.get_context('fork')
+    processes = [context.Process(target=_append_worker, args=(f'source-{i}',)) for i in range(4)]
+    for process in processes:
+        process.start()
+    for process in processes:
+        process.join(timeout=10)
+        assert process.exitcode == 0
+    assert len(sh.load_history()) == 32

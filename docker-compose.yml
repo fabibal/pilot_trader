@@ -6,6 +6,9 @@ services:
     image: pilot-trader-dashboard:latest
     container_name: pilot_trader_dashboard
     restart: unless-stopped
+    # Match fbazsa, who owns the atomically written mode-0600 data files.
+    # Root with all capabilities dropped cannot bypass their permissions.
+    user: "1000:1000"
 
     # Host networking: originally REQUIRED for the IBKR Paper Portfolio tab (IB
     # Gateway only trusts loopback, so a bridge-networked container's different
@@ -22,23 +25,22 @@ services:
     environment:
       - TZ=UTC
       - PYTHONUNBUFFERED=1
+      # Compose reads this one credential from .env; the app needs only credits.
+      - GETXAPI_KEY=${GETXAPI_KEY:-}
 
     volumes:
       # Bind-mount the host project so trades.json / monitor.py / dashboard.py
       # are live inside the container at the path the app expects.
-      - .:/home/fbazsa/pilot_trader
-      # Docker socket for the system-status bar: per-container CPU/RAM stats.
-      # The dashboard only ever issues GET requests against it (no restart
-      # button here — that's ~/paper_trader's dashboard).
-      # ⚠️ SECURITY: the mount still grants full Docker-daemon control, which
-      # is root-equivalent on the host (any process in the container could
-      # start a privileged container). A `:ro` mount would NOT mitigate it
-      # (connecting to a unix socket needs write permission, so :ro just
-      # breaks the stats too) and a socket proxy is overkill here.
-      # Accepted for this personal, paper-account setup running only our own
-      # (bind-mounted) code. Harden before exposing the dashboard beyond a
-      # trusted network: put it behind authentication, or drop this mount.
-      - /var/run/docker.sock:/var/run/docker.sock
+      # Read-only: a dashboard compromise must not rewrite source or ledgers.
+      - .:/home/fbazsa/pilot_trader:ro
+      # Hide unneeded API secrets in the host .env from the dashboard.
+      - /dev/null:/home/fbazsa/pilot_trader/.env:ro
+      # No Docker socket: status stats gracefully report unavailable.
+
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
 
     deploy:
       resources:

@@ -49,6 +49,8 @@ from google.genai import types as genai_types
 from google.genai import errors as genai_errors
 
 from reconcile import reconcile, write_json_atomic
+from storage import load_ledger, single_writer
+from llm_support import parse_response, token_usage
 
 # --- config ---------------------------------------------------------------
 # X bearer token is loaded from .env (X_BEARER_TOKEN) — never hardcoded.
@@ -62,15 +64,8 @@ TRADES_FILE = os.path.join(HOME, "trades.json")
 POSITIONS_FILE = os.path.join(HOME, "positions.json")
 STATE_FILE = os.path.join(HOME, ".monitor_state.json")
 ENV_FILE = os.path.join(HOME, ".env")
-# Telegram alert credentials live in paper_trader's .env (shared bot). We also
-# look at the home .env. All loaded read-only via setdefault, so pilot_trader's
-# own .env still wins.
-PAPER_ENV = "/home/fbazsa/paper_trader/.env"
-SHARED_ENV = "/home/fbazsa/.env.shared"
-HOME_ENV = "/home/fbazsa/.env"
-TELEGRAM_ENVS = (ENV_FILE, PAPER_ENV, SHARED_ENV, HOME_ENV)
 MONITOR_LOG = os.path.join(HOME, "monitor.log")
-STALE_ALERT_HOURS = 8        # alert if the last successful run is older than this
+STALE_WARN_HOURS = 8        # alert if the last successful run is older than this
 RAW_FILES = {  # used by --backfill; accounts without a snapshot are skipped
     "IncomeSharks": os.path.join(HOME, "tweets_incomesharks.json"),
     "traderstewie": os.path.join(HOME, "tweets_traderstewie.json"),
@@ -155,6 +150,13 @@ EXTRACTION_SYSTEM = (
     "transaction; \"none\" for pure market commentary, opinion, analysis, "
     "questions, or replies about other people's trades that are NOT an "
     "actionable own trade/call.\n"
+    "- side: long or short, the direction of the actual holding/setup. "
+    "Covering a short is side short, position_action close/reduce.\n"
+    "- position_action: open, add, reduce, close, or hold. Short entries are "
+    "open/add, never a long exit.\n"
+    "- entry_status: confirmed only for an explicitly executed entry or actual "
+    "current holding/exit. Conditional calls, watching, prospective targets, "
+    "and recommendations without an actual entry are setup.\n"
     "- sell_kind: only when action is \"sell\". \"full\" if the WHOLE position "
     "was exited/closed/dumped/sold out. \"partial\" if it was only reduced "
     "(\"trimmed\", \"reduced\", \"scaled out\", \"took partial/some profits\", "
@@ -207,6 +209,9 @@ SIGNAL_SCHEMA = {
         "ticker": {"type": ["string", "null"]},
         "asset_type": {"type": "string", "enum": ["stock", "crypto", "unknown"]},
         "action": {"type": "string", "enum": ["buy", "sell", "position", "none"]},
+        "side": {"type": "string", "enum": ["long", "short"]},
+        "position_action": {"type": "string", "enum": ["open", "add", "reduce", "close", "hold"]},
+        "entry_status": {"type": "string", "enum": ["confirmed", "setup"]},
         "sell_kind": {"anyOf": [
             {"type": "string", "enum": ["full", "partial"]},
             {"type": "null"},
@@ -228,7 +233,8 @@ SIGNAL_SCHEMA = {
     },
     "required": ["ticker", "asset_type", "action", "sell_kind", "size_pct",
                  "entry_price", "stop_loss", "target", "trade_date",
-                 "holding_thesis", "confidence", "portfolio", "reasoning"],
+                 "holding_thesis", "confidence", "portfolio", "reasoning",
+                 "side", "position_action", "entry_status"],
     "additionalProperties": False,
 }
 
@@ -271,19 +277,40 @@ CHART_SCHEMA = {
 }
 
 
+class _NoMediaRedirects(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        raise urllib.error.URLError("Media redirects are not allowed")
+
+
 def _image_block(url):
     """Download a Twitter media photo and return a Gemini image Part, or None
     on any failure. `name=small` keeps the download (and the vision token cost)
     modest while staying legible for chart levels."""
     try:
-        req = urllib.request.Request(url + "?name=small",
+        parts = urllib.parse.urlsplit(url)
+        if (parts.scheme != "https" or parts.hostname != "pbs.twimg.com"
+                or parts.username or parts.password or parts.port not in (None, 443)):
+            raise ValueError("Untrusted Twitter media URL")
+        query = dict(urllib.parse.parse_qsl(parts.query))
+        query["name"] = "small"
+        url = urllib.parse.urlunsplit(parts._replace(
+            query=urllib.parse.urlencode(query), fragment=""))
+        req = urllib.request.Request(url,
                                      headers={"User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            raw = resp.read()
-    except (urllib.error.URLError, OSError) as e:
-        print(f"  [media error] {url}: {e}", file=sys.stderr)
+        opener = urllib.request.build_opener(_NoMediaRedirects())
+        with opener.open(req, timeout=15) as resp:
+            raw = resp.read(5 * 1024 * 1024 + 1)
+        if len(raw) > 5 * 1024 * 1024:
+            raise ValueError("Media exceeds 5 MiB limit")
+        if raw.startswith(b"\x89PNG\r\n\x1a\n"):
+            media_type = "image/png"
+        elif raw.startswith(b"\xff\xd8\xff"):
+            media_type = "image/jpeg"
+        else:
+            raise ValueError("Unsupported media content (expected PNG/JPEG)")
+    except (urllib.error.URLError, OSError, ValueError, TypeError) as e:
+        print(f"  [media error] {type(e).__name__}: {e}", file=sys.stderr)
         return None
-    media_type = "image/png" if url.lower().endswith(".png") else "image/jpeg"
     return genai_types.Part.from_bytes(data=raw, mime_type=media_type)
 
 
@@ -384,17 +411,9 @@ def _looks_mangled(obj):
     return False
 
 
-def _parse_gemini_json(resp):
-    try:
-        return json.loads(resp.text)
-    except (json.JSONDecodeError, TypeError, ValueError):
-        return None
-
 
 def _gemini_usage(resp):
-    u = resp.usage_metadata
-    return (u.prompt_token_count or 0,
-            (u.candidates_token_count or 0) + (u.thoughts_token_count or 0))
+    return token_usage(resp)
 
 
 class Interpreter:
@@ -404,10 +423,12 @@ class Interpreter:
         self.gemini_client = genai.Client()   # reads GOOGLE_API_KEY from env
         self.calls = 0
         self.errors = 0
+        self.successes = 0
         self.input_tokens = 0
         self.output_tokens = 0
         # Vision usage tracked separately for cost reporting (different model).
         self.vision_calls = 0
+        self.vision_errors = 0
         self.vision_input_tokens = 0
         self.vision_output_tokens = 0
 
@@ -436,7 +457,12 @@ class Interpreter:
         in_tok, out_tok = _gemini_usage(resp)
         self.input_tokens += in_tok
         self.output_tokens += out_tok
-        return _parse_gemini_json(resp)
+        parsed = parse_response(resp, SIGNAL_SCHEMA)
+        if parsed is None:
+            self.errors += 1
+        else:
+            self.successes += 1
+        return parsed
 
     def extract_chart(self, media_urls, text, account, tweet_date):
         """Run a Gemini vision pass over the tweet's chart image(s). Returns the
@@ -444,6 +470,7 @@ class Interpreter:
         parts = [p for p in (_image_block(u)
                              for u in media_urls[:MAX_VISION_IMAGES]) if p]
         if not parts:
+            self.vision_errors += 1
             return None
         contents = parts + [f"Posted by @{account}\nTweet date: {tweet_date}\n"
                             f"Tweet:\n{text}"]
@@ -461,12 +488,16 @@ class Interpreter:
             )
         except genai_errors.APIError as e:
             print(f"  [vision error] {type(e).__name__}: {e}", file=sys.stderr)
+            self.vision_errors += 1
             return None
         self.vision_calls += 1
         in_tok, out_tok = _gemini_usage(resp)
         self.vision_input_tokens += in_tok
         self.vision_output_tokens += out_tok
-        return _parse_gemini_json(resp)
+        parsed = parse_response(resp, CHART_SCHEMA)
+        if parsed is None:
+            self.vision_errors += 1
+        return parsed
 
     def cost(self):
         return (self.input_tokens / 1_000_000 * EXTRACT_INPUT_PER_1M
@@ -664,6 +695,9 @@ def record_from_parsed(account, tw, parsed):
         "tweet_id": tw["id"],
         "timestamp": tw.get("created_at"),
         "signal_type": parsed["action"],
+        "side": parsed.get("side"),
+        "position_action": parsed.get("position_action"),
+        "entry_status": parsed.get("entry_status"),
         "sell_kind": parsed.get("sell_kind"),
         "confidence": parsed["confidence"],
         "actionable": parsed["action"] in ("buy", "sell", "position"),
@@ -692,6 +726,8 @@ def build_signal(account, tw, interp):
     tweet_date = (tw.get("created_at") or "")[:10]
     text = tw.get("text", "")
     parsed = interp.extract(text, account, tweet_date)
+    if parsed is None:
+        return None
     # Influencer chart-image pass (Gemini vision). Runs when the tweet carries a
     # photo AND either (a) the text pass already yielded an actionable signal —
     # vision backfills its chart-only levels — or (b) the text was NOT actionable
@@ -741,7 +777,7 @@ def load_json(path, default):
 def api_get(url):
     req = urllib.request.Request(url)
     req.add_header("Authorization", f"Bearer {os.environ['X_BEARER_TOKEN']}")
-    with urllib.request.urlopen(req) as resp:
+    with urllib.request.urlopen(req, timeout=30) as resp:
         return json.load(resp)
 
 
@@ -774,7 +810,7 @@ def getxapi_get(url):
     # connection drops -> IncompleteRead). The gzip body is ~6KB and chunked
     # (no Content-Length), so it survives the flaky link. Vary: Accept-Encoding.
     req.add_header("Accept-Encoding", "gzip")
-    with urllib.request.urlopen(req) as resp:
+    with urllib.request.urlopen(req, timeout=30) as resp:
         body = resp.read()
         if resp.headers.get("Content-Encoding") == "gzip":
             body = gzip.decompress(body)
@@ -791,7 +827,7 @@ def getxapi_get(url):
 # raise immediately. Mirrors twitter_digest._getxapi_get_retry.
 # 2026-07-13: bumped 3->5 after twitter_digest's kendrick_sc (search endpoint,
 # bigger/less-reliably-compressed payloads than this module's timeline fetch)
-# twice exhausted 3 attempts and paged Telegram. This module's own timeline
+# twice exhausted 3 attempts and logged a warning. This module's own timeline
 # fetch has never needed more than 2 of its 3 attempts in practice, so the
 # higher ceiling costs it nothing -- kept in sync rather than diverging the
 # two "mirrored" retry wrappers.
@@ -832,6 +868,8 @@ def _normalize_getxapi(tw):
             timezone.utc).isoformat() if created else None
     except (TypeError, ValueError):
         created_iso = None
+    if created_iso is None:
+        raise ValueError("GetXAPI tweet has a missing or invalid createdAt timestamp")
     # Photo URLs only (skip videos/gifs): used for chart-image vision analysis.
     media = [m.get("url") for m in (tw.get("media") or [])
              if m.get("type") == "photo" and m.get("url")]
@@ -852,10 +890,20 @@ def _normalize_getxapi(tw):
     }
 
 
+def _tweet_page(data):
+    """An HTTP 200 error envelope is an outage, not an empty timeline."""
+    if not isinstance(data, dict) or not isinstance(data.get("tweets"), list):
+        raise ValueError("GetXAPI response is missing a tweets array")
+    batch = data["tweets"]
+    if any(not isinstance(t, dict) or not str(t.get("id", "")).isdigit() for t in batch):
+        raise ValueError("GetXAPI response contains an invalid tweet ID")
+    return batch
+
+
 def fetch_getxapi(account, since_id=None):
-    """Cursor-paginate GetXAPI. No since_id server-side, so stop once a page
-    contains a tweet we've already seen. Returns (tweets, n_api_calls)."""
+    """Cursor-paginate the bounded overlap window; pinned/known posts do not stop it. Returns (tweets, n_api_calls)."""
     collected, cursor, calls = [], None, 0
+    cursors = set()
     path = (GETXAPI_POSTS_PATH if account in POSTS_ONLY_ACCOUNTS
             else GETXAPI_TWEETS_PATH)
     while len(collected) < MAX_FETCH:
@@ -865,27 +913,30 @@ def fetch_getxapi(account, since_id=None):
         data = getxapi_get_retry(
             f"{GETXAPI_BASE}{path}?{urllib.parse.urlencode(params)}")
         calls += 1
-        batch = data.get("tweets", [])
+        batch = _tweet_page(data)
         if not batch:
             break
-        hit_old = False
         for tw in batch:
             n = _normalize_getxapi(tw)
             collected.append(n)
-            if since_id and n["id"].isdigit() and int(n["id"]) <= int(since_id):
-                hit_old = True
-        if hit_old or not data.get("has_more"):
+        if not data.get("has_more"):
             break
         cursor = data.get("next_cursor")
-        if not cursor:
+        if not cursor or cursor in cursors:
             break
-    return collected[:MAX_FETCH], calls
+        cursors.add(cursor)
+    if len(collected) >= MAX_FETCH and data.get("has_more"):
+        print(f"WARNING: {account}: fetch cap reached; older undiscovered posts may remain", file=sys.stderr)
+    return collected, calls
 
 
 def tweets_for_account(account, state, backfill, source):
     """Return (tweets, twitter_reads, api_calls). Backfill reads local snapshots."""
     if backfill:
-        return load_json(RAW_FILES.get(account, ""), []), 0, 0
+        snapshot = RAW_FILES.get(account)
+        if not snapshot or not os.path.isfile(snapshot):
+            raise FileNotFoundError(f"No backfill snapshot for {account}")
+        return load_ledger(snapshot, []), 0, 0
     since_id = state.get(account, {}).get("newest_id")
     if source == "getxapi":
         tweets, calls = fetch_getxapi(account, since_id=since_id)
@@ -901,6 +952,7 @@ def tweets_for_account(account, state, backfill, source):
     return tweets, len(tweets), calls
 
 
+@single_writer(lambda: TRADES_FILE)
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--backfill", action="store_true",
@@ -922,8 +974,6 @@ def main():
                     help="restrict to ONE account. With --backfill, rebuilds only "
                          "that account's signals in trades.json, preserving all "
                          "others. Without it, just limits the live fetch.")
-    ap.add_argument("--test-telegram", action="store_true",
-                    help="send a test alert to confirm Telegram is wired, then exit.")
     args = ap.parse_args()
     if args.backfill_batch:            # --backfill-batch is now just --backfill
         args.backfill = True
@@ -931,17 +981,7 @@ def main():
         print("note: --batch no longer submits a batch job (Gemini calls run "
               "real-time); flag kept for crontab compatibility.")
 
-    # Telegram self-test: load creds from the env files and send one message.
-    if args.test_telegram:
-        for p in TELEGRAM_ENVS:
-            load_env(p)
-        ok, detail = _send_telegram(
-            "✅ pilot_trader: P2 health check - all systems operational")
-        print(f"Telegram test: {'DELIVERED' if ok else 'FAILED'}  ({detail})")
-        sys.exit(0 if ok else 1)
-
     load_env(ENV_FILE)
-    load_env(PAPER_ENV)   # Telegram creds (setdefault: pilot .env still wins)
     if not os.environ.get("GOOGLE_API_KEY"):
         print("GOOGLE_API_KEY is not set. Add it to ~/pilot_trader/.env "
               "and re-run.", file=sys.stderr)
@@ -955,9 +995,9 @@ def main():
 
     interp = Interpreter()
 
-    state = load_json(STATE_FILE, {})
+    state = load_ledger(STATE_FILE, {})
     if not (args.backfill or args.dry_run):
-        _staleness_alert(state)   # page if prior runs were missed/failed
+        _report_staleness(state)   # warn if prior runs were missed/failed
     # Backfill rebuilds trades.json from the local snapshots, so it starts from a
     # clean slate (otherwise dedup against prior signals would skip every tweet).
     # Dry-run also starts clean and ignores stored state so it fetches a fresh,
@@ -967,11 +1007,11 @@ def main():
     # run must NOT drop (the incremental since_id fetch won't re-add history), so
     # it just restricts the loop and adds incrementally.
     if args.account and args.backfill:
-        existing = [r for r in load_json(TRADES_FILE, [])
+        existing = [r for r in load_ledger(TRADES_FILE, [])
                     if r.get("account") != args.account]
     else:
         existing = [] if (args.backfill or args.dry_run) \
-            else load_json(TRADES_FILE, [])
+            else load_ledger(TRADES_FILE, [])
     seen_ids = {r["tweet_id"] for r in existing}
     run_state = {} if args.dry_run else state    # throwaway state in dry-run
     accounts = [args.account] if args.account else ACCOUNTS
@@ -1000,7 +1040,7 @@ def main():
                   f"{e.read().decode('utf-8', 'replace')}", file=sys.stderr)
             fetch_failures.append(account)
             continue
-        except (http.client.HTTPException, OSError) as e:
+        except (http.client.HTTPException, OSError, ValueError) as e:
             # Exhausted-retry transient GetXAPI error (IncompleteRead /
             # RemoteDisconnected) on ONE account: skip just this account so a
             # single flaky upstream doesn't abort the whole run (which would
@@ -1016,6 +1056,14 @@ def main():
             run_state.setdefault(account, {})["last_fetch"] = now.isoformat()
         total_reads += reads
         total_calls += calls
+        # Persist failed tweet payloads, not just IDs: the upstream's latest
+        # page can move past them before Gemini recovers. Successful signals
+        # are deduped against trades even after a crash between ledger/state writes.
+        pending = ((run_state.get(account) or {}).get("pending_tweets") or []) \
+            if not args.backfill else []
+        retry_ids = {tw["id"] for tw in pending}
+        tweets = list({tw["id"]: tw for tw in [*tweets, *pending]}.values())
+        still_pending = []
         new, skipped, sell_cand, foreign, seen, retweet = 0, 0, 0, 0, 0, 0
         for tw in tweets:
             if tw["id"] in seen_ids:
@@ -1023,7 +1071,8 @@ def main():
             # Already processed in a prior run (id at/below the high-water mark):
             # skip BEFORE the LLM so non-signal tweets aren't re-interpreted.
             if (prior_newest and str(tw["id"]).isdigit()
-                    and int(tw["id"]) <= int(prior_newest)):
+                    and int(tw["id"]) <= int(prior_newest)
+                    and tw["id"] not in retry_ids):
                 seen += 1
                 continue
             # Drop thread replies authored by OTHER users (tweets_and_replies
@@ -1054,11 +1103,17 @@ def main():
                 else:
                     skipped += 1
                     continue
+            errors_before = interp.errors
             sig = build_signal(account, tw, interp)
+            if interp.errors > errors_before:
+                still_pending.append(tw)
+                continue
             if sig:
                 all_new.append(sig)
                 seen_ids.add(tw["id"])
                 new += 1
+        if not (args.backfill or args.dry_run):
+            run_state.setdefault(account, {})["pending_tweets"] = still_pending
         total_skipped += skipped
         total_sell_cand += sell_cand
         print(f"[{account}] scanned {len(tweets)}, already-seen-skipped {seen}, "
@@ -1074,9 +1129,7 @@ def main():
         msg = (f"all {attempted} account fetch(es) failed after retries "
                f"({', '.join(fetch_failures)}) -- deferring run")
         print(f"ERROR: {msg}", file=sys.stderr)
-        if not args.dry_run:
-            notify_telegram(f"monitor: {msg}")
-        return
+        sys.exit(1)
     if fetch_failures:
         print(f"WARNING: {len(fetch_failures)}/{attempted} account(s) failed "
               f"fetch after retries, continuing with the rest: "
@@ -1087,13 +1140,14 @@ def main():
     # the run "succeed" and refresh _last_run -- the staleness alert never
     # fires. Mirror the GetXAPI-outage alert above: every attempted call failed
     # and none succeeded this run.
-    if interp.errors and not interp.calls and not args.dry_run:
-        notify_telegram(
-            f"monitor: all {interp.errors} Gemini text-extraction call(s) "
-            f"failed this run -- check GOOGLE_API_KEY/quota")
+    if interp.errors and not interp.successes and not args.dry_run:
+        print(f"ERROR: all {interp.errors} Gemini text-extraction operations failed",
+              file=sys.stderr)
 
+    if args.backfill and (interp.errors or fetch_failures) and not args.dry_run:
+        raise RuntimeError("Backfill incomplete; preserving the existing trades ledger")
     merged = existing + all_new
-    merged.sort(key=lambda r: r["timestamp"], reverse=True)
+    merged.sort(key=lambda r: r.get("timestamp") or "", reverse=True)
     if args.dry_run:
         out = f"/tmp/pilot_dryrun_{args.source}.json"
         write_json_atomic(out, all_new)
@@ -1106,7 +1160,8 @@ def main():
         if not args.backfill:
             # Heartbeat: the dashboard reads this to flag stale data if a cron
             # run stops succeeding.
-            state["_last_run"] = datetime.now(timezone.utc).isoformat()
+            if not interp.errors and not fetch_failures:
+                state["_last_run"] = datetime.now(timezone.utc).isoformat()
             write_json_atomic(STATE_FILE, state)
 
     # summary
@@ -1138,6 +1193,11 @@ def main():
     # Append per-run cost telemetry (skip dry-run writes and zero-LLM runs).
     if not args.dry_run and (interp.calls or interp.vision_calls):
         log_cost(interp)
+    if interp.vision_errors:
+        print(f"WARNING: {interp.vision_errors} optional chart pass(es) failed; text signals retained",
+              file=sys.stderr)
+    if interp.errors or interp.vision_errors or fetch_failures:
+        sys.exit(1)
 
 
 def log_cost(interp):
@@ -1164,32 +1224,8 @@ def log_cost(interp):
         print(f"[cost-log] could not write {COST_LOG_FILE}: {e}", file=sys.stderr)
 
 
-def _send_telegram(text):
-    """Send a raw Telegram message. Returns (ok, detail). ok reflects Telegram's
-    own {"ok": true} response, so it confirms DELIVERY, not just a 200."""
-    token = os.environ.get("TELEGRAM_BOT_TOKEN")
-    chat = os.environ.get("TELEGRAM_CHAT_ID")
-    if not token or not chat:
-        return False, "creds not configured (TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID)"
-    try:
-        data = urllib.parse.urlencode({"chat_id": chat, "text": text}).encode()
-        req = urllib.request.Request(
-            f"https://api.telegram.org/bot{token}/sendMessage", data=data)
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            body = json.loads(resp.read().decode("utf-8", "replace"))
-        return bool(body.get("ok")), f"telegram ok={body.get('ok')}"
-    except (urllib.error.URLError, OSError, ValueError) as e:
-        return False, f"send failed: {e}"
 
 
-def notify_telegram(reason):
-    """Best-effort alert: '⚠️ pilot_trader: <reason> at <ts>'. No-ops silently
-    if creds are not configured."""
-    ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-    ok, detail = _send_telegram(f"⚠️ pilot_trader: {reason} at {ts}")
-    if not ok and "not configured" not in detail:
-        print(f"[telegram] {detail}", file=sys.stderr)
-    return ok
 
 
 class GeminiTally:
@@ -1202,7 +1238,7 @@ class GeminiTally:
     like a quiet run: nothing is written, nothing raises, and the only trace is
     per-item stderr noise nobody reads. Counting both outcomes lets a run decide
     at the end whether it was quiet or blind. Used by the digests via
-    alert_gemini_outage(); monitor.py's own check is inline on Interpreter."""
+    report_gemini_outage(); monitor.py's own check is inline on Interpreter."""
 
     def __init__(self):
         self.calls = 0
@@ -1218,14 +1254,14 @@ class GeminiTally:
 # A run where every single call failed is unambiguous. A run that is merely
 # mostly-failing is judged on rate, but only once enough calls have happened
 # that the rate means something -- otherwise one flaky call on a 1-post night
-# pages at 100%.
+# triggers a warning at 100%.
 OUTAGE_MIN_CALLS = 5
 OUTAGE_FAIL_RATE = 0.8
 
 
-def alert_gemini_outage(tally, who):
-    """Page Telegram when a run's Gemini calls failed wholesale. Returns True if
-    it alerted. Mirrors the inline guard monitor.main() runs after extraction."""
+def report_gemini_outage(tally, who):
+    """Log when a run's Gemini calls failed wholesale. Returns True if
+    an outage was reported. Mirrors the inline guard monitor.main() runs after extraction."""
     total = tally.calls + tally.errors
     if not tally.errors:
         return False
@@ -1237,12 +1273,11 @@ def alert_gemini_outage(tally, who):
     msg = (f"{who}: {scope} Gemini call(s) failed this run "
            f"-- check GOOGLE_API_KEY/quota")
     print(f"ERROR: {msg}", file=sys.stderr)
-    notify_telegram(msg)
     return True
 
 
-def _staleness_alert(state):
-    """If the last successful run is older than STALE_ALERT_HOURS, page Telegram.
+def _report_staleness(state):
+    """If the last successful run is older than STALE_WARN_HOURS, log a warning.
     Runs at the start of each live run, so missed/failed prior runs are caught."""
     last = state.get("_last_run")
     if not last:
@@ -1252,9 +1287,9 @@ def _staleness_alert(state):
                  - datetime.fromisoformat(last)).total_seconds() / 3600
     except (ValueError, TypeError):
         return
-    if age_h > STALE_ALERT_HOURS:
-        notify_telegram(f"data stale — last successful run {age_h:.0f}h ago "
-                        f"(>{STALE_ALERT_HOURS}h)")
+    if age_h > STALE_WARN_HOURS:
+        print(f"WARNING: data stale — last successful run {age_h:.0f}h ago "
+              f"(>{STALE_WARN_HOURS}h)", file=sys.stderr)
 
 
 def _log_failure(exc):
@@ -1276,17 +1311,11 @@ if __name__ == "__main__":
     except (SystemExit, KeyboardInterrupt):
         # Clean operator exits, NOT failures: argparse --help / usage errors raise
         # SystemExit, and Ctrl-C raises KeyboardInterrupt. Neither should write a
-        # FAILED block or page Telegram — just propagate the exit code.
+        # FAILED block — just propagate the exit code.
         raise
     except BaseException as exc:   # log anything else, then surface a non-zero exit
-        _log_failure(exc)
-        # Env may not have loaded if main() crashed early; load creds here too.
-        try:
-            load_env(ENV_FILE)
-            load_env(PAPER_ENV)
-            notify_telegram(f"monitor.py FAILED: {exc!r}")
-        except Exception:
-            pass
+        if "--dry-run" not in sys.argv:
+            _log_failure(exc)
         print(f"monitor.py FAILED: {exc!r} "
               f"(traceback appended to {MONITOR_LOG})", file=sys.stderr)
         sys.exit(1)

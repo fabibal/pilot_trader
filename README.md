@@ -4,8 +4,7 @@
 finance influencers on X (Twitter), uses large language models to extract
 structured trade signals from their posts, tracks how those calls actually
 resolve against real prices, and serves a live dashboard alongside
-analysis-only research digests of on-chain and macro analysts on X, YouTube and
-Reddit.
+analysis-only research digests of on-chain and macro analysts on X and YouTube.
 
 > ⚠️ **Tracking and research only — no real money, no orders are ever placed,
 > not financial advice.** See the [Disclaimer](#disclaimer).
@@ -45,8 +44,7 @@ curiosity, not to give or follow investment advice.
   fills gaps the text didn't cover.
 - **Analysis-only research digests** — separate, never-traded feeds summarize
   on-chain/macro analysts on X and YouTube, plus a forecast ledger that
-  clusters echoed price calls into one row per forecast, and a Reddit strategy
-  miner.
+  clusters echoed price calls into one row per forecast.
 - **Consensus view** — every analyst's rolling "current view" (sentiment,
   freshness, stance) side by side on one panel.
 - **Live dashboard** — a dark-themed web app showing trade-call performance
@@ -75,7 +73,6 @@ flowchart TD
     yf[yfinance prices] --> D
     XD[X analysis feeds] --> TD[twitter_digest.py]
     YT[YouTube RSS] --> YM[youtube_monitor.py]
-    RD[Reddit] --> RM[reddit_miner.py]
     TD --> S[(per-feed summaries<br/>+ current views)]
     YM --> S
     RM --> S
@@ -93,8 +90,7 @@ flowchart TD
 4. `dashboard.py` renders trade-call performance, holdings, and the research
    digests.
 
-Separate, **never-traded** pipelines (`youtube_monitor.py`, `twitter_digest.py`,
-`scripts/reddit_miner.py`) produce analysis-only research summaries shown in the
+Separate, **never-traded** pipelines (`youtube_monitor.py`, `twitter_digest.py`) produce analysis-only research summaries shown in the
 dashboard. Each keeps its own append-only ledger, which doubles as its
 deduplication set, so re-runs are idempotent.
 
@@ -108,10 +104,10 @@ deduplication set, so re-runs are idempotent.
 | LLM | **Google Gemini** — `gemini-2.5-flash-lite` for text extraction and cheap triage, `gemini-3.7-flash` for vision, long-form analysis and native video, via the real-time Gemini API (schema-constrained JSON) |
 | Dashboard | **Dash / Plotly** (dark, GitHub-style theme) |
 | Market data | **yfinance** (prices), RSS (YouTube detection) |
-| Data sources | Third-party X/Twitter and Reddit APIs; YouTube videos read natively by Gemini (no local download or transcript step) |
+| Data sources | Third-party X/Twitter APIs; YouTube videos read natively by Gemini (no local download or transcript step) |
 | Packaging / ops | **Docker** + Docker Compose, cron pipelines, health checks |
 | Storage | Plain JSON event logs + state files (no database) |
-| Notifications | Telegram (alerts on staleness, gated sells, failures) |
+| Diagnostics | Local logs, exit codes and dashboard freshness indicators |
 
 ---
 
@@ -140,11 +136,15 @@ twitter_digest.py      # analysis-only X research digests + forecast ledger
 youtube_monitor.py     # analysis-only YouTube research digests
 sentiment_history.py   # append-only log of every "current view" synthesis
 accounts.py            # monitored-account registry
-scripts/               # Reddit strategy miner, model-deprecation check, backup
+scripts/               # Model-deprecation check and backup
 tests/                 # unit tests (ordering, reconciliation, helpers)
 ```
 
 ---
+
+The [September 2026 audit](docs/audit_2026-09-08.md) documents reliability and
+security fixes, regression coverage, deployment changes, and remaining limits
+on signal completeness and performance statistics.
 
 ## Security & contributing
 
@@ -155,7 +155,7 @@ Code sessions)** alike. The following must **never** be committed — they belon
 only in a local `.env` (git-ignored) or stay out of the repo entirely:
 
 - **Credentials** — API keys, tokens, bearer tokens, passwords (Google/Gemini,
-  GetXAPI, RedditAPI, X/Twitter, Telegram, etc.)
+  GetXAPI, X/Twitter, etc.)
 - **Account identifiers** — brokerage account IDs, order IDs
 - **Network details** — internal/LAN IPs, public IPs, private hostnames or URLs
 - **Host details** — SSH keys or key filenames, server usernames, absolute host

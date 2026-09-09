@@ -6,14 +6,12 @@ FROM python:3.12-slim
 
 WORKDIR /home/fbazsa/pilot_trader
 
-# dash/plotly/pandas/yfinance: dashboard core. ib_insync+tzdata: live IBKR paper
-# portfolio reads (tzdata is required — IB stamps fills US/Eastern, which
-# zoneinfo can't resolve without it).
-RUN pip install --no-cache-dir dash plotly pandas yfinance ib_insync tzdata
+COPY requirements-dashboard.txt ./
+RUN pip install --no-cache-dir -r requirements-dashboard.txt
 
 # Bind-mount overlays these at runtime, so the COPYs are a fallback only. The
-# IBKR tab imports ibkr_connector -> order_manager -> reconcile, so include them.
-COPY dashboard.py resolver.py ibkr_connector.py order_manager.py reconcile.py ./
+# Dashboard imports only resolver and the shared account registry.
+COPY dashboard.py resolver.py accounts.py ./
 
 EXPOSE 8051
 

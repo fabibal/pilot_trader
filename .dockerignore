@@ -1,0 +1,6 @@
+*
+!Dockerfile
+!requirements-dashboard.txt
+!dashboard.py
+!resolver.py
+!accounts.py

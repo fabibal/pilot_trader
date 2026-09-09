@@ -12,7 +12,7 @@ Pure logic here; the dashboard supplies an OHLC fetcher (so caching / yfinance
 batching live in one place).
 """
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 EXPIRY_DAYS = 30
 HIT_TARGET = "hit_target"
@@ -29,7 +29,7 @@ def _date(s):
     try:
         return datetime.strptime((s or "")[:10], "%Y-%m-%d").replace(
             tzinfo=timezone.utc)
-    except ValueError:
+    except (ValueError, TypeError):
         return None
 
 
@@ -56,6 +56,8 @@ def resolve_position(pos, ohlc, until=None):
     date. Used for calls the influencer explicitly closed: a target/stop hit
     INSIDE the holding window still counts, but the expiry rule does not apply
     (the caller classifies an unresolved closed call via resolve_closed)."""
+    if pos.get("entry_status") in ("setup", "review"):
+        return None
     target = pos.get("target")
     stop = pos.get("stop_loss")
     tdate = pos.get("trade_date") or (pos.get("opened_at") or "")[:10]
@@ -63,12 +65,19 @@ def resolve_position(pos, ohlc, until=None):
     if not td:
         return None
     age_days = (datetime.now(timezone.utc) - td).days
+    expiry_date = (td + timedelta(days=EXPIRY_DAYS)).strftime("%Y-%m-%d")
 
     if (target is not None or stop is not None) and ohlc is not None \
             and not ohlc.empty:
-        long = _is_long(pos.get("entry_price"), target, stop)
-        for day, row in ohlc.iterrows():
+        long = is_long(pos)
+        for day, row in ohlc.sort_index().iterrows():
+            if str(day)[:10] < td.strftime("%Y-%m-%d"):
+                continue
             if until and str(day)[:10] > until:
+                break
+            # An expired open call must not turn into a winner months later.
+            # Explicit closes retain their documented holding-window policy.
+            if until is None and str(day)[:10] >= expiry_date:
                 break
             hi, lo = row.get("High"), row.get("Low")
             if hi is None or lo is None or hi != hi or lo != lo:  # NaN guard
@@ -98,9 +107,11 @@ def resolve_closed(pos, entry, exit_px, closed_date):
     Returns {status: closed_win|closed_loss, date, price}, or None when the
     entry or exit price is unknown (the caller should then exclude the call
     rather than pollute the live count)."""
+    if pos.get("entry_status") in ("setup", "review"):
+        return None
     if not entry or not exit_px:
         return None
-    long = _is_long(entry, pos.get("target"), pos.get("stop_loss"))
+    long = is_long(pos, entry)
     win = exit_px > entry if long else exit_px < entry
     return {"status": CLOSED_WIN if win else CLOSED_LOSS,
             "date": closed_date, "price": exit_px}
@@ -121,3 +132,15 @@ def win_stats(resolutions):
     return {"hit": hit, "stopped": stopped, "expired": expired,
             "closed_win": closed_win, "closed_loss": closed_loss, "live": live,
             "decided": decided, "win_rate": win_rate}
+
+
+def is_long(pos, entry=None):
+    if pos.get("side") in ("long", "short"):
+        return pos["side"] == "long"
+    return _is_long(entry or pos.get("entry_price"), pos.get("target"), pos.get("stop_loss"))
+
+
+def return_pct(pos, entry, price):
+    if not entry or not price:
+        return None
+    return round((price - entry) / entry * 100 * (1 if is_long(pos, entry) else -1), 1)

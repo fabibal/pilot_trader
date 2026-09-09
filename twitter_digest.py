@@ -96,19 +96,22 @@ from google.genai import types as genai_types
 from google.genai import errors as genai_errors
 
 from reconcile import write_json_atomic
-import sentiment_history
 # Reuse monitor.py's tested helpers (env/json loaders, GetXAPI client + tweet
-# normalizer, the Gemini image-block fetch, Telegram alerting) so this stays DRY
+# normalizer, the Gemini image-block fetch, local outage reporting) so this stays DRY
 # and consistent with the rest of the pipeline.
 import monitor
-from monitor import (load_env, load_json, notify_telegram, TELEGRAM_ENVS,
+from ingestion_queue import PendingInputs, discover, report_discovery_errors
+from storage import load_ledger, single_writer
+from llm_support import parse_response, token_usage
+from digest_state import refresh_current_view
+from monitor import (load_env, ENV_FILE,
                      getxapi_get, _normalize_getxapi, _image_block,
                      GETXAPI_BASE, GETXAPI_POSTS_PATH, GETXAPI_COST_PER_CALL,
                      MAX_VISION_IMAGES, GEMINI_INPUT_PER_1M, GEMINI_OUTPUT_PER_1M,
                      GEMINI_THINKING, GEMINI_DEEP_THINKING,
                      MODEL as EXTRACT_MODEL, EXTRACT_INPUT_PER_1M,
                      EXTRACT_OUTPUT_PER_1M, EXTRACT_THINKING, _first_sentence,
-                     GeminiTally, alert_gemini_outage)
+                     GeminiTally, report_gemini_outage)
 
 # --- config ---------------------------------------------------------------
 HOME = "/home/fbazsa/pilot_trader"
@@ -116,7 +119,7 @@ DATA_DIR = os.path.join(HOME, "data")
 
 # Every Gemini call this run, across all feeds. Each helper below swallows its
 # own APIError so one bad post cannot starve the rest of the feed, so this is
-# the only thing that can tell "quiet run" from "we were blind" -- main() pages
+# the only thing that can tell "quiet run" from "we were blind" -- main() logs errors
 # on it at the end. See monitor.GeminiTally.
 LLM_TALLY = GeminiTally()
 
@@ -677,12 +680,12 @@ FEEDS = {f.key: f for f in [
 # GetXAPI is an unaffiliated scraper with no SLA; it intermittently truncates
 # responses mid-body (http.client.IncompleteRead) or drops the connection. Retry
 # transient read/network errors with a short linear backoff so a momentary blip
-# doesn't fail the daily run (and page Telegram). A sustained outage still raises
+# doesn't fail the daily run (and log a failure). A sustained outage still raises
 # after the final attempt; permanent HTTP client errors (4xx except 429, e.g. a
 # bad key) raise immediately without burning retries.
 # 2026-07-13: bumped 3->5 -- kendrick_sc's fetch_search (advanced-search
 # endpoint) twice exhausted all 3 attempts (both times failing attempts 1 AND
-# 2 before the fatal 3rd) and paged Telegram with "IncompleteRead(10 bytes
+# 2 before the fatal 3rd) and logged a failure with "IncompleteRead(10 bytes
 # read)", while fetch_posts's timeline endpoint has always recovered within 2
 # attempts in the same window -- the search endpoint's payloads appear bigger
 # and/or less reliably gzip-negotiated. Mirrors monitor.getxapi_get_retry,
@@ -714,12 +717,12 @@ def _getxapi_get_retry(url):
 
 def fetch_posts(feed, seen_ids):
     """Cursor-paginate the GetXAPI posts-only endpoint for the feed's account.
-    Stops early once a page contains a tweet we've already analyzed (high-water
-    dedup) or once feed.max_fetch raw tweets are collected. Returns
+    Scans the full bounded overlap window, including pages containing known IDs. Returns
     (raw_tweets, n_calls). Keeps the RAW GetXAPI payloads (not the normalized
     shape) because we need the `lang` and retweet flags that _normalize_getxapi
     drops."""
     collected, cursor, calls = [], None, 0
+    cursors = set()
     while len(collected) < feed.max_fetch:
         params = {"userName": feed.account}
         if cursor:
@@ -727,29 +730,28 @@ def fetch_posts(feed, seen_ids):
         data = _getxapi_get_retry(
             f"{GETXAPI_BASE}{GETXAPI_POSTS_PATH}?{urllib.parse.urlencode(params)}")
         calls += 1
-        batch = data.get("tweets", [])
+        batch = monitor._tweet_page(data)
         if not batch:
             break
-        hit_seen = False
         for tw in batch:
             collected.append(tw)
-            if str(tw.get("id")) in seen_ids:
-                hit_seen = True
-        if hit_seen or not data.get("has_more"):
+        if not data.get("has_more"):
             break
         cursor = data.get("next_cursor")
-        if not cursor:
+        if not cursor or cursor in cursors:
             break
-    return collected[:feed.max_fetch], calls
+        cursors.add(cursor)
+    if len(collected) >= feed.max_fetch and data.get("has_more"):
+        print(f"WARNING: {feed.key}: fetch cap reached; older undiscovered posts may remain", file=sys.stderr)
+    return collected, calls
 
 
 def fetch_search(feed, seen_ids):
     """Cursor-paginate the GetXAPI advanced-search endpoint for the feed's query
-    (product=Latest -> newest-first). Same high-water stop as fetch_posts: stop
-    once a page contains an already-analyzed id, or once max_fetch raw tweets are
-    collected. Mirrors fetch_posts; only the path/params differ (q/product vs
+    (product=Latest -> newest-first). Same bounded overlap scan as fetch_posts; known IDs do not stop pagination. Mirrors fetch_posts; only the path/params differ (q/product vs
     userName). Returns (raw_tweets, n_calls)."""
     collected, cursor, calls = [], None, 0
+    cursors = set()
     while len(collected) < feed.max_fetch:
         params = {"q": feed.query, "product": feed.product}
         if cursor:
@@ -757,20 +759,20 @@ def fetch_search(feed, seen_ids):
         data = _getxapi_get_retry(
             f"{GETXAPI_BASE}{GETXAPI_SEARCH_PATH}?{urllib.parse.urlencode(params)}")
         calls += 1
-        batch = data.get("tweets", [])
+        batch = monitor._tweet_page(data)
         if not batch:
             break
-        hit_seen = False
         for tw in batch:
             collected.append(tw)
-            if str(tw.get("id")) in seen_ids:
-                hit_seen = True
-        if hit_seen or not data.get("has_more"):
+        if not data.get("has_more"):
             break
         cursor = data.get("next_cursor")
-        if not cursor:
+        if not cursor or cursor in cursors:
             break
-    return collected[:feed.max_fetch], calls
+        cursors.add(cursor)
+    if len(collected) >= feed.max_fetch and data.get("has_more"):
+        print(f"WARNING: {feed.key}: fetch cap reached; older undiscovered posts may remain", file=sys.stderr)
+    return collected, calls
 
 
 def _content_sig(text):
@@ -895,17 +897,9 @@ def select_candidates(raw, seen_ids, feed, seen_sigs=frozenset()):
 _MANGLED_MAX_ATTEMPTS = 3
 
 
-def _parse_gemini_json(resp):
-    try:
-        return monitor._unescape_strings(json.loads(resp.text))
-    except (json.JSONDecodeError, TypeError, ValueError):
-        return None
-
 
 def _gemini_usage(resp):
-    u = resp.usage_metadata
-    return (u.prompt_token_count or 0,
-            (u.candidates_token_count or 0) + (u.thoughts_token_count or 0))
+    return token_usage(resp)
 
 
 def analyze_text(gemini_client, feed, date, text, author):
@@ -938,13 +932,17 @@ def analyze_text(gemini_client, feed, date, text, author):
             print(f"  [llm error] {type(e).__name__}: {e}", file=sys.stderr)
             LLM_TALLY.fail()
             return None, in_tok, out_tok
-        LLM_TALLY.ok()
         i, o = _gemini_usage(resp)
         in_tok, out_tok = in_tok + i, out_tok + o
-        parsed = _parse_gemini_json(resp)
-        if not (parsed and monitor._looks_mangled(parsed)):
+        parsed = parse_response(resp, ANALYSIS_SCHEMA, monitor._unescape_strings)
+        if parsed is None:
+            LLM_TALLY.fail()
+            return None, in_tok, out_tok
+        if not monitor._looks_mangled(parsed):
+            LLM_TALLY.ok()
             break
         if attempt == _MANGLED_MAX_ATTEMPTS - 1:
+            LLM_TALLY.fail()
             print("  [give-up] analyze_text still mangled after "
                   f"{_MANGLED_MAX_ATTEMPTS} attempts; dropping (the post stays "
                   "unseen and is retried next run)", file=sys.stderr)
@@ -985,13 +983,17 @@ def analyze_chart(gemini_client, feed, media_urls, date, text, author):
             print(f"  [vision error] {type(e).__name__}: {e}", file=sys.stderr)
             LLM_TALLY.fail()
             return None, in_tok, out_tok
-        LLM_TALLY.ok()
         i, o = _gemini_usage(resp)
         in_tok, out_tok = in_tok + i, out_tok + o
-        parsed = _parse_gemini_json(resp)
-        if not (parsed and monitor._looks_mangled(parsed)):
+        parsed = parse_response(resp, VISION_SCHEMA, monitor._unescape_strings)
+        if parsed is None:
+            LLM_TALLY.fail()
+            return None, in_tok, out_tok
+        if not monitor._looks_mangled(parsed):
+            LLM_TALLY.ok()
             break
         if attempt == _MANGLED_MAX_ATTEMPTS - 1:
+            LLM_TALLY.fail()
             print("  [give-up] analyze_chart still mangled after "
                   f"{_MANGLED_MAX_ATTEMPTS} attempts; dropping the chart pass "
                   "(the post is still stored, without chart fields)",
@@ -1116,13 +1118,17 @@ def generate_current_view(gemini_client, feed, summaries):
             print(f"  [current-view error] {type(e).__name__}: {e}", file=sys.stderr)
             LLM_TALLY.fail()
             return None, in_tok, out_tok
-        LLM_TALLY.ok()
         i, o = _gemini_usage(resp)
         in_tok, out_tok = in_tok + i, out_tok + o
-        parsed = _parse_gemini_json(resp)
-        if not (parsed and monitor._looks_mangled(parsed)):
+        parsed = parse_response(resp, CURRENT_VIEW_SCHEMA, monitor._unescape_strings)
+        if parsed is None:
+            LLM_TALLY.fail()
+            return None, in_tok, out_tok
+        if not monitor._looks_mangled(parsed):
+            LLM_TALLY.ok()
             break
         if attempt == _MANGLED_MAX_ATTEMPTS - 1:
+            LLM_TALLY.fail()
             print("  [give-up] generate_current_view still mangled after "
                   f"{_MANGLED_MAX_ATTEMPTS} attempts; keeping the previous view",
                   file=sys.stderr)
@@ -1263,9 +1269,13 @@ def triage_forecasts(gemini_client, text):
         print(f"  [triage error] {type(e).__name__}: {e}", file=sys.stderr)
         LLM_TALLY.fail()
         return None, 0, 0
-    LLM_TALLY.ok()
     in_tok, out_tok = _gemini_usage(resp)
-    return _parse_gemini_json(resp), in_tok, out_tok
+    parsed = parse_response(resp, TRIAGE_SCHEMA, monitor._unescape_strings)
+    if parsed is None:
+        LLM_TALLY.fail()
+    else:
+        LLM_TALLY.ok()
+    return parsed, in_tok, out_tok
 
 
 def _merge_sources(rec, sources, targets):
@@ -1326,25 +1336,20 @@ def _new_forecast(key, cluster, sources, rep, analysis, chart):
 
 
 def _load_ledger_strict(path, default):
-    """Ledger loader for the dedup-critical files: an ABSENT file is a fresh
-    start, but a file that exists yet fails to read/parse must abort the feed
-    (the per-feed isolation handler pages Telegram) -- silently proceeding with
-    an empty ledger would re-analyze everything and the next atomic write would
-    permanently erase all prior history."""
-    if not os.path.exists(path):
-        return default
-    with open(path, encoding="utf-8") as f:      # raises on unreadable/corrupt
-        return json.load(f)
+    return load_ledger(path, default)
 
 
 def _load_forecast_ledger(path):
     """Forecast ledger file is a dict {seen_ids, forecasts} (NOT a bare list like
     the post-feed ledgers). Missing -> empty skeleton; corrupt -> raises."""
     data = _load_ledger_strict(path, {})
-    if not isinstance(data, dict):
-        data = {}
     data.setdefault("seen_ids", [])
     data.setdefault("forecasts", [])
+    if (not isinstance(data["seen_ids"], list)
+            or not all(isinstance(i, str) for i in data["seen_ids"])
+            or not isinstance(data["forecasts"], list)
+            or not all(isinstance(r, dict) for r in data["forecasts"])):
+        raise ValueError(f"Invalid forecast ledger: {path}")
     return data
 
 
@@ -1435,7 +1440,10 @@ def run_forecast_feed(feed, gemini_client, args):
     migrated = len(forecasts) != len(ledger["forecasts"])
 
     force_ids = set(args.force or [])
-    raw, calls = fetch_search(feed, set() if force_ids else seen)
+    pending = PendingInputs(feed.summaries_file, "id", args.dry_run)
+    pending.acknowledge(seen - force_ids)
+    raw, calls = discover(pending, lambda: fetch_search(feed, set() if force_ids else seen), ([], 0))
+    raw = list({**pending.rows, **{str(t["id"]): t for t in raw}}.values())
     print(f"Fetched {len(raw)} raw posts in {calls} GetXAPI call(s) "
           f"(${calls * GETXAPI_COST_PER_CALL:.4f})")
 
@@ -1444,8 +1452,10 @@ def run_forecast_feed(feed, gemini_client, args):
         candidates = [by_id[i] for i in force_ids if i in by_id]
     else:
         candidates = select_candidates(raw, seen, feed)
+        pending.add(candidates)
         if args.limit is not None:
             candidates = candidates[:args.limit]
+    pending.add(candidates)
     if not candidates:
         print("No new posts to process.")
         if migrated and not args.dry_run:   # persist the on-load re-cluster
@@ -1455,7 +1465,7 @@ def run_forecast_feed(feed, gemini_client, args):
 
     # 1) Gemini triage every new post; a post is marked seen only once triage
     #    SUCCEEDED -- a transient API/parse failure leaves the id unseen so the
-    #    next daily run re-triages it (the fetch window covers a 24h retry).
+    #    next run re-triages it from the durable pending queue.
     triaged, tri_in, tri_out = [], 0, 0
     for tw in candidates:
         n = _normalize_getxapi(tw)
@@ -1558,9 +1568,12 @@ def run_forecast_feed(feed, gemini_client, args):
         print(json.dumps(ordered, indent=2, ensure_ascii=False)[:5000])
         return
     _write_forecast_ledger(feed, ledger, forecasts, seen)
+    pending.acknowledge(seen)
     print(f"Wrote {len(forecasts)} forecasts -> {feed.summaries_file}")
 
 
+@single_writer(lambda feed, gemini_client, args: feed.summaries_file)
+@report_discovery_errors
 def run_feed(feed, gemini_client, args):
     """Process one feed end-to-end: fetch -> filter -> analyze -> write ledger."""
     if feed.forecast_ledger:                 # kendrick_sc: forecast rows, not posts
@@ -1568,8 +1581,6 @@ def run_feed(feed, gemini_client, args):
     where = f"search: {feed.query}" if feed.is_search else f"@{feed.account}"
     print(f"\n=== {feed.display_name} ({where}) ===")
     summaries = _load_ledger_strict(feed.summaries_file, [])
-    if not isinstance(summaries, list):
-        summaries = []
     seen = {str(r.get("tweet_id")) for r in summaries}
     # Search feeds also dedup by content signature (verbatim reposts of a story
     # under distinct ids); the ledger persists text_sig for cross-run collapse.
@@ -1578,10 +1589,13 @@ def run_feed(feed, gemini_client, args):
 
     # --force bypasses dedup for the named ids. Scan the full window (empty
     # stop-set) so a forced id OLDER than the high-water mark is still reached;
-    # the normal run stops early once it hits an already-seen post.
+    # normal runs also scan the full bounded overlap window.
     force_ids = set(args.force or [])
     fetch = fetch_search if feed.is_search else fetch_posts
-    raw, calls = fetch(feed, set() if force_ids else seen)
+    pending = PendingInputs(feed.summaries_file, "id", args.dry_run)
+    pending.acknowledge(seen - force_ids)
+    raw, calls = discover(pending, lambda: fetch(feed, set() if force_ids else seen), ([], 0))
+    raw = list({**pending.rows, **{str(t["id"]): t for t in raw}}.values())
     print(f"Fetched {len(raw)} raw posts in {calls} GetXAPI call(s) "
           f"(${calls * GETXAPI_COST_PER_CALL:.4f})")
 
@@ -1594,11 +1608,16 @@ def run_feed(feed, gemini_client, args):
                   file=sys.stderr)
     else:
         candidates = select_candidates(raw, seen, feed, seen_sigs)
+        pending.add(candidates)
         if args.limit is not None:
             candidates = candidates[:args.limit]
 
+    pending.add(candidates)
     if not candidates:
         print("No new posts to process.")
+        if not args.dry_run:
+            refresh_current_view(gemini_client, feed, summaries, _select_current_view_window, generate_current_view,
+                                 GEMINI_INPUT_PER_1M, GEMINI_OUTPUT_PER_1M)
         return
 
     print(f"Processing {len(candidates)} post(s)"
@@ -1626,27 +1645,11 @@ def run_feed(feed, gemini_client, args):
                     key=lambda r: r.get("created_at") or "", reverse=True)
     os.makedirs(DATA_DIR, exist_ok=True)
     write_json_atomic(feed.summaries_file, merged)
+    pending.acknowledge(by_id)
     print(f"Wrote {len(merged)} summaries -> {feed.summaries_file}")
 
-    if feed.current_view_file:
-        view, cv_in, cv_out = generate_current_view(gemini_client, feed, merged)
-        if view:
-            cv_cost = (cv_in / 1_000_000 * GEMINI_INPUT_PER_1M
-                       + cv_out / 1_000_000 * GEMINI_OUTPUT_PER_1M)
-            write_json_atomic(feed.current_view_file, view)
-            # ...and append it to the shared, never-overwritten history log.
-            sentiment_history.append_view(feed.key, view)
-            print(f"Current view: {view['overall_sentiment']} "
-                  f"(based on {view['based_on']['count']} posts); "
-                  f"tokens in={cv_in} out={cv_out} (${cv_cost:.4f}) "
-                  f"-> {feed.current_view_file}")
-        else:
-            # New posts landed but the synthesis failed, so the on-disk view (and
-            # the Consensus row built from it) silently keeps describing an older
-            # window. Say so loudly -- this used to be a no-op.
-            print(f"  [current-view FAILED] {feed.key}: kept the previous "
-                  f"{feed.current_view_file} -- it is now stale vs the ledger",
-                  file=sys.stderr)
+    refresh_current_view(gemini_client, feed, merged, _select_current_view_window, generate_current_view,
+                                 GEMINI_INPUT_PER_1M, GEMINI_OUTPUT_PER_1M)
 
 
 def main():
@@ -1663,12 +1666,13 @@ def main():
     ap.add_argument("--no-vision", action="store_true",
                     help="skip the Gemini chart-image vision pass")
     args = ap.parse_args()
+    if args.limit is not None and args.limit < 0:
+        ap.error("--limit must be nonnegative")
 
     if args.force and not args.feed:
         ap.error("--force requires --feed (one feed at a time)")
 
-    for p in TELEGRAM_ENVS:                       # loads GOOGLE + GETXAPI + alerts
-        load_env(p)
+    load_env(ENV_FILE)
     if not os.environ.get("GOOGLE_API_KEY") or not os.environ.get("GETXAPI_KEY"):
         print("Missing GOOGLE_API_KEY or GETXAPI_KEY in .env", file=sys.stderr)
         sys.exit(1)
@@ -1682,28 +1686,25 @@ def main():
         except (SystemExit, KeyboardInterrupt):
             raise
         except Exception as exc:
-            # Single-feed run: hard-fail (the top-level handler pages + exits).
+            # Single-feed run: hard-fail (the top-level handler logs + exits).
             # All-feeds run: one feed's transient outage (GetXAPI drop, network
             # blip mid-LLM) must NOT starve the other feed for the whole 24h cron
-            # tick -- log + page for this feed, keep going, then exit non-zero so
+            # tick -- log + log for this feed, keep going, then exit non-zero so
             # the failure still surfaces.
             if len(feeds) == 1:
                 raise
             traceback.print_exc()
             failed.append(feed.key)
-            try:
-                notify_telegram(f"twitter_digest {feed.key} FAILED: {exc!r}")
-            except Exception:
-                pass
     # A wholesale Gemini failure never raises (each call site swallows its own
     # APIError), so without this the run exits 0 having written nothing and the
     # dashboard just keeps serving yesterday's cards. --dry-run is exempt: it is
     # a manual probe, not the cron tick the dashboard depends on.
     if not args.dry_run:
-        alert_gemini_outage(LLM_TALLY, "twitter_digest")
+        report_gemini_outage(LLM_TALLY, "twitter_digest")
 
-    if failed:
-        print(f"feeds failed: {', '.join(failed)}", file=sys.stderr)
+    if failed or LLM_TALLY.errors:
+        print(f"feeds failed: {', '.join(failed) or 'none'}; "
+              f"failed Gemini operations: {LLM_TALLY.errors}", file=sys.stderr)
         sys.exit(1)
 
 
@@ -1712,12 +1713,6 @@ if __name__ == "__main__":
         main()
     except (SystemExit, KeyboardInterrupt):
         raise
-    except BaseException as exc:                   # log + page, then non-zero exit
-        try:
-            for p in TELEGRAM_ENVS:
-                load_env(p)
-            notify_telegram(f"twitter_digest.py FAILED: {exc!r}")
-        except Exception:
-            pass
+    except BaseException:
         traceback.print_exc()
         sys.exit(1)

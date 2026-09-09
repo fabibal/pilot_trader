@@ -4,7 +4,8 @@ Reconcile the trades.json event log into a position-state model (positions.json)
 
 trades.json is an append-only log of tweet-derived signals; the same holding is
 disclosed many times. This folds those events, in chronological order, into one
-record per (account, portfolio, ticker):
+current record per (account, portfolio, ticker, side), with prior_cycles
+retaining closed cycles. Conditional/review signals have separate records:
 
     {status: open|closed, entry_price, size_pct, trade_date, opened_at,
      closed_at, signals: [...]}
@@ -21,9 +22,13 @@ Run standalone:  python reconcile.py
 Or import reconcile() from monitor.py after each fetch.
 """
 
+import copy
+import hashlib
+from signal_semantics import semantics
 import json
 import os
 import tempfile
+from storage import single_writer
 
 # Account-to-portfolio fallback, applied at STORAGE time so the position key
 # matches what the dashboard shows (avoids a null-portfolio record and a
@@ -79,7 +84,9 @@ def write_json_atomic(path, data):
     fd, tmp = tempfile.mkstemp(dir=d, prefix=".tmp-", suffix=".json")
     try:
         with os.fdopen(fd, "w") as f:
-            json.dump(data, f, indent=2)
+            json.dump(data, f, indent=2, allow_nan=False)
+            f.flush()
+            os.fsync(f.fileno())
         os.replace(tmp, path)
     except Exception:
         if os.path.exists(tmp):
@@ -118,10 +125,25 @@ def reconcile(trades_file=TRADES_FILE, positions_file=POSITIONS_FILE):
             continue
         account = e.get("account")
         portfolio = pf_of(account, e.get("portfolio"))
-        key = (account, portfolio, ticker)
+        side, action, entry_status = semantics(e)
+        key = (account, portfolio, ticker, side)
+        if entry_status in ("setup", "review"):
+            key += (str(tid or e.get("timestamp")),)
         pos = positions.get(key)
+        if pos and pos["status"] == "closed" and action in ("open", "add"):
+            history = pos.get("prior_cycles", []) + [
+                {k: copy.deepcopy(v) for k, v in pos.items() if k != "prior_cycles"}]
+            pos = None
+        else:
+            history = pos.get("prior_cycles", []) if pos else []
         if pos is None:
             pos = {
+                "schema_version": 2,
+                "cycle_id": hashlib.sha256(
+                    repr((key, tid or e.get("timestamp"))).encode()).hexdigest()[:24],
+                "side": side,
+                "entry_status": entry_status,
+                "prior_cycles": history,
                 "account": account,
                 "source_type": e.get("source_type", "portfolio"),
                 "portfolio": portfolio,
@@ -156,7 +178,13 @@ def reconcile(trades_file=TRADES_FILE, positions_file=POSITIONS_FILE):
         if e.get("holding_thesis"):
             pos["holding_thesis"] = e["holding_thesis"]
 
-        st = e.get("signal_type")
+        if entry_status in ("setup", "review"):
+            pos["status"] = "setup" if entry_status == "setup" else "review"
+            for field in ("entry_price", "stop_loss", "target", "trade_date"):
+                pos[field] = e.get(field)
+            continue
+        st = {"open": "buy", "add": "buy", "reduce": "sell",
+              "close": "sell", "hold": "position"}.get(action)
         if st == "buy":
             if pos["status"] != "open":
                 # A buy that RE-opens a previously closed position starts a
@@ -189,7 +217,7 @@ def reconcile(trades_file=TRADES_FILE, positions_file=POSITIONS_FILE):
             # materialize a phantom open/closed record; and a sell never reopens
             # or mutates a closed cycle (only a buy re-opens).
             if pos["status"] == "open":
-                if e.get("sell_kind") == "partial":
+                if action == "reduce":
                     # Partial sell (trim/scale-out): stays open, update remaining
                     # size (disclosed, else assume ~half trimmed).
                     if e.get("position_size_pct") is not None:
@@ -224,6 +252,7 @@ def reconcile(trades_file=TRADES_FILE, positions_file=POSITIONS_FILE):
     return result
 
 
+@single_writer(lambda: TRADES_FILE)
 def main():
     positions = reconcile()
     n_open = sum(1 for p in positions if p["status"] == "open")
