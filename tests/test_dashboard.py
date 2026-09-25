@@ -71,7 +71,7 @@ def test_consensus_callback_renders_content_over_http(monkeypatch):
     view = {'overall_sentiment': 'bullish', 'stance_summary': 'Regression test stance',
             'based_on': {'to_date': '2026-09-08', 'count': 2}}
     monkeypatch.setattr(dash, '_CONSENSUS_SOURCES',
-                        [('Test analyst', 'crypto', lambda: view, 'posts')])
+                        [('Test analyst', 'crypto', lambda: view, 'posts', 'DonAlt')])
     with dash.app.server.test_client() as client:
         response = client.post('/_dash-update-component', json={
             'output': 'consensus-panel.children',
@@ -82,3 +82,53 @@ def test_consensus_callback_renders_content_over_http(monkeypatch):
     assert response.status_code == 200
     assert 'Test analyst' in response.get_data(as_text=True)
     assert 'Regression test stance' in response.get_data(as_text=True)
+
+
+def _walk(component):
+    yield component
+    children = getattr(component, 'children', None)
+    if children is not None:
+        for child in children if isinstance(children, list) else [children]:
+            yield from _walk(child)
+
+
+def test_consensus_sources_open_their_feed_view(monkeypatch):
+    # Every Consensus row links to a card view the existing callbacks render;
+    # those views have no tab, so this is their only way in.
+    monkeypatch.setattr(dash, 'warm_prices', lambda *a: None)
+    targets = [src[4] for src in dash._CONSENSUS_SOURCES]
+    rendered = dash.consensus_section()
+    ids = [c.id for c in _walk(rendered[0]) if isinstance(c, dash.html.Button)]
+    assert sorted(i['view'] for i in ids) == sorted(targets)
+    for target in targets:
+        styles = dash.switch_influencer_subtab(target)[:12]
+        assert sum(style['display'] == 'block' for style in styles) == 1
+        assert any(out for out in dash.refresh_influencers(0, target)[4:])
+        back = dash.refresh_consensus(0, target)
+        assert [c.id for c in _walk(back[0]) if isinstance(c, dash.html.Button)] == \
+            [{'type': 'open-view', 'view': 'Consensus'}]
+    assert dash.refresh_consensus(0, 'GeoffKendrick') == []
+
+
+def test_twitter_section_shows_two_weeks_but_at_least_limit(monkeypatch):
+    monkeypatch.setattr(dash, '_tw_card', lambda p: p['created_at'])
+    today = dash.datetime.now(dash.timezone.utc).date()
+    day = lambda n: (today - dash.timedelta(days=n)).isoformat() + 'T12:00:00Z'
+    busy = [{'created_at': day(n % 20)} for n in range(40)]   # 2 per day, 20 days
+    shown = dash.twitter_section(busy)
+    assert len(shown) == 30 and min(shown) == day(14)
+    slow = [{'created_at': day(n * 10)} for n in range(10)]   # 1 in the window
+    assert len(dash.twitter_section(slow)) == 8
+
+
+@pytest.mark.parametrize('age_h, content, expected', [
+    (2, None, None), (20, None, 20), (None, '{}', 'no data')])
+def test_monitor_stale_only_flags_failures(monkeypatch, tmp_path, age_h, content, expected):
+    state = tmp_path / 'state.json'
+    if content is None:
+        last = dash.datetime.now(dash.timezone.utc) - dash.timedelta(hours=age_h)
+        content = '{"_last_run": "%s"}' % last.isoformat()
+    state.write_text(content)
+    monkeypatch.setattr(dash, 'STATE_FILE', str(state))
+    got = dash._monitor_stale()
+    assert got == expected if not isinstance(expected, int) else round(got) == expected

@@ -20,11 +20,9 @@ Run with the project venv:
     /home/fbazsa/pilot_trader/.venv/bin/python dashboard.py
 """
 
-import http.client as _http_client
 import json
 import os
 import re
-import socket as _socket
 import threading
 import time
 import urllib.request
@@ -34,7 +32,7 @@ from zoneinfo import ZoneInfo
 
 import pandas as pd
 import yfinance as yf
-from dash import Dash, dash_table, dcc, html, Input, Output
+from dash import Dash, dash_table, dcc, html, Input, Output, ALL
 
 import resolver
 
@@ -46,10 +44,6 @@ ENV_FILE = "/home/fbazsa/pilot_trader/.env"
 STALE_HOURS = 8           # cron runs every 4h; >8h means a run was missed
 REFRESH_MS = 60_000
 PORT = 8051
-DOCKER_SOCKET = "/var/run/docker.sock"   # optional; not mounted by default
-DASH_CONTAINER = "pilot_trader_dashboard"
-CONTAINER_STATS_TTL = 25  # cache container stats this many seconds
-CRON_HOURS = [0, 4, 8, 12, 16, 20]       # monitor.py cron slots (UTC)
 
 # All stored timestamps are UTC (ISO with +00:00, or naive UTC epochs); the
 # dashboard DISPLAYS everything in Budapest local time (CET/CEST, UTC+1/+2).
@@ -879,11 +873,18 @@ app.index_string = """<!DOCTYPE html>
       details > summary { list-style: none; }
       details > summary::-webkit-details-marker { display: none; }
       details > summary:hover { background-color: #1c2330; }
+      .open-view:hover { text-decoration: underline; }
       ::-webkit-scrollbar { width: 10px; height: 10px; }
       ::-webkit-scrollbar-track { background: #0d1117; }
       ::-webkit-scrollbar-thumb { background: #30363d; border-radius: 5px; }
+      /* Pinned header (title, status bar, sub-tabs). Needs its own opaque
+         background or the scrolling view shows through it, and no ancestor may
+         set overflow, or sticky silently stops working. */
+      .sticky-head { position: sticky; top: 0; z-index: 10;
+                     background-color: #0d1117; padding: 8px 0 4px;
+                     border-bottom: 1px solid #30363d; }
       /* --- influencer sub-tab bar ---------------------------------------- */
-      /* 14 sub-tabs do not fit one desktop row, and dcc.Tabs injects
+      /* When the sub-tabs outgrow one desktop row (there were 14), dcc.Tabs injects
            .tab { flex: 1 1 0; min-width: 0 }
          so each tab SHRINKS below its own label width; with white-space:nowrap
          the labels then bleed into their neighbours and read as one word
@@ -946,9 +947,9 @@ app.index_string = """<!DOCTYPE html>
         table td, table th { padding-left: 6px !important;
                              padding-right: 6px !important; }
         /* monospace status bar: smaller so segments don't dominate the screen */
-        #status-row-1, #status-row-2 { font-size: 0.62rem !important;
-                                       padding: 5px 8px !important;
-                                       line-height: 1.45 !important; }
+        #status-row { font-size: 0.62rem !important;
+                      padding: 5px 8px !important;
+                      line-height: 1.45 !important; }
         /* Kendrick forecast rows: stack on phones so target prices never
            truncate ("$3,5..." -> full "$3,500"). The summary wraps and the
            targets take their own full-width line (asset+direction on line 1,
@@ -1013,66 +1014,27 @@ def _cost_sums():
 
 
 
-def _next_cron_run(now=None):
-    """Next monitor cron slot (returns a UTC datetime)."""
-    now = now or datetime.now(timezone.utc)
-    for hh in CRON_HOURS:
-        cand = now.replace(hour=hh, minute=0, second=0, microsecond=0)
-        if cand > now:
-            return cand
-    return (now + timedelta(days=1)).replace(hour=0, minute=0, second=0,
-                                             microsecond=0)
-
-
-def status_row_1():
-    """Status bar row 1: live/stale + monitor last & next run.
-    e.g. '● LIVE · monitor last run: 2026-06-03 14:02 CEST · next: 16:00 CEST
-    (~14m)'."""
-    live_color, live_txt, last_txt = C["dim"], "NO DATA", "unknown"
-    last = None
+def _monitor_stale():
+    """Hours since monitor.py's last successful run if that exceeds
+    STALE_HOURS, or "no data" if it can't be read; None while healthy."""
     try:
         with open(STATE_FILE) as f:
-            last = json.load(f).get("_last_run")
-    except (json.JSONDecodeError, OSError):
-        pass
-    if last:
-        try:
-            dt = datetime.fromisoformat(last)
-            hours = (datetime.now(timezone.utc) - dt).total_seconds() / 3600
-            last_txt = _to_local(dt, "%Y-%m-%d %H:%M %Z")
-            if hours > STALE_HOURS:
-                live_color, live_txt = C["red"], f"STALE {hours:.0f}h"
-            else:
-                live_color, live_txt = C["green"], "LIVE"
-        except ValueError:
-            pass
-    nxt = _next_cron_run()
-    next_local = _to_local(nxt, "%H:%M %Z")
-    mins = (nxt - datetime.now(timezone.utc)).total_seconds() / 60
-
-    return [
-        html.Span("● ", style={"color": live_color, "fontWeight": "bold"}),
-        html.Span(live_txt, style={"color": live_color, "fontWeight": "bold"}),
-        _sep(),
-        html.Span("monitor last run: ", style={"color": C["dim"]}),
-        html.Span(last_txt, style={"color": C["text"]}),
-        _sep(),
-        html.Span("next: ", style={"color": C["dim"]}),
-        html.Span(f"{next_local} (~{mins:.0f}m)", style={"color": C["text"]}),
-    ]
+            last = datetime.fromisoformat(json.load(f)["_last_run"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return "no data"
+    hours = (datetime.now(timezone.utc) - last).total_seconds() / 3600
+    return hours if hours > STALE_HOURS else None
 
 
-def status_row_2():
-    """Container stats, GetXAPI credits, trade-monitor LLM costs and prices."""
-    cs = container_stat()
-    if cs.get("ok"):
-        cpu = f"{cs['cpu_pct']:.1f}%" if cs["cpu_pct"] is not None else "--"
-        rm, lim = cs["ram_mb"], cs["ram_limit_mb"]
-        ram = (f"{rm:.0f}/{lim:.0f}MB" if (rm is not None and lim)
-               else (f"{rm:.0f}MB" if rm is not None else "--"))
-    else:
-        cpu, ram = "--", "--"
-
+def status_row():
+    """GetXAPI credits, trade-monitor LLM costs and prices, led by a red
+    monitor STALE warning only when monitor.py has missed its runs."""
+    stale = _monitor_stale()
+    warn = [] if stale is None else [
+        html.Span("● monitor STALE " + (stale if isinstance(stale, str)
+                                        else f"{stale:.0f}h"),
+                  style={"color": C["red"], "fontWeight": "bold"}),
+        _sep()]
     cr = get_getxapi_credits()
     bal = cr["balance"]
     if bal is None:
@@ -1087,11 +1049,7 @@ def status_row_2():
         _to_local(datetime.fromtimestamp(pa, timezone.utc), "%H:%M %Z")
         + " (yfinance, 1h cache)" if pa else "not fetched yet")
 
-    return [
-        html.Span(f"CPU {cpu}", style={"color": C["text"]}),
-        _sep(),
-        html.Span(f"RAM {ram}", style={"color": C["text"]}),
-        _sep(),
+    return warn + [
         html.Span("GetXAPI: ", style={"color": C["dim"]}),
         html.Span(bal_txt, style={"color": bal_color, "fontWeight": "bold"}),
         _sep(),
@@ -1452,8 +1410,10 @@ def _tw_card(p):
     ])
 
 
-def twitter_section(summaries, limit=8, who="@ki_young_ju"):
-    """Render the most recent `limit` post analyses as cards (newest first).
+def twitter_section(summaries, limit=8, who="@ki_young_ju", days=14):
+    """Render every post analysis from the last `days` days as cards (newest
+    first), but never fewer than the latest `limit`, so a slow feed still shows
+    its last few posts. A fixed last-N alone covered only ~2 days of a busy feed.
     Account-agnostic: the card helpers read fields off each record, so the same
     renderer serves every twitter_digest.py feed; `who` only sets the empty
     state."""
@@ -1463,7 +1423,9 @@ def twitter_section(summaries, limit=8, who="@ki_young_ju"):
                                 "marginTop": "8px"})]
     ordered = sorted(summaries, key=lambda r: r.get("created_at") or "",
                      reverse=True)
-    return [_tw_card(p) for p in ordered[:limit]]
+    cutoff = (datetime.now(timezone.utc).date() - timedelta(days=days)).isoformat()
+    recent = sum((p.get("created_at") or "")[:10] >= cutoff for p in ordered)
+    return [_tw_card(p) for p in ordered[:max(limit, recent)]]
 
 
 # --- Kendrick / Standard Chartered forecast ledger ------------------------
@@ -1737,17 +1699,19 @@ def kendrick_forecast_section(forecasts, limit=12):
 # same-day macro reactions -- and seeing them disagree is itself informative. It
 # does mean one person carries 2 of 9 votes in the tally.
 _CONSENSUS_SOURCES = [
-    # label, asset class, current-view loader, what based_on.count counts
-    ("Cowen (YT)",  "crypto", load_youtube_current_view,     "videos"),
-    ("Cowen (X)",   "crypto", load_cowen_x_current_view,     "posts"),
-    ("Jesse Olson", "crypto", load_jesse_olson_current_view, "videos"),
-    ("Ki Young Ju", "crypto", load_ki_current_view,          "posts"),
-    ("Joao Wedson", "crypto", load_joao_current_view,        "posts"),
-    ("DorkChicken", "crypto", load_dorkchicken_current_view, "posts"),
-    ("DaanCrypto",  "crypto", load_daancrypto_current_view,  "posts"),
-    ("DonAlt",      "crypto", load_donalt_current_view,      "posts"),
-    ("Glassnode",   "crypto", load_glassnode_current_view,   "posts"),
-    ("Truecrypto",  "crypto", load_truecrypto_current_view,  "posts"),
+    # label, asset class, current-view loader, what based_on.count counts,
+    # influencer-subtabs value of the feed's card view (clicking the label
+    # opens it; these views have no tab of their own, see the tab bar)
+    ("Cowen (YT)",  "crypto", load_youtube_current_view,     "videos", "BenCowen"),
+    ("Cowen (X)",   "crypto", load_cowen_x_current_view,     "posts",  "CowenX"),
+    ("Jesse Olson", "crypto", load_jesse_olson_current_view, "videos", "JesseOlson"),
+    ("Ki Young Ju", "crypto", load_ki_current_view,          "posts",  "KiYoungJu"),
+    ("Joao Wedson", "crypto", load_joao_current_view,        "posts",  "JoaoWedson"),
+    ("DorkChicken", "crypto", load_dorkchicken_current_view, "posts",  "DorkChicken"),
+    ("DaanCrypto",  "crypto", load_daancrypto_current_view,  "posts",  "DaanCrypto"),
+    ("DonAlt",      "crypto", load_donalt_current_view,      "posts",  "DonAlt"),
+    ("Glassnode",   "crypto", load_glassnode_current_view,   "posts",  "Glassnode"),
+    ("Truecrypto",  "crypto", load_truecrypto_current_view,  "posts",  "Truecrypto"),
 ]
 
 # Decisive-first ordering for the tally line only ("4 neutral · 2 mixed ·
@@ -1803,7 +1767,20 @@ def _consensus_head():
                     children=[html.Div(c, style=_CONSENSUS_HEADER_STYLE) for c in cells])
 
 
-def _consensus_row(label, view, unit="posts"):
+def _open_view_button(text, target, style):
+    """A link-styled button that switches influencer-subtabs to `target` (see
+    the "open-view" clientside callback). Used for the Consensus SOURCE labels,
+    which are the only way into the per-feed card views, and for the back link
+    out of them."""
+    return html.Button(text, id={"type": "open-view", "view": target},
+                       n_clicks=0, className="open-view", style={
+                           "background": "none", "border": "none",
+                           "padding": 0, "cursor": "pointer",
+                           "fontFamily": MONO, "textAlign": "left",
+                           "color": C["blue"], **style})
+
+
+def _consensus_row(label, view, unit="posts", target=None):
     """One feed's stance: sentiment chip, how old the underlying posts are, how
     many fed the synthesis, and its full stance -- shift_note (the sharpest
     concrete point / the visible shift, never a "no change" placeholder) as a
@@ -1842,8 +1819,11 @@ def _consensus_row(label, view, unit="posts"):
         "display": "grid", "gridTemplateColumns": _CONSENSUS_GRID, "gap": "10px",
         "alignItems": "start", "padding": "10px 12px",
         "borderBottom": f"1px solid {C['border']}"}, children=[
-        html.Div(label, style={"color": C["text"], "fontSize": "0.78rem",
-                               "fontWeight": "bold"}),
+        (_open_view_button(label, target, {"fontSize": "0.78rem",
+                                           "fontWeight": "bold"})
+         if target else
+         html.Div(label, style={"color": C["text"], "fontSize": "0.78rem",
+                                "fontWeight": "bold"})),
         html.Div(html.Span(sent.upper() if sent else "—", style={
             "background": color, "color": C["bg"], "borderRadius": "10px",
             "padding": "1px 8px", "fontSize": "0.64rem", "fontWeight": "bold",
@@ -1868,25 +1848,28 @@ def consensus_section():
         age = _consensus_age_days((view.get("based_on") or {}).get("to_date"))
         return 999 if age is None else age
 
-    rows = [(label, cls, loader() or {}, unit)
-            for label, cls, loader, unit in _CONSENSUS_SOURCES]
+    rows = [(label, cls, loader() or {}, unit, target)
+            for label, cls, loader, unit, target in _CONSENSUS_SOURCES]
     children = []
     for cls in dict.fromkeys(r[1] for r in rows):
-        group = sorted([(label, v, unit) for label, c, v, unit in rows if c == cls],
+        group = sorted([(label, v, unit, target)
+                        for label, c, v, unit, target in rows if c == cls],
                        key=order)
         children.append(html.Div([
             html.Span(cls.upper(), style={
                 "color": C["text"], "fontSize": "0.72rem", "fontWeight": "bold",
                 "letterSpacing": "0.06em"}),
             html.Span(f"  ·  {len(group)} sources  ·  "
-                      f"{_consensus_tally([v for _, v, _ in group])}",
+                      f"{_consensus_tally([v for _, v, _, _ in group])}",
                       style={"color": C["dim"], "fontSize": "0.72rem"}),
         ], style={"padding": "14px 12px 8px"}))
         children.append(_consensus_head())
-        children.extend(_consensus_row(label, v, unit) for label, v, unit in group)
+        children.extend(_consensus_row(label, v, unit, target)
+                        for label, v, unit, target in group)
     children.append(html.Div(
         "Each row is that feed's rolling CURRENT VIEW in full. AS OF is the "
-        "newest post the view rests on, not when it was generated.",
+        "newest post the view rests on, not when it was generated. Click a "
+        "source for its individual post/video cards.",
         style={"color": C["dim"], "fontSize": "0.68rem", "padding": "10px 12px",
                "lineHeight": "1.45"}))
     # minWidth keeps the four fixed columns (444px + gaps) from squeezing the
@@ -1897,97 +1880,6 @@ def consensus_section():
         "borderRadius": "8px", "marginTop": "10px", "overflowX": "auto"})]
 
 
-# --- system status bar: optional Docker container stats --------------------
-# Same approach as ~/paper_trader/dashboard.py: talk to the Docker daemon over
-# its Unix socket (mounted into the container) for true per-container CPU/RAM.
-class _UnixSocketHTTPConn(_http_client.HTTPConnection):
-    def __init__(self, unix_socket):
-        super().__init__("localhost")
-        self._unix_socket = unix_socket
-
-    def connect(self):
-        s = _socket.socket(_socket.AF_UNIX, _socket.SOCK_STREAM)
-        s.settimeout(5)
-        s.connect(self._unix_socket)
-        self.sock = s
-
-
-def _docker_req(method, path):
-    try:
-        conn = _UnixSocketHTTPConn(DOCKER_SOCKET)
-        conn.request(method, path)
-        resp = conn.getresponse()
-        body = resp.read()
-        code = resp.status
-        conn.close()
-        return code, body
-    except Exception:        # noqa: BLE001 - socket absent -> degrade gracefully
-        return None, None
-
-
-def _docker_get(path):
-    code, body = _docker_req("GET", path)
-    if body is None:
-        return None
-    try:
-        return json.loads(body)
-    except ValueError:
-        return None
-
-
-_cstat = {"data": None, "ts": 0.0}
-_cstat_lock = threading.Lock()
-
-
-def container_stat(name=DASH_CONTAINER):
-    """CPU% / RAM / uptime / restart-count for one container via the Docker API
-    (cached CONTAINER_STATS_TTL s). ok=False if the socket is unavailable."""
-    with _cstat_lock:
-        if _cstat["data"] is not None and time.time() - _cstat["ts"] < CONTAINER_STATS_TTL:
-            return _cstat["data"]
-    s = _docker_get(f"/containers/{name}/stats?stream=false")
-    info = _docker_get(f"/containers/{name}/json")
-    res = {"name": name, "cpu_pct": None, "ram_mb": None, "ram_limit_mb": None,
-           "ram_pct": None, "uptime_s": None, "restart_count": None, "ok": False}
-    if isinstance(info, dict):
-        rc = info.get("RestartCount")
-        if isinstance(rc, int):
-            res["restart_count"] = rc
-        started = (info.get("State") or {}).get("StartedAt")
-        if started:
-            try:
-                st = started.rstrip("Z")
-                if "." in st:
-                    head, frac = st.split(".", 1)
-                    st = f"{head}.{frac[:6]}"
-                dt = datetime.fromisoformat(st).replace(tzinfo=timezone.utc)
-                res["uptime_s"] = (datetime.now(timezone.utc) - dt).total_seconds()
-            except (ValueError, TypeError):
-                pass
-    if isinstance(s, dict):
-        try:
-            cpu, precpu = s.get("cpu_stats", {}), s.get("precpu_stats", {})
-            mem = s.get("memory_stats", {})
-            cd = ((cpu.get("cpu_usage", {}).get("total_usage", 0) or 0)
-                  - (precpu.get("cpu_usage", {}).get("total_usage", 0) or 0))
-            sd = ((cpu.get("system_cpu_usage", 0) or 0)
-                  - (precpu.get("system_cpu_usage", 0) or 0))
-            ncpu = cpu.get("online_cpus") or 1
-            res["cpu_pct"] = (cd / sd) * ncpu * 100 if sd > 0 else 0.0
-            raw = mem.get("usage", 0) or 0
-            cache = (mem.get("stats") or {}).get("cache", 0) or 0
-            used, lim = raw - cache, mem.get("limit", 0) or 0
-            res["ram_mb"] = used / 1_048_576
-            res["ram_limit_mb"] = lim / 1_048_576 if lim > 0 else None
-            res["ram_pct"] = (used / lim) * 100 if lim > 0 else None
-            res["ok"] = True
-        except (TypeError, ValueError, ZeroDivisionError):
-            pass
-    with _cstat_lock:
-        _cstat.update(data=res, ts=time.time())
-    return res
-
-
 app.layout = html.Div(
     className="root-pad",
     style={"backgroundColor": C["bg"], "color": C["text"], "fontFamily": MONO,
@@ -1995,22 +1887,16 @@ app.layout = html.Div(
     children=[
         dcc.Interval(id="interval", interval=REFRESH_MS, n_intervals=0),
 
-        html.H2("Pilot Trader", style={"margin": 0, "color": C["text"],
-                                       "fontFamily": MONO, "fontSize": "1.3rem"}),
+        # Status bar + sub-tab bar stay pinned while the view below scrolls;
+        # see .sticky-head in the <style>.
+        html.Div(className="sticky-head", children=[
 
-        # System status bar — two clean rows in one panel:
-        #   row 1: live/stale · monitor last+next run
-        #   row 2: container CPU/RAM · GetXAPI credits · API costs · prices
+        # Status bar: GetXAPI credits · trade-monitor LLM cost · prices.
         html.Div(style={"background": C["card"],
                         "border": f"1px solid {C['border']}",
-                        "borderRadius": "8px", "marginTop": "8px",
+                        "borderRadius": "8px",
                         "overflow": "hidden"}, children=[
-            html.Div(id="status-row-1", style={
-                "fontFamily": MONO, "fontSize": "0.74rem", "padding": "6px 12px",
-                "display": "flex", "flexWrap": "wrap", "alignItems": "center",
-                "lineHeight": "1.5",
-                "borderBottom": f"1px solid {C['border']}"}),
-            html.Div(id="status-row-2", style={
+            html.Div(id="status-row", style={
                 "fontFamily": MONO, "fontSize": "0.74rem", "padding": "6px 12px",
                 "display": "flex", "flexWrap": "wrap", "alignItems": "center",
                 "lineHeight": "1.5"}),
@@ -2019,16 +1905,20 @@ app.layout = html.Div(
         html.Div(id="summary", style={"color": C["dim"], "fontSize": "0.76rem",
                                       "marginTop": "8px"}),
 
-            # One sub-tab per destination: influencer trade-call accounts
-            # (IncomeSharks / traderstewie), the analysis-digest feeds, and the
-            # Consensus panel.
+            # Sub-tabs: the Consensus panel, the influencer trade-call accounts
+            # (IncomeSharks / traderstewie) and Geoff Kendrick (a forecast
+            # ledger with no CURRENT VIEW, so no Consensus row). The other
+            # analysis-digest feeds have no tab: their card views are opened by
+            # clicking the feed's SOURCE name on Consensus (the "open-view"
+            # clientside callback), which sets this component's value to one
+            # no Tab carries.
             html.Div(style={"overflowX": "auto",
                             "WebkitOverflowScrolling": "touch"},
                      children=dcc.Tabs(
                          id="influencer-subtabs", value="Consensus",
                          mobile_breakpoint=0,
-                         # Wraps to a second row on desktop rather than squeezing
-                         # 14 labels into one; see .subtabs-strip in the <style>.
+                         # Wraps to a second row on desktop if it ever outgrows
+                         # one; see .subtabs-strip in the <style>.
                          parent_className="subtabs-parent",
                          className="subtabs-strip",
                          style={"display": "flex", "flexWrap": "wrap"},
@@ -2039,29 +1929,10 @@ app.layout = html.Div(
                                      style=_TAB_STYLE, selected_style=_TAB_SELECTED),
                              dcc.Tab(label="traderstewie", value="traderstewie",
                                      style=_TAB_STYLE, selected_style=_TAB_SELECTED),
-                             dcc.Tab(label="Cowen (YT)", value="BenCowen",
-                                     style=_TAB_STYLE, selected_style=_TAB_SELECTED),
-                             dcc.Tab(label="Cowen (X)", value="CowenX",
-                                     style=_TAB_STYLE, selected_style=_TAB_SELECTED),
-                             dcc.Tab(label="Jesse Olson", value="JesseOlson",
-                                     style=_TAB_STYLE, selected_style=_TAB_SELECTED),
-                             dcc.Tab(label="Ki Young Ju", value="KiYoungJu",
-                                     style=_TAB_STYLE, selected_style=_TAB_SELECTED),
-                             dcc.Tab(label="Joao Wedson", value="JoaoWedson",
-                                     style=_TAB_STYLE, selected_style=_TAB_SELECTED),
-                             dcc.Tab(label="DorkChicken", value="DorkChicken",
-                                     style=_TAB_STYLE, selected_style=_TAB_SELECTED),
-                             dcc.Tab(label="DaanCrypto", value="DaanCrypto",
-                                     style=_TAB_STYLE, selected_style=_TAB_SELECTED),
-                             dcc.Tab(label="DonAlt", value="DonAlt",
-                                     style=_TAB_STYLE, selected_style=_TAB_SELECTED),
-                             dcc.Tab(label="Glassnode", value="Glassnode",
-                                     style=_TAB_STYLE, selected_style=_TAB_SELECTED),
-                             dcc.Tab(label="Truecrypto", value="Truecrypto",
-                                     style=_TAB_STYLE, selected_style=_TAB_SELECTED),
                              dcc.Tab(label="Geoff Kendrick", value="GeoffKendrick",
                                      style=_TAB_STYLE, selected_style=_TAB_SELECTED),
                          ])),
+        ]),   # end sticky-head
 
             # Consensus view: every digest feed's CURRENT VIEW side by side.
             # Unlike the per-feed views below it needs no show/hide style output —
@@ -2320,12 +2191,11 @@ app.layout = html.Div(
 
 
 @app.callback(
-    Output("status-row-1", "children"),
-    Output("status-row-2", "children"),
+    Output("status-row", "children"),
     Input("interval", "n_intervals"),
 )
 def refresh_status(_n):
-    return status_row_1(), status_row_2()
+    return status_row()
 
 
 def _influencer_header(title, account):
@@ -2460,11 +2330,39 @@ def refresh_influencers(_n, account):
 )
 def refresh_consensus(_n, account):
     """Kept separate from refresh_influencers deliberately: that callback already
-    fans 15 outputs across 12 branches, and this panel shares none of them."""
+    fans 15 outputs across 12 branches, and this panel shares none of them.
+    On a feed view opened from a Consensus row it renders only the back link:
+    those views have no tab to highlight or to click back from."""
+    if account in {target for *_, target in _CONSENSUS_SOURCES}:
+        return [html.Div(_open_view_button("← Consensus", "Consensus",
+                                           {"fontSize": "0.8rem"}),
+                         style={"marginTop": "12px"})]
     if account != "Consensus":
         return []
     return [html.Div("Consensus — current stance across every analysis feed",
                      style=_SECTION_H)] + consensus_section()
+
+
+# Consensus SOURCE labels / back link -> influencer-subtabs. Clientside so it
+# can also scroll to the top: the Consensus panel is long, and without it a
+# click on a lower row lands mid-way down the (shorter) feed view. The panel is
+# re-rendered every interval, so newly inserted buttons (n_clicks 0) must not
+# count as a click.
+app.clientside_callback(
+    """
+    function(_clicks) {
+        const ctx = dash_clientside.callback_context;
+        if (!ctx.triggered.length || !ctx.triggered[0].value) {
+            return dash_clientside.no_update;
+        }
+        window.scrollTo(0, 0);
+        return ctx.triggered_id.view;
+    }
+    """,
+    Output("influencer-subtabs", "value"),
+    Input({"type": "open-view", "view": ALL}, "n_clicks"),
+    prevent_initial_call=True,
+)
 
 
 # --- background cache warmer -------------------------------------------------
