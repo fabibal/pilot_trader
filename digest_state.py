@@ -10,7 +10,10 @@ import sentiment_history
 
 
 def refresh_current_view(client, source, summaries, select_window, generate,
-                         input_rate, output_rate):
+                         input_rate, output_rate, run_cost=None):
+    """Regenerate source's CURRENT VIEW when its input window changed. The
+    synthesis spend is added to `run_cost` (a cost_log.RunCost), failed
+    attempts included."""
     if not source.current_view_file or not summaries:
         return
     window = select_window(summaries)
@@ -41,6 +44,8 @@ def refresh_current_view(client, source, summaries, select_window, generate,
     view, in_tok, out_tok = generate(client, source, summaries)
     cost = (in_tok * input_rate + out_tok * output_rate) / 1_000_000
     print(f"Current-view tokens in={in_tok} out={out_tok} (${cost:.4f})")
+    if run_cost is not None:
+        run_cost.llm_usd += cost
     if not view:
         raise RuntimeError(f"{source.key}: current view failed; saved summaries will be retried next run")
     view["input_fingerprint"] = fingerprint

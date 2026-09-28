@@ -20,6 +20,7 @@ Run with the project venv:
     /home/fbazsa/pilot_trader/.venv/bin/python dashboard.py
 """
 
+import glob
 import json
 import os
 import re
@@ -27,12 +28,13 @@ import threading
 import time
 import urllib.request
 import urllib.error
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 import pandas as pd
 import yfinance as yf
-from dash import Dash, dash_table, dcc, html, Input, Output, ALL
+from dash import (Dash, dash_table, dcc, html, Input, Output, State, ALL,
+                  no_update)
 
 import resolver
 
@@ -72,6 +74,17 @@ def _local_date(val):
         return _iso_to_local(val, "%Y-%m-%d")
     return val[:10]
 
+
+def _local_stamp(val):
+    """'YYYY-MM-DD HH:MM' in Budapest for an ISO timestamp; a bare date or an
+    unparseable value falls back to its date part."""
+    if not val or "T" not in val:
+        return (val or "")[:10]
+    try:
+        return _iso_to_local(val, "%Y-%m-%d %H:%M")
+    except ValueError:
+        return val[:10]
+
 # --- API credits (GetXAPI) --------------------------------------------------
 # GetXAPI exposes account credits at GET /account/me (-> credits_remaining).
 # Anthropic has no remaining-credit-balance endpoint, so only GetXAPI is shown.
@@ -103,11 +116,42 @@ _load_env(ENV_FILE)
 # Cached GetXAPI credits: {balance: float|None, fetched_at: epoch|None, ok: bool}
 _credits_cache = {"balance": None, "fetched_at": None, "ok": False}
 
+# Balance snapshots [(epoch, balance)] -> credits_days_left(). Kept 14 days in
+# the writable cache dir so a restart doesn't reset the burn-rate window.
+CREDITS_HISTORY_FILE = "/home/fbazsa/pilot_trader/data/cache/getxapi_credits.json"
+CREDITS_HISTORY_DAYS = 14
+
+
+def _load_credit_history():
+    try:
+        with open(CREDITS_HISTORY_FILE) as f:
+            return [(float(t), float(b)) for t, b in json.load(f)]
+    except (OSError, ValueError, TypeError):
+        return []
+
+
+_credit_history = _load_credit_history()
+
+
+def _record_credits(balance, now):
+    cutoff = now - CREDITS_HISTORY_DAYS * 86400
+    _credit_history[:] = ([(t, b) for t, b in _credit_history if t >= cutoff]
+                          + [(now, balance)])
+    try:
+        os.makedirs(os.path.dirname(CREDITS_HISTORY_FILE), exist_ok=True)
+        tmp = CREDITS_HISTORY_FILE + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(_credit_history, f)
+        os.replace(tmp, CREDITS_HISTORY_FILE)
+    except OSError:
+        pass
+
 
 def get_getxapi_credits():
     """Return the cached GetXAPI credits dict, refreshing at most every
     CREDITS_REFRESH_MS. Network failure leaves the last good value in place and
-    flags ok=False so the UI can show a fetch error without blanking the card."""
+    flags ok=False so the UI can show a fetch error without blanking the card.
+    Called by the background warmer; the status bar only reads the cache."""
     now = time.time()
     fa = _credits_cache["fetched_at"]
     if fa is not None and now - fa < CREDITS_REFRESH_MS / 1000:
@@ -127,6 +171,7 @@ def get_getxapi_credits():
             data = json.load(r)
         _credits_cache.update(balance=float(data.get("credits_remaining")),
                               fetched_at=now, ok=True)
+        _record_credits(_credits_cache["balance"], now)
     except (urllib.error.URLError, OSError, ValueError, TypeError):
         _credits_cache.update(fetched_at=now, ok=False)
     return _credits_cache
@@ -141,25 +186,44 @@ def is_influencer(account):
     return account in INFLUENCER_ACCOUNTS
 
 
+# Extracted "tickers" that are not instruments: an LLM placeholder, and the
+# NYSE McClellan Oscillator (a breadth indicator traderstewie charts).
+_NOT_TICKERS = {"NONE", "NYMO"}
+
+
+def _is_ticker(ticker):
+    return bool(ticker) and ticker.lstrip("$").upper() not in _NOT_TICKERS
+
+
 def influencer_positions(positions):
-    return [p for p in positions if is_influencer(p.get("account"))]
+    return [p for p in positions if is_influencer(p.get("account"))
+            and _is_ticker(p.get("ticker"))]
+
+
+# Yahoo lists a coin whose ticker an older coin already took under a numbered
+# symbol: TICKER-USD is then another coin (SKY-USD is Skycoin at $0.014, not
+# Sky at $0.076; ARB-USD trades at $0.0006, Arbitrum at $0.23) or does not exist
+# (UNI, GRT, HYPE, SUI, MORPHO). STRK-USD happens to carry Starknet's price
+# today although Yahoo names it Strike, so it is pinned to the explicit symbol.
+# Indices take a caret. All checked against Yahoo on 2026-09-27.
+_YF_CRYPTO_ALIASES = {
+    "STRK": "STRK22691-USD", "SKY": "SKY33038-USD", "GRT": "GRT6719-USD",
+    "ARB": "ARB11841-USD", "UNI": "UNI7083-USD", "MORPHO": "MORPHO34104-USD",
+    "SUI": "SUI20947-USD", "HYPE": "HYPE32196-USD", "SOLANA": "SOL-USD",
+}
+_YF_ALIASES = {"RUT": "^RUT", "COMPQ": "^IXIC"}
 
 
 def _yf_symbol(ticker, asset_type):
-    """yfinance needs a -USD suffix for crypto (BTC -> BTC-USD)."""
-    if asset_type == "crypto" and ticker and "-" not in ticker:
-        return f"{ticker}-USD"
-    return ticker
-
-
-def _days_held(opened_date):
-    if not opened_date:
-        return None
-    try:
-        d = datetime.strptime(opened_date[:10], "%Y-%m-%d").replace(tzinfo=timezone.utc)
-        return (datetime.now(timezone.utc) - d).days
-    except ValueError:
-        return None
+    """yfinance symbol for a ticker: crypto takes a -USD suffix (BTC ->
+    BTC-USD), with the collision/index aliases above; a leading $ is dropped."""
+    t = (ticker or "").lstrip("$")
+    key = t.upper()
+    if key in _YF_ALIASES:
+        return _YF_ALIASES[key]
+    if asset_type == "crypto" and t and "-" not in t:
+        return _YF_CRYPTO_ALIASES.get(key, f"{t}-USD")
+    return t
 
 # GitHub-dark palette — matches paper_trader/dashboard.py and polymarket_bot.
 C = {
@@ -179,16 +243,22 @@ C = {
 }
 MONO = "'Consolas', 'SF Mono', 'Menlo', monospace"
 
-# --- price cache (1h TTL) so the 60s dashboard refresh doesn't hammer Yahoo ---
+# --- price cache: the background warmer refreshes it off the request path
+# (see _warm_loop); PRICE_TTL is only the request path's fallback expiry. ---
 PRICE_TTL = 3600
+# A past date with no close (dead or unlisted symbol) is retried this rarely.
+HIST_MISS_TTL = 6 * 3600
 _price_cache = {}       # ticker -> (price_or_None, fetched_at)
 _hist_cache = {}        # (ticker, date_str) -> (price_or_None, fetched_at)
 _fetch_state = {"last": None}   # epoch of the most recent live Yahoo fetch
 
 # Historical closes are IMMUTABLE (the close on a past date never changes), so
 # they are persisted to disk and never re-fetched. Keyed "TICKER|YYYY-MM-DD".
+# data/cache is the one writable mount in the otherwise read-only container
+# (docker-compose.yml): it holds only this derived cache, never ledgers.
 DATA_DIR = "/home/fbazsa/pilot_trader/data"
-PRICE_CACHE_FILE = os.path.join(DATA_DIR, "price_cache.json")
+CACHE_DIR = os.path.join(DATA_DIR, "cache")
+PRICE_CACHE_FILE = os.path.join(CACHE_DIR, "price_cache.json")
 
 
 def _load_hist_persist():
@@ -207,7 +277,7 @@ _hist_lock = threading.Lock()
 
 def _save_hist_persist():
     try:
-        os.makedirs(DATA_DIR, exist_ok=True)
+        os.makedirs(CACHE_DIR, exist_ok=True)
         tmp = PRICE_CACHE_FILE + ".tmp"
         with _hist_lock:
             with open(tmp, "w") as f:
@@ -262,7 +332,7 @@ def _fetch_hist_close(ticker, date_str):
         return None
 
 
-def get_hist_close(ticker, date_str):
+def get_hist_close(ticker, date_str, max_age=PRICE_TTL):
     if not date_str:
         return None
     # Immutable on-disk cache first (past closes never change).
@@ -270,14 +340,18 @@ def get_hist_close(ticker, date_str):
     if pkey in _hist_persist:
         return _hist_persist[pkey]
     now = time.time()
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     key = (ticker, date_str)
     hit = _hist_cache.get(key)
-    if hit and now - hit[1] < PRICE_TTL:
-        return hit[0]
+    if hit:
+        # A past date that had no close stays unpriced: retry it rarely, not
+        # on every pass (dead symbols cost up to seconds per lookup).
+        ttl = HIST_MISS_TTL if hit[0] is None and date_str < today else max_age
+        if now - hit[1] < ttl:
+            return hit[0]
     price = _fetch_hist_close(ticker, date_str)
     _hist_cache[key] = (price, now)
     # Persist only resolved closes for dates strictly in the past (immutable).
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     if price is not None and date_str < today:
         with _hist_lock:
             _hist_persist[pkey] = price
@@ -285,12 +359,13 @@ def get_hist_close(ticker, date_str):
     return price
 
 
-def warm_prices(symbols):
+def warm_prices(symbols, max_age=PRICE_TTL):
     """Batch-fetch current prices for many symbols in ONE yf.download call,
-    populating the per-symbol cache. Falls back to single fetches on gaps."""
+    populating the per-symbol cache. Falls back to single fetches on gaps.
+    Symbols cached less than `max_age` seconds ago are kept."""
     now = time.time()
     need = sorted({s for s in symbols if s and not (
-        _price_cache.get(s) and now - _price_cache[s][1] < PRICE_TTL)})
+        _price_cache.get(s) and now - _price_cache[s][1] < max_age)})
     if not need:
         return
     _fetch_state["last"] = now
@@ -317,101 +392,45 @@ def warm_prices(symbols):
         _price_cache[s] = (price, now)
 
 
-# --- return computation ------------------------------------------------------
-def estimate_entry(ticker, entry_price, trade_date, fallback_date,
-                   asset_type="stock"):
-    # NaN-guard: pandas coerces a JSON null entry_price to truthy NaN, which
-    # must not short-circuit the estimated-entry fallback.
-    if entry_price and entry_price == entry_price:
-        return entry_price, False
-    date = trade_date or (fallback_date or "")[:10]
-    return get_hist_close(_yf_symbol(ticker, asset_type), date), True
+# --- entry price -------------------------------------------------------------
+# A stated entry further than this from the trade date's close is a recap of an
+# old fill, not the price the call was made at.
+RECAP_TOLERANCE = 0.30
 
 
-def compute_return(ticker, entry_price, trade_date, fallback_date,
-                   asset_type="stock"):
-    entry, estimated = estimate_entry(ticker, entry_price, trade_date,
-                                      fallback_date, asset_type)
-    if not entry:
-        return None
-    cur = get_price(_yf_symbol(ticker, asset_type))
-    if not cur:
-        return None
-    return {"val": round((cur - entry) / entry * 100, 1),
-            "estimated": estimated, "current": cur}
+def _trade_date(p):
+    return p.get("trade_date") or (p.get("opened_at") or "")[:10] or None
 
 
-# --- daily price history (for the performance-over-time chart) ---------------
-_series_cache = {}   # (ticker, start) -> (pandas Series date_str->close | None, ts)
-
-
-def get_price_series(ticker, start_date):
-    """Daily close Series (index = 'YYYY-MM-DD' strings) from start_date to now,
-    cached 1h. None on failure."""
-    now = time.time()
-    key = (ticker, start_date)
-    hit = _series_cache.get(key)
-    if hit and now - hit[1] < PRICE_TTL:
-        return hit[0]
-    series = None
-    try:
-        hist = yf.Ticker(ticker).history(start=start_date)
-        if not hist.empty:
-            s = hist["Close"]
-            s.index = s.index.strftime("%Y-%m-%d")
-            series = s[~s.index.duplicated(keep="last")].sort_index()
-    except Exception:
-        series = None
-    _series_cache[key] = (series, now)
-    return series
-
-
-def warm_series(symbols, start_date):
-    """Batch-fetch daily close Series for many symbols in ONE yf.download call,
-    populating _series_cache. Mirrors warm_prices; falls back to single fetches
-    via get_price_series on the symbols the batch misses."""
-    now = time.time()
-    need = sorted({s for s in symbols if s and not (
-        _series_cache.get((s, start_date))
-        and now - _series_cache[(s, start_date)][1] < PRICE_TTL)})
-    if not need:
-        return
-    _fetch_state["last"] = now
-    close = None
-    try:
-        data = yf.download(need, start=start_date, progress=False, threads=True)
-        if "Close" in data:
-            close = data["Close"]
-    except Exception:
-        close = None
-    for s in need:
-        series = None
-        try:
-            if close is not None:
-                col = close[s] if hasattr(close, "columns") and \
-                    s in getattr(close, "columns", []) else close
-                col = col.dropna()
-                if len(col):
-                    col.index = col.index.strftime("%Y-%m-%d")
-                    series = col[~col.index.duplicated(keep="last")].sort_index()
-        except Exception:
-            series = None
-        if series is not None:
-            _series_cache[(s, start_date)] = (series, now)
-        else:                    # batch missed this symbol — single fetch (self-caches)
-            get_price_series(s, start_date)
+def _entry_for(p, max_age=PRICE_TTL):
+    """(entry, estimated) for a call. The stated entry_price wins unless it is
+    more than RECAP_TOLERANCE away from the close on the trade date: then the
+    tweet quoted an old fill (IncomeSharks' 'HOOD from $8' on a day HOOD closed
+    at $84.84) and the call is priced from that close instead, marked
+    estimated like any call without a stated entry."""
+    sym = _yf_symbol(p.get("ticker"), p.get("asset_type") or "unknown")
+    tdate = _trade_date(p)
+    close = get_hist_close(sym, tdate, max_age=max_age) if tdate else None
+    stated = p.get("entry_price")
+    # NaN-guard: pandas coerces a JSON null entry_price to truthy NaN.
+    if isinstance(stated, (int, float)) and stated == stated and stated > 0:
+        if close and abs(stated / close - 1) > RECAP_TOLERANCE:
+            return close, True
+        return stated, False
+    return close, close is not None
 
 
 _ohlc_cache = {}   # (symbol, start) -> (DataFrame[High,Low] | None, ts)
 
 
-def get_ohlc(symbol, start_date):
+def get_ohlc(symbol, start_date, max_age=PRICE_TTL):
     """Daily High/Low DataFrame (index = 'YYYY-MM-DD') from start_date to now,
-    cached 1h. Used to resolve influencer calls against the price path."""
+    kept `max_age` seconds. Used to resolve influencer calls against the price
+    path and to grade the Kendrick forecasts."""
     now = time.time()
     key = (symbol, start_date)
     hit = _ohlc_cache.get(key)
-    if hit and now - hit[1] < PRICE_TTL:
+    if hit and now - hit[1] < max_age:
         return hit[0]
     df = None
     try:
@@ -424,17 +443,6 @@ def get_ohlc(symbol, start_date):
         df = None
     _ohlc_cache[key] = (df, now)
     return df
-
-
-def _price_asof(series, date_str):
-    """Last close on or before date_str (ISO strings sort lexicographically)."""
-    if series is None:
-        return None
-    try:
-        upto = series.loc[:date_str]
-        return float(upto.iloc[-1]) if len(upto) else None
-    except Exception:
-        return None
 
 
 # --- data loading ------------------------------------------------------------
@@ -487,15 +495,6 @@ INFLUENCER_TABLE_COLUMNS = [
 ]
 
 
-# --- portfolio summary + holdings -------------------------------------------
-def spy_return_since(date_str):
-    entry = get_hist_close("SPY", date_str)
-    cur = get_price("SPY")
-    if entry and cur:
-        return round((cur - entry) / entry * 100, 1)
-    return None
-
-
 def _fmt_pct(v):
     return "n/a" if v is None else f"{v:+.1f}%"
 
@@ -504,13 +503,6 @@ def _color(v):
     if v is None:
         return C["dim"]
     return C["green"] if v > 0 else (C["red"] if v < 0 else C["dim"])
-
-
-def _stat_line(label, value_span):
-    return html.Div([
-        html.Span(f"{label} ", style={"color": C["dim"]}),
-        value_span,
-    ], style={"fontSize": "0.82rem", "marginTop": "3px"})
 
 
 # --- styled html tables (dark theme) ----------------------------------------
@@ -602,16 +594,19 @@ _STATUS_LABEL = {resolver.HIT_TARGET: ("target hit", "green"),
                  resolver.STOPPED_OUT: ("stopped out", "red"),
                  resolver.EXPIRED: ("expired", "dim"),
                  resolver.CLOSED_WIN: ("closed (win)", "green"),
-                 resolver.CLOSED_LOSS: ("closed (loss)", "red")}
+                 resolver.CLOSED_LOSS: ("closed (loss)", "red"),
+                 resolver.INCONSISTENT: ("bad levels", "yellow")}
 
 
-def influencer_resolutions(positions, account=None):
+def influencer_resolutions(positions, account=None, max_age=PRICE_TTL):
     """List of (position, resolution|None) for influencer calls, resolved
     against the realized price path. Includes calls the influencer EXPLICITLY
     closed (sell tweet): a target/stop hit inside the holding window counts as
     usual, otherwise the call is classified by realized return — excluding
     closed calls computed the win rate only over calls they hadn't talked
-    about since. If `account` is given, restrict to that one handle."""
+    about since. An open call whose levels were already past its entry
+    resolves as inconsistent (excluded from the win rate). If `account` is
+    given, restrict to that one handle."""
     out = []
     cycles = [cycle for position in positions
               for cycle in [*position.get("prior_cycles", []), position]]
@@ -621,21 +616,21 @@ def influencer_resolutions(positions, account=None):
             continue
         if account and p.get("account") != account:
             continue
-        atype = p.get("asset_type") or "unknown"
-        sym = _yf_symbol(p["ticker"], atype)
-        tdate = p.get("trade_date") or (p.get("opened_at") or "")[:10] or None
-        ohlc = get_ohlc(sym, tdate) if tdate else None
+        sym = _yf_symbol(p["ticker"], p.get("asset_type") or "unknown")
+        tdate = _trade_date(p)
+        ohlc = get_ohlc(sym, tdate, max_age=max_age) if tdate else None
+        entry, _ = _entry_for(p, max_age=max_age)
         if status == "open":
-            out.append((p, resolver.resolve_position(p, ohlc)))
+            out.append((p, resolver.resolve_position(p, ohlc, entry=entry)))
             continue
         cdate = (p.get("closed_at") or "")[:10] or None
-        res = resolver.resolve_position(p, ohlc, until=cdate)
-        if res is None and cdate:
-            entry, _ = estimate_entry(p["ticker"], p.get("entry_price"),
-                                      p.get("trade_date"),
-                                      (p.get("opened_at") or "")[:10], atype)
-            res = resolver.resolve_closed(p, entry,
-                                          get_hist_close(sym, cdate), cdate)
+        res = resolver.resolve_position(p, ohlc, until=cdate, entry=entry)
+        # The influencer's own close still classifies the call by realized
+        # return when the path says nothing: no target/stop hit inside the
+        # holding window, or levels that were inconsistent from the start.
+        if cdate and (res is None or res["status"] == resolver.INCONSISTENT):
+            res = resolver.resolve_closed(
+                p, entry, get_hist_close(sym, cdate, max_age=max_age), cdate)
         if res is not None:    # unpriceable closed calls are excluded entirely
             out.append((p, res))
     return out
@@ -656,21 +651,20 @@ def _win_rate_caveats(resolutions):
                 if r is None or r["status"] == resolver.EXPIRED]
     priced = underwater = 0
     for p in excluded:
-        atype = p.get("asset_type") or "unknown"
-        sym = _yf_symbol(p["ticker"], atype)
-        entry = p.get("entry_price")
-        if not entry:
-            tdate = p.get("trade_date") or (p.get("opened_at") or "")[:10] or None
-            entry = get_hist_close(sym, tdate) if tdate else None
-        cur = get_price(sym)
-        if entry and cur:
+        entry, _ = _entry_for(p)
+        ret = resolver.return_pct(
+            p, entry, get_price(_yf_symbol(p["ticker"],
+                                           p.get("asset_type") or "unknown")))
+        if ret is not None:     # side-aware: a short is underwater when up
             priced += 1
-            if cur < entry:
+            if ret < 0:
                 underwater += 1
     no_stop = sum(1 for p, _r in resolutions if p.get("stop_loss") is None)
+    inconsistent = sum(1 for _p, r in resolutions
+                       if r and r["status"] == resolver.INCONSISTENT)
     return {"excluded": len(excluded), "excluded_priced": priced,
             "excluded_underwater": underwater, "no_stop": no_stop,
-            "total": len(resolutions)}
+            "inconsistent": inconsistent, "total": len(resolutions)}
 
 
 def influencer_winrate_card(resolutions):
@@ -695,6 +689,13 @@ def influencer_winrate_card(resolutions):
         lines.append(html.Div(
             f"+ {c['excluded']} more calls excluded (expired/live) · "
             f"{uw_txt} of those are currently negative vs entry",
+            style={"color": C["dim"], "fontSize": "0.76rem", "marginTop": "4px"}))
+
+    if c["inconsistent"]:
+        lines.append(html.Div(
+            f"+ {c['inconsistent']} calls excluded for bad levels (target or "
+            f"stop already past the entry when called -- they would count as "
+            f"a day-one hit or stop-out)",
             style={"color": C["dim"], "fontSize": "0.76rem", "marginTop": "4px"}))
 
     if c["total"] and c["no_stop"] / c["total"] * 100 >= NO_STOP_CAVEAT_PCT:
@@ -736,13 +737,8 @@ def _influencer_returns(account, resolutions):
     for p, _res in (resolutions or []):
         if p.get("status") != "open":   # resolutions include closed calls
             continue
-        atype = p.get("asset_type") or "unknown"
-        sym = _yf_symbol(p["ticker"], atype)
-        entry = p.get("entry_price")
-        if not entry:
-            tdate = p.get("trade_date") or (p.get("opened_at") or "")[:10] or None
-            entry = get_hist_close(sym, tdate) if tdate else None
-        cur = get_price(sym)
+        entry, _ = _entry_for(p)
+        cur = get_price(_yf_symbol(p["ticker"], p.get("asset_type") or "unknown"))
         rr.append((p["ticker"], resolver.return_pct(p, entry, cur)))
     return rr
 
@@ -764,7 +760,8 @@ def influencer_header_card(account, resolutions=None):
         C["green"] if wr >= 50 else C["red"])
     metrics.append(_hdr_metric("win rate", wr_txt, wr_color,
                                f"{st['decided']} decided, "
-                               f"{st['expired'] + st['live']} excl."))
+                               f"{st['expired'] + st['live'] + st['inconsistent']}"
+                               f" excl."))
     metrics.append(_hdr_metric("open calls", str(len(rr)), C["text"]))
     metrics.append(_hdr_metric("best", best[0] if best else "—",
                                _color(best[1] if best else None),
@@ -796,15 +793,8 @@ def influencer_positions_table(resolutions):
         if p.get("status") != "open":
             continue
         atype = p.get("asset_type") or "unknown"
-        sym = _yf_symbol(p["ticker"], atype)
-        entry = p.get("entry_price")
-        if not entry:
-            tdate = p.get("trade_date") or (p.get("opened_at") or "")[:10] or None
-            entry = get_hist_close(sym, tdate) if tdate else None
-            est = entry is not None
-        else:
-            est = False
-        cur = get_price(sym)
+        entry, est = _entry_for(p)
+        cur = get_price(_yf_symbol(p["ticker"], atype))
         ret = resolver.return_pct(p, entry, cur)
         tdate = p.get("trade_date") or _local_date(p.get("opened_at")) or None
         if res:
@@ -869,11 +859,42 @@ app.index_string = """<!DOCTYPE html>
       }
       .is-focused:not(.is-open) > .Select-control,
       .Select__control--is-focused { border-color: #58a6ff !important; }
-      /* click-to-expand strategy rows (no marker; row hover affordance) */
+      /* click-to-expand rows (Kendrick forecasts, setups, table views): no
+         native marker, row hover affordance, the ▸ glyph turns when open */
       details > summary { list-style: none; }
       details > summary::-webkit-details-marker { display: none; }
       details > summary:hover { background-color: #1c2330; }
+      details[open] > summary .caret { display: inline-block;
+                                       transform: rotate(90deg); }
       .open-view:hover { text-decoration: underline; }
+      /* "ÚJ" badge: set by assets/new_badges.js on anything newer than this
+         browser's previous look at the same view */
+      .is-new { position: relative; }
+      .is-new::before { content: "ÚJ"; position: absolute; top: -8px;
+                        right: 14px; z-index: 1; background: #58a6ff;
+                        color: #0d1117; font-size: 0.6rem; font-weight: bold;
+                        letter-spacing: 0.06em; padding: 1px 7px;
+                        border-radius: 8px; }
+      /* Consensus chart marks. Classes, not inline styles: a chart is hundreds
+         of repeated nodes and Dash ships every node's inline style. Hover
+         lifts the mark; the column / 18px ring is the hit target. */
+      .bb-col { position: relative; flex: 1 1 0; min-width: 0; height: 100%; }
+      .bb-bar { position: absolute; left: 0; right: 0; }
+      .bb-bar.pos { bottom: 50%; background: #3fb950; border-radius: 3px 3px 0 0; }
+      .bb-bar.neg { top: 50%; background: #f85149; border-radius: 0 0 3px 3px; }
+      .hs-cell { width: 7px; height: 7px; border-radius: 50%;
+                 background: #8b949e; }
+      .hs-bullish { background: #3fb950; }
+      .hs-bearish { background: #f85149; }
+      .hs-mixed { background: #d29922; }
+      .lvl-hit { position: absolute; top: 50%; transform: translate(-50%, -50%);
+                 width: 18px; height: 18px; display: flex; align-items: center;
+                 justify-content: center; z-index: 1; }
+      .lvl-dot { width: 8px; height: 8px; border-radius: 50%; background: #58a6ff;
+                 box-shadow: 0 0 0 2px #161b22; }
+      .bb-col:hover .bb-bar, .lvl-hit:hover .lvl-dot { filter: brightness(1.35); }
+      .twin { color: #8b949e; font-size: 0.66rem; line-height: 1.5;
+              margin: 6px 0 0; white-space: pre; overflow-x: auto; }
       ::-webkit-scrollbar { width: 10px; height: 10px; }
       ::-webkit-scrollbar-track { background: #0d1117; }
       ::-webkit-scrollbar-thumb { background: #30363d; border-radius: 5px; }
@@ -930,14 +951,22 @@ app.index_string = """<!DOCTYPE html>
           padding: 9px 12px !important; min-height: 40px !important;
           font-size: 0.78rem !important;
         }
-        /* portfolio summary cards stack full-width on phones */
-        #portfolio-summary > div { min-width: 100% !important;
-                                   flex-basis: 100% !important;
-                                   max-width: 100% !important; }
-        /* Holdings: pie + detail stack vertically, pie spans full width */
-        .pie-row { flex-direction: column !important; }
-        .pie-row > .pie-col { flex: 0 0 100% !important;
-                              max-width: 100% !important; min-width: 0 !important; }
+        /* Consensus rows stack on phones: source / as-of / basis on the left,
+           the view chip + history on the right, and the STANCE prose full
+           width below -- instead of a 780px grid whose STANCE column starts
+           off-screen. The column header only fits the desktop grid. */
+        .cons-inner { min-width: 0 !important; }
+        .cons-head { display: none !important; }
+        .cons-row { grid-template-columns: minmax(0, 1fr) auto !important;
+                    grid-template-areas: "src view" "asof view" "basis view"
+                                         "stance stance" !important;
+                    row-gap: 2px !important; }
+        .cons-row > .cons-src { grid-area: src; }
+        .cons-row > .cons-view { grid-area: view; }
+        .cons-row > .cons-asof { grid-area: asof; }
+        .cons-row > .cons-basis { grid-area: basis; }
+        .cons-row > .cons-stance { grid-area: stance; margin-top: 6px; }
+        .cons-charts { grid-template-columns: minmax(0, 1fr) !important; }
         /* phones: hide low-priority columns (marked .col-sm-hide), tighten
            cell padding, and stop headers wrapping ("TRADE DATE") so the key
            columns (ticker/return/current) fit a 390px screen without h-scroll.
@@ -985,12 +1014,15 @@ _TAB_SELECTED = {"backgroundColor": C["card"], "color": C["text"],
 
 # --- redesign: components ---------------------------------------------------
 def _sep():
-    """Dim ' · ' separator between status-bar segments."""
-    return html.Span(" · ", style={"color": C["border"]})
+    """' · ' separator between status-bar segments (#status-row keeps the
+    spaces: it is a flex row, which would otherwise trim them)."""
+    return html.Span(" · ", style={"color": C["dim"]})
 
 
 def _cost_sums():
-    """(today, month, all-time) LLM spend from data/cost_log.json."""
+    """LLM spend from data/cost_log.json across every pipeline: (today, month,
+    {source: month total}). Rows logged before per-source logging have no
+    source; they are all monitor.py's."""
     try:
         with open(COST_LOG_FILE) as f:
             log = json.load(f)
@@ -1000,18 +1032,37 @@ def _cost_sums():
         log = []
     now = datetime.now(timezone.utc)
     today, month = now.strftime("%Y-%m-%d"), now.strftime("%Y-%m")
-    d = m = t = 0.0
+    d = m = 0.0
+    by_source = {}
     for r in log:
         usd = r.get("total_usd") or 0.0
         ts = r.get("timestamp") or ""
-        t += usd
         if ts[:7] == month:
             m += usd
+            src = r.get("source") or "monitor"
+            by_source[src] = by_source.get(src, 0.0) + usd
         if ts[:10] == today:
             d += usd
-    return d, m, t
+    return d, m, by_source
 
 
+def credits_days_left(history=None):
+    """Days until the GetXAPI balance runs out at the last week's burn rate,
+    from the balance snapshots get_getxapi_credits() records. Only the stretch
+    after the latest top-up (a balance increase) counts; None until that
+    stretch spans a day and the balance actually fell."""
+    pts = list(_credit_history if history is None else history)
+    if not pts:
+        return None
+    pts = [(t, b) for t, b in pts if t >= pts[-1][0] - 7 * 86400]
+    start = 0
+    for i in range(1, len(pts)):
+        if pts[i][1] > pts[i - 1][1]:
+            start = i
+    (t0, b0), (t1, b1) = pts[start], pts[-1]
+    if t1 - t0 < 86400 or b1 >= b0:
+        return None
+    return b1 / ((b0 - b1) / ((t1 - t0) / 86400))
 
 
 def _monitor_stale():
@@ -1027,56 +1078,48 @@ def _monitor_stale():
 
 
 def status_row():
-    """GetXAPI credits, trade-monitor LLM costs and prices, led by a red
-    monitor STALE warning only when monitor.py has missed its runs."""
+    """GetXAPI credits (+ runway), LLM spend of every pipeline and price
+    freshness, led by a red monitor STALE warning only when monitor.py has
+    missed its runs. Reads caches only: the credits are fetched by the
+    background warmer, never on a page load."""
     stale = _monitor_stale()
     warn = [] if stale is None else [
         html.Span("● monitor STALE " + (stale if isinstance(stale, str)
                                         else f"{stale:.0f}h"),
                   style={"color": C["red"], "fontWeight": "bold"}),
         _sep()]
-    cr = get_getxapi_credits()
-    bal = cr["balance"]
+    bal = _credits_cache["balance"]
     if bal is None:
         bal_txt, bal_color = "n/a", C["dim"]
     else:
         bal_txt = f"${bal:,.2f} credits"
         bal_color = C["red"] if bal < CREDITS_LOW_USD else C["green"]
+    days = credits_days_left()
+    runway = [] if days is None or bal is None else [html.Span(
+        f" (~{days:,.0f}d left)",
+        style={"color": C["red"] if days < 14 else C["dim"]})]
 
-    d, m, _ = _cost_sums()
+    d, m, by_source = _cost_sums()
+    breakdown = " · ".join(f"{src} ${usd:,.2f}" for src, usd in
+                           sorted(by_source.items(), key=lambda kv: -kv[1]))
     pa = _fetch_state["last"]
     prices_txt = (
         _to_local(datetime.fromtimestamp(pa, timezone.utc), "%H:%M %Z")
-        + " (yfinance, 1h cache)" if pa else "not fetched yet")
+        + " (yfinance, 30-min refresh)" if pa else "not fetched yet")
 
     return warn + [
         html.Span("GetXAPI: ", style={"color": C["dim"]}),
         html.Span(bal_txt, style={"color": bal_color, "fontWeight": "bold"}),
+        *runway,
         _sep(),
-        html.Span("Trade monitor LLM: ", style={"color": C["dim"]}),
+        html.Span("LLM: ", style={"color": C["dim"]}),
         html.Span(f"today ${d:,.2f} / mo ${m:,.2f}",
-                  style={"color": C["text"]}),
+                  title=f"This month by pipeline: {breakdown or 'none'}",
+                  style={"color": C["text"], "cursor": "help"}),
         _sep(),
         html.Span("Prices as of: ", style={"color": C["dim"]}),
         html.Span(prices_txt, style={"color": C["dim"]}),
     ]
-
-
-def _kpi_tile(label, value, value_color, sub=None):
-    return html.Div(style={
-        "background": C["card"], "border": f"1px solid {C['border']}",
-        "borderRadius": "8px", "padding": "10px 14px", "minWidth": "0",
-        "flex": "1 1 140px"}, children=[
-        html.Div(label, style={"color": C["dim"], "fontSize": "0.68rem",
-                               "textTransform": "uppercase",
-                               "letterSpacing": "0.05em",
-                               "whiteSpace": "nowrap", "overflow": "hidden",
-                               "textOverflow": "ellipsis"}),
-        html.Div(value, style={"color": value_color, "fontSize": "1.15rem",
-                               "fontWeight": "bold", "marginTop": "2px"}),
-        html.Div(sub or "", style={"color": C["dim"], "fontSize": "0.7rem",
-                                   "marginTop": "1px", "minHeight": "0.9rem"}),
-    ])
 
 
 # --- YouTube (Benjamin Cowen) analysis ------------------------------------
@@ -1140,14 +1183,18 @@ def _yt_chip(text, color=None):
 def _yt_card(v):
     sent = (v.get("overall_sentiment") or "neutral").lower()
     color = _YT_SENTIMENT.get(sent, C["dim"])
-    date = (v.get("published") or "")[:10]
+    date = _local_stamp(v.get("published"))
     levels = v.get("key_price_levels") or []
     themes = v.get("top_themes") or []
     src_tag = "  ·  local whisper" if v.get("transcript_source") == "whisper" else ""
+    # overflowWrap: an unbreakable token (a URL) must wrap inside the card, not
+    # widen the page; data-ts feeds the "ÚJ" badge (assets/new_badges.js).
     return html.Div(style={
         "background": C["card"], "border": f"1px solid {C['border']}",
         "borderLeft": f"3px solid {color}", "borderRadius": "8px",
-        "padding": "12px 16px", "marginTop": "10px"}, children=[
+        "padding": "12px 16px", "marginTop": "10px",
+        "overflowWrap": "anywhere"}, **{"data-ts": v.get("published") or ""},
+        children=[
         html.Div(style={"display": "flex", "justifyContent": "space-between",
                         "alignItems": "flex-start", "gap": "12px"}, children=[
             html.A(v.get("title") or v.get("video_id"), href=_safe_href(v.get("url")),
@@ -1353,16 +1400,20 @@ def _tw_images(media):
 def _tw_card(p):
     sent = (p.get("overall_sentiment") or "neutral").lower()
     color = _YT_SENTIMENT.get(sent, C["dim"])
-    date = (p.get("created_at") or "")[:10]
+    date = _local_stamp(p.get("created_at"))
     author = p.get("author")              # search feeds: the poster (varies)
     levels = p.get("key_levels") or []
     themes = p.get("top_themes") or []
     chart_color = _YT_SENTIMENT.get((p.get("chart_trend") or "neutral").lower(),
                                     C["dim"])
+    # overflowWrap: a contract address in a title (`ethereum:0xa12c...`) must
+    # wrap inside the card, not widen the page on a phone.
     return html.Div(style={
         "background": C["card"], "border": f"1px solid {C['border']}",
         "borderLeft": f"3px solid {color}", "borderRadius": "8px",
-        "padding": "12px 16px", "marginTop": "10px"}, children=[
+        "padding": "12px 16px", "marginTop": "10px",
+        "overflowWrap": "anywhere"}, **{"data-ts": p.get("created_at") or ""},
+        children=[
         html.Div(style={"display": "flex", "justifyContent": "space-between",
                         "alignItems": "flex-start", "gap": "12px"}, children=[
             html.A(_tw_title(p.get("text")), href=_safe_href(p.get("url")),
@@ -1550,6 +1601,101 @@ def _merge_kndr_rows(forecasts):
     return list(by.values())
 
 
+def _kendrick_rows(forecasts, limit=12):
+    """(shown, hidden, flow_hidden): the merged PRICE forecasts the Kendrick
+    tab lists (most-reported first, capped at `limit`), how many more price
+    forecasts the cap hides, and how many flow/size rows were left out."""
+    rows = _merge_kndr_rows(forecasts)
+    price = [f for f in rows if _is_price_forecast(f)]
+    price.sort(key=lambda f: (f.get("source_count") or 0,
+                              f.get("last_seen") or f.get("first_seen") or ""),
+               reverse=True)
+    return price[:limit], max(0, len(price) - limit), len(rows) - len(price)
+
+
+# --- forecast grading: live price and the move still needed, or the verdict --
+# One daily High/Low history per asset serves every row. It starts a year before
+# the earliest deadline the ledger names (2024), so an expired call is graded
+# over its final 12 months.
+KNDR_HISTORY_START = "2023-01-01"
+# Ledger "assets" that are themes or fiat, not a priceable coin.
+_KNDR_NOT_ASSETS = {"RWA", "DEFI", "DEFI ASSETS", "STABLECOIN", "STABLECOINS",
+                    "UNK", "USD", "HKD", "USDC"}
+
+
+def _kndr_symbol(asset):
+    a = (asset or "").strip().upper()
+    if not a or a in _KNDR_NOT_ASSETS or not re.fullmatch(r"[A-Z0-9]+", a):
+        return None
+    return _yf_symbol(a, "crypto")
+
+
+def _kndr_deadline(timeframe):
+    """Dec 31 of the year a timeframe names ('2030', 'end-2025'); None for
+    'unspecified', 'long-term' and relative spans ('3 years')."""
+    m = re.search(r"\b(20\d\d)\b", timeframe or "")
+    return date(int(m.group(1)), 12, 31) if m else None
+
+
+def _kndr_progress(f, target, max_age=PRICE_TTL):
+    """Where a price forecast stands: {"state": "hit", "date"} once the price
+    reached the target (within the deadline's final year, or since the call was
+    first seen), {"state": "missed"} when the deadline passed without it, else
+    {"state": "open", "current", "to_go"} (% move still needed). None when the
+    asset has no Yahoo price."""
+    sym = _kndr_symbol(f.get("asset"))
+    if not sym or not target:
+        return None
+    today = datetime.now(timezone.utc).date()
+    deadline = _kndr_deadline(f.get("timeframe"))
+    start = (f.get("first_seen") or today.isoformat())[:10]
+    if deadline:
+        start = min(start, (deadline - timedelta(days=365)).isoformat())
+    end = min(deadline, today).isoformat() if deadline else today.isoformat()
+    up = (f.get("direction") or "up").lower() != "down"
+    ohlc = get_ohlc(sym, KNDR_HISTORY_START, max_age=max_age)
+    have_path = ohlc is not None and not ohlc.empty
+    if have_path:
+        window = ohlc.loc[start:end]
+        reached = window["High"] >= target if up else window["Low"] <= target
+        if reached.any():
+            return {"state": "hit", "date": window.index[reached.values][0]}
+    if deadline and deadline < today:
+        return {"state": "missed"} if have_path else None
+    cur = get_price(sym)
+    if not cur:
+        return None
+    return {"state": "open", "current": cur, "to_go": (target / cur - 1) * 100}
+
+
+def _fmt_price(v):
+    """Compact price for badges: $84.6K / $2,690 / $2.69 / $0.325."""
+    if v >= 10_000:
+        return f"${v / 1000:,.1f}K"
+    if v >= 100:
+        return f"${v:,.0f}"
+    if v >= 1:
+        return f"${v:,.2f}"
+    return f"${v:.3g}"
+
+
+def _kndr_progress_span(prog):
+    if not prog:
+        return html.Span()
+    if prog["state"] == "hit":
+        txt, color = f"✓ elérve {prog['date']}", C["green"]
+        tip = "ezen a napon érte el az árfolyam a célt"
+    elif prog["state"] == "missed":
+        txt, color = "✗ nem teljesült", C["red"]
+        tip = "a határidő lejárt, az árfolyam nem érte el a célt"
+    else:
+        txt = f"most {_fmt_price(prog['current'])} · {prog['to_go']:+,.0f}%"
+        color, tip = C["dim"], "aktuális ár · a célig hiányzó elmozdulás"
+    return html.Span(txt, title=tip, style={
+        "color": color, "fontSize": "0.72rem", "whiteSpace": "nowrap",
+        "flex": "0 0 auto"})
+
+
 def _kendrick_row(f):
     sent = (f.get("overall_sentiment") or "neutral").lower()
     color = _YT_SENTIMENT.get(sent, C["dim"])
@@ -1569,6 +1715,11 @@ def _kendrick_row(f):
     else:
         tlist = [t for t in tlist if _kndr_target_value(t) is not None] or tlist
     targets = "  ·  ".join(tlist) or "—"
+    # The row is graded on its headline price (or its first price target when
+    # the headline is a flow phrase).
+    tv = hv if hv is not None else next(
+        (v for v in map(_kndr_target_value, tlist) if v is not None), None)
+    progress = _kndr_progress_span(_kndr_progress(f, tv) if tv else None)
     tf = f.get("timeframe") or "—"
     first = (f.get("first_seen") or "")[:10]
     sources = f.get("sources") or []
@@ -1578,8 +1729,9 @@ def _kendrick_row(f):
         "display": "flex", "alignItems": "center", "gap": "10px",
         "cursor": "pointer", "listStyle": "none", "padding": "9px 2px"},
         children=[
-        html.Span("▸", style={"color": C["dim"], "fontSize": "0.7rem",
-                              "flex": "0 0 auto"}),
+        html.Span("▸", className="caret",
+                  style={"color": C["dim"], "fontSize": "0.7rem",
+                         "flex": "0 0 auto"}),
         html.Span(asset, style={
             "background": C["bg"], "color": C["blue"],
             "border": f"1px solid {C['border']}", "borderRadius": "6px",
@@ -1592,6 +1744,7 @@ def _kendrick_row(f):
             "color": C["text"], "fontWeight": "bold", "fontSize": "0.82rem",
             "flex": "1 1 auto", "minWidth": "0", "overflow": "hidden",
             "textOverflow": "ellipsis", "whiteSpace": "nowrap"}),
+        progress,
         html.Span(tf, style={"color": C["dim"], "fontSize": "0.74rem",
                             "whiteSpace": "nowrap", "flex": "0 0 auto"}),
         html.Span(f"{n} src", title="accounts that reported this call",
@@ -1649,7 +1802,8 @@ def _kendrick_row(f):
     return html.Details(style={
         "background": C["card"], "border": f"1px solid {C['border']}",
         "borderLeft": f"3px solid {color}", "borderRadius": "8px",
-        "padding": "0 12px", "marginTop": "8px"}, children=[summary, body])
+        "padding": "0 12px", "marginTop": "8px"},
+        **{"data-ts": f.get("first_seen") or ""}, children=[summary, body])
 
 
 def kendrick_forecast_section(forecasts, limit=12):
@@ -1662,13 +1816,7 @@ def kendrick_forecast_section(forecasts, limit=12):
         return [html.Div("No Standard Chartered / Kendrick forecasts captured "
                          "yet.", style={"color": C["dim"], "fontSize": "0.8rem",
                                         "marginTop": "8px"})]
-    rows = _merge_kndr_rows(forecasts)
-    price = [f for f in rows if _is_price_forecast(f)]
-    flow_hidden = len(rows) - len(price)
-    price.sort(key=lambda f: (f.get("source_count") or 0,
-                              f.get("last_seen") or f.get("first_seen") or ""),
-               reverse=True)
-    shown, extra = price[:limit], max(0, len(price) - limit)
+    shown, extra, flow_hidden = _kendrick_rows(forecasts, limit)
     children = [_kendrick_row(f) for f in shown]
     notes = []
     if extra:
@@ -1685,10 +1833,9 @@ def kendrick_forecast_section(forecasts, limit=12):
 # --- Consensus: cross-feed CURRENT VIEW summary ----------------------------
 # One row per analysis-only digest feed that produces a rolling CURRENT VIEW
 # (twitter_digest.py / youtube_monitor.py), so "who is bearish right now" is one
-# glance instead of seven sub-tab clicks. Reads the very same per-feed
-# *_current_view.json files each sub-tab's banner reads — no new data source, and
-# no dependency on data/sentiment_history.json (that log is the substrate for a
-# future timeline, not for this snapshot).
+# glance instead of seven sub-tab clicks. The rows read the per-feed
+# *_current_view.json files; data/sentiment_history.json (every view ever
+# generated) adds each row's recent-view strip and the balance chart above.
 #
 # All ten read the same market today, so one tally is meaningful; rows are
 # still grouped by asset class, because tallying a crypto stance together with an
@@ -1713,6 +1860,277 @@ _CONSENSUS_SOURCES = [
     ("Glassnode",   "crypto", load_glassnode_current_view,   "posts",  "Glassnode"),
     ("Truecrypto",  "crypto", load_truecrypto_current_view,  "posts",  "Truecrypto"),
 ]
+
+# Card view -> the registry key its views are logged under in
+# sentiment_history.json (Cowen's YouTube channel and X feed are separate keys).
+_HISTORY_KEY = {"BenCowen": "cowen", "CowenX": "cowen_x",
+                "JesseOlson": "jesse_olson", "KiYoungJu": "ki_young_ju",
+                "JoaoWedson": "joao_wedson", "DorkChicken": "dorkchicken",
+                "DaanCrypto": "daancrypto", "DonAlt": "donalt",
+                "Glassnode": "glassnode", "Truecrypto": "truecrypto"}
+SENTIMENT_HISTORY_FILE = os.path.join(DATA_DIR, "sentiment_history.json")
+HISTORY_STRIP_LEN = 10     # recent views shown under each row's chip
+BALANCE_DAYS = 60          # span of the bull-bear balance chart
+
+
+def _load_sentiment_history():
+    """Every CURRENT VIEW ever generated (sentiment_history.py), write order.
+    Missing or corrupt file -> [] (the strip and the chart just disappear)."""
+    try:
+        with open(SENTIMENT_HISTORY_FILE) as f:
+            data = json.load(f)
+        return data if isinstance(data, list) else []
+    except (OSError, json.JSONDecodeError):
+        return []
+
+
+def _history_by_source(history):
+    """{source: [(generated_at, sentiment), ...] oldest first}."""
+    out = {}
+    for r in history:
+        if isinstance(r, dict) and r.get("source"):
+            out.setdefault(r["source"], []).append(
+                (r.get("generated_at") or "", (r.get("sentiment") or "").lower()))
+    for recs in out.values():
+        recs.sort()
+    return out
+
+
+def _history_run(recs, current):
+    """(since, previous) for a source whose view is now `current`: the date its
+    current sentiment took over (first record of the unbroken run at the end of
+    its history) and the sentiment before that run. Either may be None."""
+    i = len(recs) - 1
+    while i >= 0 and recs[i][1] == current:
+        i -= 1
+    since = recs[i + 1][0][:10] if i + 1 < len(recs) else None
+    return since, (recs[i][1] if i >= 0 else None)
+
+
+def _history_strip(recs):
+    """The last HISTORY_STRIP_LEN views, oldest -> newest: one dot per view in
+    the sentiment's color (.hs-* in the <style>), all on one line. Each dot's
+    tooltip and the "since · was" note under it carry the same in words."""
+    return html.Div([html.Span(className=f"hs-cell hs-{sent}",
+                               title=f"{_local_date(ts) or '?'}: {sent}")
+                     for ts, sent in recs[-HISTORY_STRIP_LEN:]],
+                    style={"display": "flex", "alignItems": "center",
+                           "gap": "3px", "marginTop": "6px"})
+
+
+def _daily_balance(by_source, keys, days=BALANCE_DAYS, today=None):
+    """[(date, bullish, bearish, other)] for each of the last `days` days: every
+    source's latest view as of that day (carried forward), counted by
+    sentiment. Leading days before any view existed are dropped."""
+    today = today or datetime.now(timezone.utc).date()
+    series = [by_source[k] for k in keys if k in by_source]
+    out = []
+    for back in range(days - 1, -1, -1):
+        day = (today - timedelta(days=back)).isoformat()
+        counts = {"bullish": 0, "bearish": 0, "other": 0}
+        for recs in series:
+            last = None
+            for ts, sent in recs:
+                if ts[:10] > day:
+                    break
+                last = sent
+            if last is not None:
+                counts[last if last in counts else "other"] += 1
+        out.append((day, counts["bullish"], counts["bearish"], counts["other"]))
+    while out and not any(out[0][1:]):
+        out.pop(0)
+    return out
+
+
+_CHART_CARD = {"background": C["card"], "border": f"1px solid {C['border']}",
+               "borderRadius": "8px", "padding": "10px 14px", "minWidth": "0"}
+_CHART_TITLE = {"color": C["text"], "fontSize": "0.72rem", "fontWeight": "bold",
+                "letterSpacing": "0.04em"}
+_CHART_NOTE = {"color": C["dim"], "fontSize": "0.64rem"}
+
+
+def _table_twin(summary, headers, rows):
+    """The collapsed table view every chart ships with (every value reachable
+    without hovering), as one preformatted block: a 60-row html.Table would
+    be ~300 nodes in the payload."""
+    cols = list(zip(headers, *rows))
+    widths = [max(len(str(c)) for c in col) for col in cols]
+    text = "\n".join("  ".join(str(c).rjust(w) if i else str(c).ljust(w)
+                               for i, (c, w) in enumerate(zip(line, widths)))
+                     for line in [headers, *rows])
+    return html.Details([
+        html.Summary([html.Span("▸ ", className="caret"), summary],
+                     style={**_CHART_NOTE, "cursor": "pointer", "marginTop": "6px"}),
+        html.Pre(text, className="twin")], style={"marginTop": "2px"})
+
+
+def sentiment_balance_chart(by_source):
+    """Bull-bear balance over time: per day, bullish minus bearish sources
+    (latest view carried forward). Diverging columns around a zero line --
+    position carries the sign, green/red only repeats it."""
+    rows = _daily_balance(by_source, list(_HISTORY_KEY.values()))
+    if not rows:
+        return None
+    scale = max(b + r + o for _, b, r, o in rows) or 1
+    cols = []
+    for day, bull, bear, other in rows:
+        net = bull - bear
+        cols.append(html.Div(
+            className="bb-col",
+            title=f"{day}: {bull} bullish · {bear} bearish · {other} neutral/mixed",
+            children=html.Div(
+                className="bb-bar " + ("pos" if net > 0 else "neg"),
+                style={"height": f"{abs(net) / scale * 50:.1f}%"}) if net else None))
+    day, bull, bear, other = rows[-1]
+    week = rows[-8] if len(rows) >= 8 else rows[0]
+    axis = {**_CHART_NOTE, "lineHeight": "1"}
+    plot = html.Div(style={"display": "flex", "gap": "6px", "marginTop": "8px"},
+                    children=[
+        html.Div([html.Div(f"+{scale}", style=axis), html.Div("0", style=axis),
+                  html.Div(f"-{scale}", style=axis)],
+                 style={"display": "flex", "flexDirection": "column",
+                        "justifyContent": "space-between", "height": "72px",
+                        "textAlign": "right", "minWidth": "22px"}),
+        html.Div(style={"position": "relative", "flex": "1 1 auto",
+                        "height": "72px", "minWidth": "0"}, children=[
+            html.Div(style={"position": "absolute", "left": 0, "right": 0,
+                            "top": "50%", "height": "1px",
+                            "background": C["border"]}),
+            html.Div(cols, style={"position": "relative", "zIndex": 1,
+                                  "display": "flex", "gap": "2px",
+                                  "height": "100%"}),
+        ]),
+    ])
+    return html.Div(style=_CHART_CARD, children=[
+        html.Div([html.Span("SENTIMENT BALANCE", style=_CHART_TITLE),
+                  html.Span(f"  now {bull - bear:+d}  ({bull} bullish · {bear} "
+                            f"bearish · {other} other)  ·  7d ago "
+                            f"{week[1] - week[2]:+d}", style=_CHART_NOTE)]),
+        plot,
+        html.Div([html.Span(rows[0][0]), html.Span(day)],
+                 style={**_CHART_NOTE, "display": "flex",
+                        "justifyContent": "space-between",
+                        "marginLeft": "28px", "marginTop": "3px"}),
+        _table_twin("daily counts", ["Date", "Bullish", "Bearish", "Other", "Net"],
+                    [(d, str(b), str(r), str(o), f"{b - r:+d}")
+                     for d, b, r, o in reversed(rows)]),
+    ])
+
+
+# BTC price levels named in the CURRENT VIEW prose: "83 000 dolláros",
+# "85 000–88 000 dollár", "58 ezer dolláros", "~$82.8k". A dollar unit is
+# required, so quantities ("100 000 BTC") and indicator periods ("50 hetes") are
+# ignored; the band around the live price drops other assets' prices (ETH 2800).
+_LVL_NUM = r"\d{1,3}(?:[   .,]\d{3})+|\d+(?:[.,]\d+)?"
+_LVL_SUF = r"(?:k\b|ezer\b)?"
+_LVL_RE = re.compile(
+    rf"\$\s*(?P<a>{_LVL_NUM})\s*(?P<ak>{_LVL_SUF})"
+    rf"|(?P<b>{_LVL_NUM})\s*(?P<bk>{_LVL_SUF})"
+    rf"(?:\s*(?:[–—-]|és|to)\s*\$?\s*(?P<c>{_LVL_NUM})\s*(?P<ck>{_LVL_SUF}))?"
+    rf"\s*(?:dollár|USD|\$)", re.I)
+_LVL_BAND = (0.5, 1.6)     # kept levels, as multiples of the live BTC price
+
+
+def _level_value(num, suffix):
+    s = num.replace(" ", " ").replace(" ", " ")
+    if re.fullmatch(r"\d{1,3}(?:[ .,]\d{3})+", s):      # thousands-grouped
+        v = float(re.sub(r"[ .,]", "", s))
+    else:
+        v = float(s.replace(",", "."))
+    return v * 1000 if (suffix or "").lower() in ("k", "ezer") else v
+
+
+def extract_btc_levels(text, price):
+    """Sorted distinct BTC levels in `text` within _LVL_BAND of `price`."""
+    found = []
+    for m in _LVL_RE.finditer(text or ""):
+        if m.group("a"):
+            found.append(_level_value(m.group("a"), m.group("ak")))
+            continue
+        ck = m.group("ck")     # "85–88 ezer": the unit covers both bounds
+        found.append(_level_value(m.group("b"), m.group("bk") or ck))
+        if m.group("c"):
+            found.append(_level_value(m.group("c"), ck))
+    lo, hi = (_LVL_BAND[0] * price, _LVL_BAND[1] * price) if price \
+        else (20_000, 500_000)
+    return sorted({round(v) for v in found if lo <= v <= hi})
+
+
+def _nice_step(span):
+    for step in (1_000, 2_000, 2_500, 5_000, 10_000, 20_000, 25_000, 50_000):
+        if span / step <= 6:
+            return step
+    return 100_000
+
+
+def btc_level_map(sources):
+    """Every BTC level the current views name, on one price axis, one row per
+    source, with the live price as a vertical line. `sources`: [(label, view)].
+    """
+    price = get_price("BTC-USD")
+    rows = [(label, lv) for label, view in sources
+            if (lv := extract_btc_levels(" ".join(
+                [view.get("shift_note") or "", view.get("stance_summary") or ""]),
+                price))]
+    if not rows:
+        return None
+    vals = [v for _, lv in rows for v in lv] + ([price] if price else [])
+    lo, hi = min(vals), max(vals)
+    pad = (hi - lo) * 0.06 or hi * 0.05
+    lo, hi = lo - pad, hi + pad
+
+    def x(v):
+        return f"{(v - lo) / (hi - lo) * 100:.2f}%"
+
+    now_line = ([html.Div(style={"position": "absolute", "left": x(price),
+                                 "top": 0, "bottom": 0, "width": "1px",
+                                 "background": C["text"], "opacity": 0.7})]
+                if price else [])
+    label_w = "96px"
+    grid = {"display": "grid", "gridTemplateColumns": f"{label_w} minmax(0,1fr)",
+            "alignItems": "center"}
+    lines = []
+    for label, lv in rows:
+        dots = [html.Span(
+            className="lvl-hit", style={"left": x(v)},
+            title=f"{label}: ${v:,.0f}"
+                  + (f" ({(v / price - 1) * 100:+.1f}% vs now)" if price else ""),
+            children=html.Span(className="lvl-dot"))
+            for v in lv]
+        lines.append(html.Div(style=grid, children=[
+            html.Div(label, style={"color": C["dim"], "fontSize": "0.66rem",
+                                   "whiteSpace": "nowrap", "overflow": "hidden",
+                                   "textOverflow": "ellipsis"}),
+            html.Div(style={"position": "relative", "height": "20px"}, children=[
+                html.Div(style={"position": "absolute", "left": 0, "right": 0,
+                                "top": "50%", "height": "1px",
+                                "background": C["border"]}),
+                *now_line, *dots]),
+        ]))
+    step = _nice_step(hi - lo)
+    ticks = range(int(lo // step + 1) * step, int(hi) + 1, step)
+    lines.append(html.Div(style=grid, children=[
+        html.Div(),
+        html.Div(style={"position": "relative", "height": "14px"}, children=[
+            *now_line,
+            *[html.Span(f"${t / 1000:,.0f}K" if t % 1000 == 0 else f"${t / 1000:,.1f}K",
+                        style={**_CHART_NOTE, "position": "absolute",
+                               "left": x(t), "transform": "translateX(-50%)",
+                               "top": "2px", "whiteSpace": "nowrap"})
+              for t in ticks]]),
+    ]))
+    flat = sorted(((v, label) for label, lv in rows for v in lv), reverse=True)
+    return html.Div(style=_CHART_CARD, children=[
+        html.Div([html.Span("BTC LEVELS IN THE CURRENT VIEWS", style=_CHART_TITLE),
+                  html.Span(f"  now ${price:,.0f} (line)" if price else
+                            "  live price unavailable", style=_CHART_NOTE)]),
+        html.Div(lines, style={"marginTop": "8px"}),
+        _table_twin("level list", ["Level", "Source", "vs now"],
+                    [(f"${v:,.0f}", label,
+                      f"{(v / price - 1) * 100:+.1f}%" if price else "—")
+                     for v, label in flat]),
+    ])
+
 
 # Decisive-first ordering for the tally line only ("4 neutral · 2 mixed ·
 # 1 bearish" reads better than a random dict order); row order itself is by
@@ -1760,7 +2178,8 @@ def _consensus_tally(views):
 
 def _consensus_head():
     cells = ["SOURCE", "VIEW", "AS OF", "BASIS", "STANCE"]
-    return html.Div(style={"display": "grid",
+    return html.Div(className="cons-head",
+                    style={"display": "grid",
                            "gridTemplateColumns": _CONSENSUS_GRID,
                            "gap": "10px", "padding": "0 12px 6px",
                            "borderBottom": f"1px solid {C['border']}"},
@@ -1780,14 +2199,32 @@ def _open_view_button(text, target, style):
                            "color": C["blue"], **style})
 
 
-def _consensus_row(label, view, unit="posts", target=None):
-    """One feed's stance: sentiment chip, how old the underlying posts are, how
-    many fed the synthesis, and its full stance -- shift_note (the sharpest
-    concrete point / the visible shift, never a "no change" placeholder) as a
-    bold lead-in, followed by the full stance_summary paragraph. Always shown
-    in full, no click needed: this is the one place that lets you compare
-    every feed's actual reasoning, not just a one-line headline, without
-    leaving the tab."""
+def _view_cell(sent, color, recs):
+    """Sentiment chip, then (with history) the recent-view strip and since
+    when the current sentiment holds / what it replaced."""
+    chip = html.Span(sent.upper() if sent else "—", style={
+        "background": color, "color": C["bg"], "borderRadius": "10px",
+        "padding": "1px 8px", "fontSize": "0.64rem", "fontWeight": "bold",
+        "letterSpacing": "0.04em", "whiteSpace": "nowrap"})
+    if not recs or not sent:
+        return [chip]
+    since, previous = _history_run(recs, sent)
+    note = " · ".join(filter(None, [
+        f"since {since[5:]}" if since else None,
+        f"was {previous}" if previous else None]))
+    return [chip, _history_strip(recs),
+            html.Div(note, style={"color": C["dim"], "fontSize": "0.6rem",
+                                  "marginTop": "3px", "whiteSpace": "nowrap"})]
+
+
+def _consensus_row(label, view, unit="posts", target=None, recs=None):
+    """One feed's stance: sentiment chip (+ its recent-view strip from
+    sentiment_history), how old the underlying posts are, how many fed the
+    synthesis, and its full stance -- shift_note (the sharpest concrete point /
+    the visible shift, never a "no change" placeholder) as a bold lead-in,
+    followed by the full stance_summary paragraph. Always shown in full, no
+    click needed: this is the one place that lets you compare every feed's
+    actual reasoning, not just a one-line headline, without leaving the tab."""
     sent = (view.get("overall_sentiment") or "").lower()
     color = _YT_SENTIMENT.get(sent, C["dim"])
     based_on = view.get("based_on") or {}
@@ -1814,26 +2251,27 @@ def _consensus_row(label, view, unit="posts", target=None):
                    "fontSize": "0.76rem", "lineHeight": "1.4"})
     # Rows top-align, not centre: the stance cell is shown IN FULL and wraps to
     # several lines, which would otherwise leave the chip and dates floating
-    # mid-row.
-    return html.Div(style={
+    # mid-row. The cons-* classes restack the row on phones (see <style>);
+    # data-ts marks a view regenerated since the last visit (new_badges.js).
+    return html.Div(className="cons-row", **{"data-ts": view.get("generated_at") or ""},
+                    style={
         "display": "grid", "gridTemplateColumns": _CONSENSUS_GRID, "gap": "10px",
         "alignItems": "start", "padding": "10px 12px",
         "borderBottom": f"1px solid {C['border']}"}, children=[
-        (_open_view_button(label, target, {"fontSize": "0.78rem",
-                                           "fontWeight": "bold"})
-         if target else
-         html.Div(label, style={"color": C["text"], "fontSize": "0.78rem",
-                                "fontWeight": "bold"})),
-        html.Div(html.Span(sent.upper() if sent else "—", style={
-            "background": color, "color": C["bg"], "borderRadius": "10px",
-            "padding": "1px 8px", "fontSize": "0.64rem", "fontWeight": "bold",
-            "letterSpacing": "0.04em", "whiteSpace": "nowrap"})),
-        html.Div(as_of, style={"color": age_color, "fontFamily": MONO,
-                               "fontSize": "0.7rem", "whiteSpace": "nowrap"}),
-        html.Div(f"{count} {unit}" if count else "—",
+        html.Div(className="cons-src", children=
+                 _open_view_button(label, target, {"fontSize": "0.78rem",
+                                                   "fontWeight": "bold"})
+                 if target else
+                 html.Span(label, style={"color": C["text"], "fontSize": "0.78rem",
+                                         "fontWeight": "bold"})),
+        html.Div(_view_cell(sent, color, recs), className="cons-view"),
+        html.Div(as_of, className="cons-asof",
+                 style={"color": age_color, "fontFamily": MONO,
+                        "fontSize": "0.7rem", "whiteSpace": "nowrap"}),
+        html.Div(f"{count} {unit}" if count else "—", className="cons-basis",
                  style={"color": C["dim"], "fontSize": "0.7rem",
                         "whiteSpace": "nowrap"}),
-        stance_cell,
+        html.Div(stance_cell, className="cons-stance", style={"minWidth": "0"}),
     ])
 
 
@@ -1850,11 +2288,13 @@ def consensus_section():
 
     rows = [(label, cls, loader() or {}, unit, target)
             for label, cls, loader, unit, target in _CONSENSUS_SOURCES]
-    children = []
+    by_source = _history_by_source(_load_sentiment_history())
+    children, ordered = [], []
     for cls in dict.fromkeys(r[1] for r in rows):
         group = sorted([(label, v, unit, target)
                         for label, c, v, unit, target in rows if c == cls],
                        key=order)
+        ordered += [(label, v) for label, v, _, _ in group]
         children.append(html.Div([
             html.Span(cls.upper(), style={
                 "color": C["text"], "fontSize": "0.72rem", "fontWeight": "bold",
@@ -1864,18 +2304,28 @@ def consensus_section():
                       style={"color": C["dim"], "fontSize": "0.72rem"}),
         ], style={"padding": "14px 12px 8px"}))
         children.append(_consensus_head())
-        children.extend(_consensus_row(label, v, unit, target)
-                        for label, v, unit, target in group)
+        children.extend(
+            _consensus_row(label, v, unit, target,
+                           by_source.get(_HISTORY_KEY.get(target)))
+            for label, v, unit, target in group)
     children.append(html.Div(
         "Each row is that feed's rolling CURRENT VIEW in full. AS OF is the "
-        "newest post the view rests on, not when it was generated. Click a "
-        "source for its individual post/video cards.",
+        "newest post the view rests on, not when it was generated. The dots "
+        f"under a chip are that feed's last {HISTORY_STRIP_LEN} views, oldest "
+        "first (green bullish, grey neutral, yellow mixed, red bearish; hover "
+        "for the date). Click a source for its individual post/video cards.",
         style={"color": C["dim"], "fontSize": "0.68rem", "padding": "10px 12px",
                "lineHeight": "1.45"}))
+    charts = [c for c in (sentiment_balance_chart(by_source),
+                          btc_level_map(ordered)) if c is not None]
+    out = [html.Div(charts, className="cons-charts", style={
+        "display": "grid", "gridTemplateColumns": "repeat(2, minmax(0, 1fr))",
+        "gap": "10px", "marginTop": "10px"})] if charts else []
     # minWidth keeps the four fixed columns (444px + gaps) from squeezing the
-    # STANCE column to nothing on a phone; the card's overflow-x then scrolls,
-    # the same fallback the wide tables use.
-    return [html.Div(html.Div(children, style={"minWidth": "780px"}), style={
+    # STANCE column on a narrow desktop window (the card then scrolls); phones
+    # drop it and restack each row instead (.cons-inner in the <style>).
+    return out + [html.Div(html.Div(children, className="cons-inner",
+                                    style={"minWidth": "780px"}), style={
         "background": C["card"], "border": f"1px solid {C['border']}",
         "borderRadius": "8px", "marginTop": "10px", "overflowX": "auto"})]
 
@@ -1886,12 +2336,21 @@ app.layout = html.Div(
            "minHeight": "100vh", "padding": "20px 26px"},
     children=[
         dcc.Interval(id="interval", interval=REFRESH_MS, n_intervals=0),
+        # The URL hash names the open view (#DaanCrypto): reload, bookmarks
+        # and the browser's Back button all land on it (see the "view-url"
+        # clientside callback).
+        dcc.Location(id="url", refresh=False),
+        # Fingerprint of the data behind the views (file mtimes + the last
+        # warm pass). The heavy view callbacks fire on ITS change, not on
+        # every interval tick: the data changes a few times a day at most.
+        dcc.Store(id="data-version"),
 
         # Status bar + sub-tab bar stay pinned while the view below scrolls;
         # see .sticky-head in the <style>.
         html.Div(className="sticky-head", children=[
 
-        # Status bar: GetXAPI credits · trade-monitor LLM cost · prices.
+        # Status bar: GetXAPI credits · LLM spend · prices. whiteSpace pre:
+        # a flex row trims each segment's edge spaces ("GetXAPI:$4.18").
         html.Div(style={"background": C["card"],
                         "border": f"1px solid {C['border']}",
                         "borderRadius": "8px",
@@ -1899,20 +2358,16 @@ app.layout = html.Div(
             html.Div(id="status-row", style={
                 "fontFamily": MONO, "fontSize": "0.74rem", "padding": "6px 12px",
                 "display": "flex", "flexWrap": "wrap", "alignItems": "center",
-                "lineHeight": "1.5"}),
+                "lineHeight": "1.5", "whiteSpace": "pre"}),
         ]),
-
-        html.Div(id="summary", style={"color": C["dim"], "fontSize": "0.76rem",
-                                      "marginTop": "8px"}),
 
             # Sub-tabs: the Consensus panel, the influencer trade-call accounts
             # (IncomeSharks / traderstewie) and Geoff Kendrick (a forecast
             # ledger with no CURRENT VIEW, so no Consensus row). The other
             # analysis-digest feeds have no tab: their card views are opened by
-            # clicking the feed's SOURCE name on Consensus (the "open-view"
-            # clientside callback), which sets this component's value to one
-            # no Tab carries.
-            html.Div(style={"overflowX": "auto",
+            # clicking the feed's SOURCE name on Consensus (or by their URL
+            # hash), which sets this component's value to one no Tab carries.
+            html.Div(style={"overflowX": "auto", "marginTop": "8px",
                             "WebkitOverflowScrolling": "touch"},
                      children=dcc.Tabs(
                          id="influencer-subtabs", value="Consensus",
@@ -1937,8 +2392,9 @@ app.layout = html.Div(
             # Consensus view: every digest feed's CURRENT VIEW side by side.
             # Unlike the per-feed views below it needs no show/hide style output —
             # its callback returns [] for every other sub-tab, and an empty div
-            # takes no space.
-            html.Div(id="consensus-panel"),
+            # takes no space. data-view (here and on each card list below)
+            # scopes the "ÚJ" badges per view (assets/new_badges.js).
+            html.Div(id="consensus-panel", **{"data-view": "Consensus"}),
 
             # Per-influencer header card (handle · win-rate/holdings · open ·
             # best performer), shown for whichever sub-tab is selected.
@@ -1973,11 +2429,19 @@ app.layout = html.Div(
                     "whiteSpace": "normal", "height": "auto", "maxWidth": "420px",
                 },
                 style_data={"backgroundColor": C["bg"]},
+                # Keep the date on one line ("2026-09-" / "25" otherwise).
+                style_cell_conditional=[
+                    {"if": {"column_id": "date"}, "whiteSpace": "nowrap"},
+                ],
+                # Tint entries green and exits red: legacy rows carry
+                # buy/sell, schema-2 rows their position_action.
                 style_data_conditional=[
-                    {"if": {"filter_query": "{signal_type} = buy"},
-                     "backgroundColor": C["buy_bg"]},
-                    {"if": {"filter_query": "{signal_type} = sell"},
-                     "backgroundColor": C["sell_bg"]},
+                    *({"if": {"filter_query": f"{{signal_type}} = {a}"},
+                       "backgroundColor": C["buy_bg"]}
+                      for a in ("buy", "open", "add")),
+                    *({"if": {"filter_query": f"{{signal_type}} = {a}"},
+                       "backgroundColor": C["sell_bg"]}
+                      for a in ("sell", "reduce", "close")),
                     {"if": {"column_id": "ticker"}, "color": C["blue"],
                      "fontWeight": "bold"},
                 ],
@@ -1998,7 +2462,8 @@ app.layout = html.Div(
                                         "fontWeight": "normal",
                                         "fontSize": "0.8rem"})],
                          style=_SECTION_H),
-                html.Div(id="youtube-summaries", style={"marginTop": "4px"}),
+                html.Div(id="youtube-summaries", style={"marginTop": "4px"},
+                         **{"data-view": "BenCowen"}),
             ]),
 
             # Jesse Olson view: YouTube video analysis cards (analysis only —
@@ -2016,7 +2481,8 @@ app.layout = html.Div(
                                         "fontWeight": "normal",
                                         "fontSize": "0.8rem"})],
                          style=_SECTION_H),
-                html.Div(id="jesse-summaries", style={"marginTop": "4px"}),
+                html.Div(id="jesse-summaries", style={"marginTop": "4px"},
+                         **{"data-view": "JesseOlson"}),
             ]),
 
             # Ki Young Ju view: X/Twitter post analysis cards (analysis only —
@@ -2033,7 +2499,8 @@ app.layout = html.Div(
                                         "fontWeight": "normal",
                                         "fontSize": "0.8rem"})],
                          style=_SECTION_H),
-                html.Div(id="ki-summaries", style={"marginTop": "4px"}),
+                html.Div(id="ki-summaries", style={"marginTop": "4px"},
+                         **{"data-view": "KiYoungJu"}),
             ]),
 
             # Joao Wedson view: X/Twitter post analysis cards (analysis only —
@@ -2050,7 +2517,8 @@ app.layout = html.Div(
                                         "fontWeight": "normal",
                                         "fontSize": "0.8rem"})],
                          style=_SECTION_H),
-                html.Div(id="joao-summaries", style={"marginTop": "4px"}),
+                html.Div(id="joao-summaries", style={"marginTop": "4px"},
+                         **{"data-view": "JoaoWedson"}),
             ]),
 
             # DorkChicken view: X/Twitter post analysis cards (analysis only —
@@ -2068,7 +2536,8 @@ app.layout = html.Div(
                                         "fontWeight": "normal",
                                         "fontSize": "0.8rem"})],
                          style=_SECTION_H),
-                html.Div(id="dorkchicken-summaries", style={"marginTop": "4px"}),
+                html.Div(id="dorkchicken-summaries", style={"marginTop": "4px"},
+                         **{"data-view": "DorkChicken"}),
             ]),
 
             # DaanCrypto view: X/Twitter post analysis cards (analysis only —
@@ -2086,7 +2555,8 @@ app.layout = html.Div(
                                         "fontWeight": "normal",
                                         "fontSize": "0.8rem"})],
                          style=_SECTION_H),
-                html.Div(id="daancrypto-summaries", style={"marginTop": "4px"}),
+                html.Div(id="daancrypto-summaries", style={"marginTop": "4px"},
+                         **{"data-view": "DaanCrypto"}),
             ]),
 
             # DonAlt view: X/Twitter post analysis cards (analysis only --
@@ -2104,7 +2574,8 @@ app.layout = html.Div(
                                         "fontWeight": "normal",
                                         "fontSize": "0.8rem"})],
                          style=_SECTION_H),
-                html.Div(id="donalt-summaries", style={"marginTop": "4px"}),
+                html.Div(id="donalt-summaries", style={"marginTop": "4px"},
+                         **{"data-view": "DonAlt"}),
             ]),
 
             # Cowen (X) view: X/Twitter post analysis cards (analysis only --
@@ -2123,7 +2594,8 @@ app.layout = html.Div(
                                         "fontWeight": "normal",
                                         "fontSize": "0.8rem"})],
                          style=_SECTION_H),
-                html.Div(id="cowen-x-summaries", style={"marginTop": "4px"}),
+                html.Div(id="cowen-x-summaries", style={"marginTop": "4px"},
+                         **{"data-view": "CowenX"}),
             ]),
 
             # Glassnode view: X/Twitter post analysis cards (analysis only --
@@ -2142,7 +2614,8 @@ app.layout = html.Div(
                                         "fontWeight": "normal",
                                         "fontSize": "0.8rem"})],
                          style=_SECTION_H),
-                html.Div(id="glassnode-summaries", style={"marginTop": "4px"}),
+                html.Div(id="glassnode-summaries", style={"marginTop": "4px"},
+                         **{"data-view": "Glassnode"}),
             ]),
 
             # Truecrypto view: X/Twitter post analysis cards (analysis only —
@@ -2161,7 +2634,8 @@ app.layout = html.Div(
                                         "fontWeight": "normal",
                                         "fontSize": "0.8rem"})],
                          style=_SECTION_H),
-                html.Div(id="truecrypto-summaries", style={"marginTop": "4px"}),
+                html.Div(id="truecrypto-summaries", style={"marginTop": "4px"},
+                         **{"data-view": "Truecrypto"}),
             ]),
 
             # Geoff Kendrick view: X/Twitter TOPIC-SEARCH analysis cards (analysis
@@ -2180,7 +2654,8 @@ app.layout = html.Div(
                                         "fontWeight": "normal",
                                         "fontSize": "0.8rem"})],
                          style=_SECTION_H),
-                html.Div(id="kendrick-summaries", style={"marginTop": "4px"}),
+                html.Div(id="kendrick-summaries", style={"marginTop": "4px"},
+                         **{"data-view": "GeoffKendrick"}),
             ]),
 
 
@@ -2196,6 +2671,33 @@ app.layout = html.Div(
 )
 def refresh_status(_n):
     return status_row()
+
+
+def _data_version():
+    """Changes whenever a file the views render changes (trades, positions,
+    every ledger / view / history under data/) or a warm pass refreshed the
+    prices. data/cache is not included: it only caches prices."""
+    paths = [TRADES_FILE, POSITIONS_FILE,
+             *glob.glob(os.path.join(DATA_DIR, "*.json"))]
+    newest = 0
+    for path in paths:
+        try:
+            newest = max(newest, os.stat(path).st_mtime_ns)
+        except OSError:
+            pass
+    return f"{len(paths)}:{newest}:{_warm_state['done']}"
+
+
+@app.callback(
+    Output("data-version", "data"),
+    Input("interval", "n_intervals"),
+    State("data-version", "data"),
+)
+def refresh_data_version(_n, current):
+    """Polled every REFRESH_MS; the view callbacks below only re-render (and
+    re-send up to ~450KB of cards) when this actually changes."""
+    version = _data_version()
+    return no_update if version == current else version
 
 
 def _influencer_header(title, account):
@@ -2258,10 +2760,10 @@ def switch_influencer_subtab(account):
     Output("glassnode-summaries", "children"),
     Output("truecrypto-summaries", "children"),
     Output("kendrick-summaries", "children"),
-    Input("interval", "n_intervals"),
+    Input("data-version", "data"),
     Input("influencer-subtabs", "value"),
 )
-def refresh_influencers(_n, account):
+def refresh_influencers(_version, account):
     # Cowen (YT) / Cowen (X) / Jesse Olson / Ki Young Ju / Joao Wedson /
     # DorkChicken / DaanCrypto / DonAlt / Glassnode / Truecrypto / Geoff
     # Kendrick are analysis-only views, not traders: no header card /
@@ -2307,28 +2809,53 @@ def refresh_influencers(_n, account):
         return ("", [], None, None, [], [], [], [], [], [], [], [], [], [],
                 kendrick_forecast_section(load_kendrick_forecasts()))
     positions = load_positions()
-    warm_prices({_yf_symbol(p["ticker"], p.get("asset_type", "stock"))
+    warm_prices({_yf_symbol(p["ticker"], p.get("asset_type") or "unknown")
                  for p in influencer_positions(positions)
                  if p.get("status") == "open"})
     resolutions = influencer_resolutions(positions, account=account)
     return (influencer_header_card(account, resolutions=resolutions),
             influencer_signals_data(load_trades(), account=account),
             html.Div([influencer_positions_table(resolutions),
-                      html.Details([html.Summary("Setups / needs review — excluded from win rate"),
-                                    html.Ul([html.Li(f"{p['ticker']} · {p.get('side', 'long')} · {p['status']} · "
-                                                    f"target {_money(p.get('target'))}, stop {_money(p.get('stop_loss'))}")
-                                             for p in positions if p.get("account") == account
-                                             and p.get("status") in ("setup", "review")])])]),
+                      _setups_block(positions, account)]),
             influencer_winrate_card(resolutions),
             [], [], [], [], [], [], [], [], [], [], [])
 
 
+def _setups_block(positions, account):
+    """The account's setup / needs-review calls: listed for reference, never in
+    the win rate. Newest first, each with its date and tweet, so repeated
+    setups on one ticker stay distinguishable."""
+    items = []
+    for p in positions:
+        if p.get("account") == account and p.get("status") in ("setup", "review"):
+            sig = (p.get("signals") or [{}])[-1]
+            items.append((sig.get("timestamp") or "", p, _safe_href(sig.get("url"))))
+    if not items:
+        return html.Span()
+    items.sort(key=lambda it: it[0], reverse=True)
+    rows = [(_local_date(ts) or "—", (p["ticker"], C["blue"]),
+             p.get("side") or "long", p["status"], _money(p.get("target")),
+             _money(p.get("stop_loss")),
+             html.A("↗ tweet", href=url, target="_blank",
+                    rel="noopener noreferrer") if url else "—")
+            for ts, p, url in items]
+    return html.Details([
+        html.Summary([html.Span("▸ ", className="caret"),
+                      f"Setups / needs review ({len(items)}) — excluded from "
+                      f"win rate"],
+                     style={"color": C["dim"], "fontSize": "0.78rem",
+                            "cursor": "pointer", "padding": "8px 2px"}),
+        _table(["Date", "Ticker", "Side", "Status", "Target", "Stop", "Tweet"],
+               rows, hide_sm={2, 5}),
+    ], style={"marginTop": "6px"})
+
+
 @app.callback(
     Output("consensus-panel", "children"),
-    Input("interval", "n_intervals"),
+    Input("data-version", "data"),
     Input("influencer-subtabs", "value"),
 )
-def refresh_consensus(_n, account):
+def refresh_consensus(_version, account):
     """Kept separate from refresh_influencers deliberately: that callback already
     fans 15 outputs across 12 branches, and this panel shares none of them.
     On a feed view opened from a Consensus row it renders only the back link:
@@ -2343,51 +2870,94 @@ def refresh_consensus(_n, account):
                      style=_SECTION_H)] + consensus_section()
 
 
-# Consensus SOURCE labels / back link -> influencer-subtabs. Clientside so it
-# can also scroll to the top: the Consensus panel is long, and without it a
-# click on a lower row lands mid-way down the (shorter) feed view. The panel is
-# re-rendered every interval, so newly inserted buttons (n_clicks 0) must not
-# count as a click.
+# Every view the URL hash may name.
+_VIEWS = sorted({"Consensus", "GeoffKendrick", *INFLUENCER_ACCOUNTS,
+                 *(target for *_, target in _CONSENSUS_SOURCES)})
+
+# View <-> URL hash, plus the Consensus SOURCE labels / back link. One callback
+# owns influencer-subtabs.value and url.hash because each feeds the other: a
+# tab click or an open-view click writes the hash (a history entry, so Back
+# works); a page load or Back/Forward reads it. Clientside so a click can also
+# scroll to the top: the Consensus panel is long, and without it a click on a
+# lower row lands mid-way down the (shorter) feed view. Re-rendered open-view
+# buttons arrive with n_clicks 0 and must not count as a click.
 app.clientside_callback(
     """
-    function(_clicks) {
-        const ctx = dash_clientside.callback_context;
-        if (!ctx.triggered.length || !ctx.triggered[0].value) {
-            return dash_clientside.no_update;
+    function(hash, _clicks, value) {
+        const nu = dash_clientside.no_update;
+        const views = %s;
+        const trig = dash_clientside.callback_context.triggered
+            .filter(t => t.prop_id !== '.');
+        const click = trig.find(t => t.prop_id.startsWith('{') && t.value);
+        if (click) {
+            const id = click.prop_id.slice(0, click.prop_id.lastIndexOf('.'));
+            const view = JSON.parse(id).view;
+            window.scrollTo(0, 0);
+            return [view, '#' + view];
         }
-        window.scrollTo(0, 0);
-        return ctx.triggered_id.view;
+        if (trig.some(t => t.prop_id === 'influencer-subtabs.value')) {
+            return [nu, '#' + value];
+        }
+        if (trig.length && trig.every(t => t.prop_id.startsWith('{'))) {
+            return [nu, nu];
+        }
+        const wanted = decodeURIComponent((hash || '').replace(/^#/, ''));
+        const view = views.includes(wanted) ? wanted : 'Consensus';
+        return [view === value ? nu : view, nu];
     }
-    """,
+    """ % json.dumps(_VIEWS),
     Output("influencer-subtabs", "value"),
+    Output("url", "hash"),
+    Input("url", "hash"),
     Input({"type": "open-view", "view": ALL}, "n_clicks"),
-    prevent_initial_call=True,
+    Input("influencer-subtabs", "value"),
 )
 
 
 # --- background cache warmer -------------------------------------------------
-# yfinance is the dominant page-load cost and sits on the request path (every
-# callback fires on load, no prevent_initial_call): a cold load pays ~13s of
-# current-price fetches + ~16s of daily-series fetches. Yahoo throttles per-IP,
-# so batching cuts request count but NOT wall-clock. The real fix is to pre-warm
-# the shared in-memory caches OFF the request path on a 30-min loop (< the 1h
-# PRICE_TTL so they never lapse to cold) — user page loads then hit warm cache
-# and render immediately instead of blocking on Yahoo.
+# yfinance is the dominant cost of the trade and Kendrick views, and Yahoo
+# throttles per-IP, so batching cuts request count but NOT wall-clock. The fix
+# is keeping the shared in-memory caches warm OFF the request path: every
+# WARM_INTERVAL_S a pass re-fetches everything the views read that is older
+# than WARM_MAX_AGE, i.e. the previous pass's data. Entries thus never get near
+# the request path's PRICE_TTL and a page load never waits on Yahoo. (The
+# original loop refreshed only EXPIRED entries, which left a cold window every
+# hour: a page load right after expiry paid the refetch.)
 WARM_INTERVAL_S = 1800
+WARM_MAX_AGE = WARM_INTERVAL_S // 2
+_warm_state = {"done": None}    # epoch of the last completed pass
 
 
 def _warm_all():
+    try:     # the status bar only reads the cached balance
+        get_getxapi_credits()
+    except Exception:
+        pass
     positions = load_positions()
-    infl = influencer_positions(positions)
     try:
-        warm_prices({_yf_symbol(p["ticker"], p.get("asset_type", "stock"))
-                     for p in infl if p.get("status") == "open"})
+        kendrick, _, _ = _kendrick_rows(load_kendrick_forecasts())
+        kndr_syms = {s for s in map(_kndr_symbol, (f.get("asset") for f in kendrick))
+                     if s}
+    except Exception:
+        kndr_syms = set()
+    try:
+        warm_prices({_yf_symbol(p["ticker"], p.get("asset_type") or "unknown")
+                     for p in influencer_positions(positions)
+                     if p.get("status") == "open"}
+                    | kndr_syms | {"BTC-USD"}, max_age=WARM_MAX_AGE)
     except Exception:
         pass
     try:
-        influencer_resolutions(positions)   # warms _ohlc_cache + hist closes
+        # every cycle's OHLC path and entry/exit closes (incl. the recap check)
+        influencer_resolutions(positions, max_age=WARM_MAX_AGE)
     except Exception:
         pass
+    for sym in kndr_syms:
+        try:
+            get_ohlc(sym, KNDR_HISTORY_START, max_age=WARM_MAX_AGE)
+        except Exception:
+            pass
+    _warm_state["done"] = time.time()
 
 
 def _warm_loop():

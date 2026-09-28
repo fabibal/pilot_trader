@@ -95,6 +95,7 @@ from google import genai
 from google.genai import types as genai_types
 from google.genai import errors as genai_errors
 
+import cost_log
 from reconcile import write_json_atomic
 # Reuse monitor.py's tested helpers (env/json loaders, GetXAPI client + tweet
 # normalizer, the Gemini image-block fetch, local outage reporting) so this stays DRY
@@ -122,6 +123,8 @@ DATA_DIR = os.path.join(HOME, "data")
 # the only thing that can tell "quiet run" from "we were blind" -- main() logs errors
 # on it at the end. See monitor.GeminiTally.
 LLM_TALLY = GeminiTally()
+# This run's spend across all feeds; main() appends it to data/cost_log.json.
+RUN_COST = cost_log.RunCost()
 
 # GetXAPI advanced-search endpoint, used by TOPIC SEARCH feeds. monitor.py only
 # ever fetches user timelines, so (unlike GETXAPI_POSTS_PATH) this path is not
@@ -1444,6 +1447,7 @@ def run_forecast_feed(feed, gemini_client, args):
     pending.acknowledge(seen - force_ids)
     raw, calls = discover(pending, lambda: fetch_search(feed, set() if force_ids else seen), ([], 0))
     raw = list({**pending.rows, **{str(t["id"]): t for t in raw}}.values())
+    RUN_COST.getxapi_usd += calls * GETXAPI_COST_PER_CALL
     print(f"Fetched {len(raw)} raw posts in {calls} GetXAPI call(s) "
           f"(${calls * GETXAPI_COST_PER_CALL:.4f})")
 
@@ -1557,6 +1561,7 @@ def run_forecast_feed(feed, gemini_client, args):
 
     hcost = tri_in / 1e6 * EXTRACT_INPUT_PER_1M + tri_out / 1e6 * EXTRACT_OUTPUT_PER_1M
     scost = ana_in / 1e6 * GEMINI_INPUT_PER_1M + ana_out / 1e6 * GEMINI_OUTPUT_PER_1M
+    RUN_COST.llm_usd += hcost + scost
     print(f"Triage Gemini in={tri_in} out={tri_out} (${hcost:.4f}); "
           f"Analysis Gemini in={ana_in} out={ana_out} (${scost:.4f}); "
           f"{len(new_keys)} new, {len(upd_keys)} updated")
@@ -1596,6 +1601,7 @@ def run_feed(feed, gemini_client, args):
     pending.acknowledge(seen - force_ids)
     raw, calls = discover(pending, lambda: fetch(feed, set() if force_ids else seen), ([], 0))
     raw = list({**pending.rows, **{str(t["id"]): t for t in raw}}.values())
+    RUN_COST.getxapi_usd += calls * GETXAPI_COST_PER_CALL
     print(f"Fetched {len(raw)} raw posts in {calls} GetXAPI call(s) "
           f"(${calls * GETXAPI_COST_PER_CALL:.4f})")
 
@@ -1617,7 +1623,7 @@ def run_feed(feed, gemini_client, args):
         print("No new posts to process.")
         if not args.dry_run:
             refresh_current_view(gemini_client, feed, summaries, _select_current_view_window, generate_current_view,
-                                 GEMINI_INPUT_PER_1M, GEMINI_OUTPUT_PER_1M)
+                                 GEMINI_INPUT_PER_1M, GEMINI_OUTPUT_PER_1M, RUN_COST)
         return
 
     print(f"Processing {len(candidates)} post(s)"
@@ -1627,6 +1633,7 @@ def run_feed(feed, gemini_client, args):
 
     cost = (in_tok / 1_000_000 * GEMINI_INPUT_PER_1M
             + out_tok / 1_000_000 * GEMINI_OUTPUT_PER_1M)
+    RUN_COST.llm_usd += cost
     print(f"Analyzed {len(records)} post(s); "
           f"Gemini tokens in={in_tok} out={out_tok} (${cost:.4f})")
 
@@ -1649,7 +1656,7 @@ def run_feed(feed, gemini_client, args):
     print(f"Wrote {len(merged)} summaries -> {feed.summaries_file}")
 
     refresh_current_view(gemini_client, feed, merged, _select_current_view_window, generate_current_view,
-                                 GEMINI_INPUT_PER_1M, GEMINI_OUTPUT_PER_1M)
+                                 GEMINI_INPUT_PER_1M, GEMINI_OUTPUT_PER_1M, RUN_COST)
 
 
 def main():
@@ -1695,6 +1702,8 @@ def main():
                 raise
             traceback.print_exc()
             failed.append(feed.key)
+    if not args.dry_run:
+        cost_log.append_run("twitter_digest", RUN_COST.llm_usd, RUN_COST.getxapi_usd)
     # A wholesale Gemini failure never raises (each call site swallows its own
     # APIError), so without this the run exits 0 having written nothing and the
     # dashboard just keeps serving yesterday's cards. --dry-run is exempt: it is

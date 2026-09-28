@@ -23,6 +23,9 @@ EXPIRED = "expired"
 # win rate — it was computed only over calls they hadn't talked about since.
 CLOSED_WIN = "closed_win"
 CLOSED_LOSS = "closed_loss"
+# The call's own levels were already on the wrong side of its entry when it was
+# made (see levels_inconsistent): excluded from the win rate like a live call.
+INCONSISTENT = "inconsistent"
 
 
 def _date(s):
@@ -45,19 +48,42 @@ def _is_long(entry, target, stop):
     return True
 
 
-def resolve_position(pos, ohlc, until=None):
+def levels_inconsistent(pos, entry):
+    """True when the call's target or stop was already beyond its entry when
+    the call was made: a long with target <= entry or stop >= entry, or the
+    mirror image for a short. The price path would "hit" such a level on the
+    very first bar, so the outcome says nothing about the call. Typical causes:
+    an extraction error (a $31 target on a ~$228 stock), a breakout trigger
+    read as a stop, or a recap quoting old levels."""
+    if not entry:
+        return False
+    target, stop = pos.get("target"), pos.get("stop_loss")
+    if is_long(pos, entry):
+        return ((target is not None and target <= entry)
+                or (stop is not None and stop >= entry))
+    return ((target is not None and target >= entry)
+            or (stop is not None and stop <= entry))
+
+
+def resolve_position(pos, ohlc, until=None, entry=None):
     """Return {status, date, price} or None if the call is still live.
 
     `ohlc`: a pandas DataFrame indexed by 'YYYY-MM-DD' with High/Low columns,
     covering trade_date onward (or None if unavailable). status is one of
-    hit_target / stopped_out / expired.
+    hit_target / stopped_out / expired / inconsistent.
 
     `until`: optional 'YYYY-MM-DD' bound — walk the price path only up to this
     date. Used for calls the influencer explicitly closed: a target/stop hit
     INSIDE the holding window still counts, but the expiry rule does not apply
-    (the caller classifies an unresolved closed call via resolve_closed)."""
+    (the caller classifies an unresolved closed call via resolve_closed).
+
+    `entry`: the price the call was made at (stated or estimated). When given,
+    a call whose levels were already past it resolves as inconsistent instead
+    of as a day-one target hit or stop-out."""
     if pos.get("entry_status") in ("setup", "review"):
         return None
+    if levels_inconsistent(pos, entry):
+        return {"status": INCONSISTENT, "date": None, "price": None}
     target = pos.get("target")
     stop = pos.get("stop_loss")
     tdate = pos.get("trade_date") or (pos.get("opened_at") or "")[:10]
@@ -126,12 +152,14 @@ def win_stats(resolutions):
     expired = sum(1 for r in resolutions if r and r["status"] == EXPIRED)
     closed_win = sum(1 for r in resolutions if r and r["status"] == CLOSED_WIN)
     closed_loss = sum(1 for r in resolutions if r and r["status"] == CLOSED_LOSS)
+    inconsistent = sum(1 for r in resolutions if r and r["status"] == INCONSISTENT)
     live = sum(1 for r in resolutions if r is None)
     decided = hit + stopped + closed_win + closed_loss
     win_rate = round((hit + closed_win) / decided * 100, 1) if decided else None
     return {"hit": hit, "stopped": stopped, "expired": expired,
             "closed_win": closed_win, "closed_loss": closed_loss, "live": live,
-            "decided": decided, "win_rate": win_rate}
+            "inconsistent": inconsistent, "decided": decided,
+            "win_rate": win_rate}
 
 
 def is_long(pos, entry=None):

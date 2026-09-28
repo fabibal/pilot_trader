@@ -33,6 +33,10 @@ services:
       # are live inside the container at the path the app expects.
       # Read-only: a dashboard compromise must not rewrite source or ledgers.
       - .:/home/fbazsa/pilot_trader:ro
+      # The one writable path: the dashboard's own derived cache (immutable
+      # past closes, GetXAPI balance snapshots) -- never source or ledgers.
+      # Without it the persisted price cache silently stopped updating.
+      - ./data/cache:/home/fbazsa/pilot_trader/data/cache
       # Hide unneeded API secrets in the host .env from the dashboard.
       - /dev/null:/home/fbazsa/pilot_trader/.env:ro
       # No Docker socket: status stats gracefully report unavailable.

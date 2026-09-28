@@ -121,9 +121,9 @@ def test_dashboard_scores_archived_cycles_and_excludes_setups(monkeypatch):
                closed_at='2026-01-02', entry_price=100, side='long')
     current = dict(old, status='open', opened_at='2026-01-03', prior_cycles=[old])
     setup = dict(old, status='setup', entry_status='setup')
-    monkeypatch.setattr(dash, 'get_ohlc', lambda *a: None)
-    monkeypatch.setattr(dash, 'get_hist_close', lambda *a: 110)
-    monkeypatch.setattr(dash, 'estimate_entry', lambda *a: (100, False))
+    monkeypatch.setattr(dash, 'get_ohlc', lambda *a, **k: None)
+    monkeypatch.setattr(dash, 'get_hist_close', lambda *a, **k: 110)
+    monkeypatch.setattr(dash, '_entry_for', lambda *a, **k: (100, False))
     results = dash.influencer_resolutions([current, setup], account='traderstewie')
     assert len(results) == 2
     assert results[0][1]['status'] == resolver.CLOSED_WIN

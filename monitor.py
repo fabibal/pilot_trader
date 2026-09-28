@@ -48,6 +48,7 @@ from google import genai
 from google.genai import types as genai_types
 from google.genai import errors as genai_errors
 
+import cost_log
 from reconcile import reconcile, write_json_atomic
 from storage import load_ledger, single_writer
 from llm_support import parse_response, token_usage
@@ -763,16 +764,6 @@ def load_env(path):
         os.environ.setdefault(k.strip(), v.strip().strip('"').strip("'"))
 
 
-def load_json(path, default):
-    if os.path.exists(path):
-        try:
-            with open(path) as f:
-                return json.load(f)
-        except (json.JSONDecodeError, OSError):
-            return default
-    return default
-
-
 # --- Twitter fetch ---------------------------------------------------------
 def api_get(url):
     req = urllib.request.Request(url)
@@ -1182,17 +1173,20 @@ def main():
           f"output {interp.vision_output_tokens} tok)  ${interp.vision_cost():.4f}")
     print(f"LLM cost this run: "
           f"${interp.cost() + interp.vision_cost():.4f}")
+    getxapi_usd = 0.0
     if not args.backfill:
         if args.source == "getxapi":
+            getxapi_usd = total_calls * GETXAPI_COST_PER_CALL
             print(f"GetXAPI [{args.source}]: {total_reads} tweets in "
-                  f"{total_calls} calls (${total_calls * GETXAPI_COST_PER_CALL:.4f})")
+                  f"{total_calls} calls (${getxapi_usd:.4f})")
         else:
             print(f"Twitter reads [{args.source}]: {total_reads}  "
                   f"(${total_reads * TWITTER_COST_PER_TWEET:.4f})")
 
-    # Append per-run cost telemetry (skip dry-run writes and zero-LLM runs).
-    if not args.dry_run and (interp.calls or interp.vision_calls):
-        log_cost(interp)
+    # Append per-run cost telemetry (skip dry-run writes and runs that spent
+    # nothing).
+    if not args.dry_run and (interp.calls or interp.vision_calls or getxapi_usd):
+        log_cost(interp, getxapi_usd)
     if interp.vision_errors:
         print(f"WARNING: {interp.vision_errors} optional chart pass(es) failed; text signals retained",
               file=sys.stderr)
@@ -1200,28 +1194,17 @@ def main():
         sys.exit(1)
 
 
-def log_cost(interp):
-    """Append this run's token usage + cost to data/cost_log.json. Telemetry
-    only: a write failure (e.g. data/ owned by the Docker user) prints a warning
-    but never breaks the run."""
-    rec = {
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "extract_input_tok": interp.input_tokens,
-        "extract_output_tok": interp.output_tokens,
-        "vision_input_tok": interp.vision_input_tokens,
-        "vision_output_tok": interp.vision_output_tokens,
-        "total_usd": round(interp.cost() + interp.vision_cost(), 6),
-    }
-    try:
-        log = load_json(COST_LOG_FILE, [])
-        if not isinstance(log, list):
-            log = []
-        log.append(rec)
-        os.makedirs(DATA_DIR, exist_ok=True)
-        write_json_atomic(COST_LOG_FILE, log)
-        print(f"Cost logged -> {COST_LOG_FILE} ({len(log)} runs)")
-    except OSError as e:
-        print(f"[cost-log] could not write {COST_LOG_FILE}: {e}", file=sys.stderr)
+def log_cost(interp, getxapi_usd=0.0):
+    """Append this run's token usage + cost to data/cost_log.json (shared with
+    the digests, see cost_log.py). Telemetry only: a write failure prints a
+    warning but never breaks the run."""
+    cost_log.append_run(
+        "monitor", interp.cost() + interp.vision_cost(), getxapi_usd,
+        path=COST_LOG_FILE,
+        extract_input_tok=interp.input_tokens,
+        extract_output_tok=interp.output_tokens,
+        vision_input_tok=interp.vision_input_tokens,
+        vision_output_tok=interp.vision_output_tokens)
 
 
 

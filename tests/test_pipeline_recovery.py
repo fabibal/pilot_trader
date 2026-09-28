@@ -88,7 +88,7 @@ def test_monitor_retries_saved_payload_after_it_leaves_feed(tmp_path, monkeypatc
     monkeypatch.setattr(monitor, 'TRADES_FILE', str(trades))
     monkeypatch.setattr(monitor, 'STATE_FILE', str(state))
     monkeypatch.setattr(monitor, 'POSITIONS_FILE', str(positions))
-    monkeypatch.setattr(monitor, 'log_cost', lambda _: None)
+    monkeypatch.setattr(monitor, 'log_cost', lambda *a: None)
     monkeypatch.setenv('GOOGLE_API_KEY', 'test')
     monkeypatch.setenv('GETXAPI_KEY', 'test')
     monkeypatch.setattr(monitor, '_report_staleness', lambda _: None)

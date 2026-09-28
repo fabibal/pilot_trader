@@ -36,3 +36,22 @@ def test_closed_call_holding_window_policy_is_preserved():
     history = bars([('2020-02-15', 130, 95)])
     assert resolver.resolve_position(pos, history, until='2020-02-14') is None
     assert resolver.resolve_position(pos, history, until='2020-02-15')['status'] == resolver.HIT_TARGET
+
+
+def test_levels_already_past_the_entry_resolve_as_inconsistent():
+    history = bars([('2020-01-02', 130, 95)])
+    long_low_target = {'trade_date': '2020-01-01', 'side': 'long', 'target': 90}
+    long_high_stop = {'trade_date': '2020-01-01', 'side': 'long', 'stop_loss': 105}
+    short_high_target = {'trade_date': '2020-01-01', 'side': 'short', 'target': 110}
+    for pos in (long_low_target, long_high_stop, short_high_target):
+        assert resolver.resolve_position(pos, history, entry=100)['status'] == resolver.INCONSISTENT
+    # Consistent levels, or no entry to judge against, resolve on the path as before.
+    sane = {'trade_date': '2020-01-01', 'side': 'long', 'target': 120, 'stop_loss': 90}
+    assert resolver.resolve_position(sane, history, entry=100)['status'] == resolver.HIT_TARGET
+    assert resolver.resolve_position(long_low_target, history)['status'] == resolver.HIT_TARGET
+
+
+def test_inconsistent_calls_are_counted_but_never_decided():
+    stats = resolver.win_stats([{'status': resolver.INCONSISTENT},
+                                {'status': resolver.HIT_TARGET}, None])
+    assert (stats['inconsistent'], stats['decided'], stats['win_rate']) == (1, 1, 100.0)

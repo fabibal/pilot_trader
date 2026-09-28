@@ -7,10 +7,13 @@ import json,urllib.request
 base='http://127.0.0.1:8051'
 deps=json.load(urllib.request.urlopen(base+'/_dash-dependencies',timeout=10))
 for tab in ['Consensus','BenCowen','JesseOlson','KiYoungJu','JoaoWedson','DorkChicken','DaanCrypto','DonAlt','CowenX','Glassnode','Truecrypto','GeoffKendrick','IncomeSharks','traderstewie']:
- key=next(d['output'] for d in deps if (d['output']=='consensus-panel.children' if tab=='Consensus' else 'influencer-signals.data' in d['output']))
+ dep=next(d for d in deps if (d['output']=='consensus-panel.children' if tab=='Consensus' else 'influencer-signals.data' in d['output']))
+ key=dep['output']
  parts=key[2:-2].split('...') if key.startswith('..') else [key]
  outputs=[dict(zip(['id','property'],p.rsplit('.',1))) for p in parts]
- payload={'output':key,'outputs':outputs if key.startswith('..') else outputs[0], 'inputs':[{'id':'interval','property':'n_intervals','value':0},{'id':'influencer-subtabs','property':'value','value':tab}], 'state':[], 'changedPropIds':['influencer-subtabs.value']}
+ # Inputs as the app declares them (data-version + influencer-subtabs today).
+ inputs=[dict(i,value=tab if i['id']=='influencer-subtabs' else 'check') for i in dep['inputs']]
+ payload={'output':key,'outputs':outputs if key.startswith('..') else outputs[0], 'inputs':inputs, 'state':[], 'changedPropIds':['influencer-subtabs.value']}
  req=urllib.request.Request(base+'/_dash-update-component',data=json.dumps(payload).encode(),headers={'Content-Type':'application/json'})
  with urllib.request.urlopen(req,timeout=90) as response:
   data=response.read(); parsed=json.loads(data)['response']

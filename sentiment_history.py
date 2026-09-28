@@ -7,7 +7,8 @@ the previous one is lost -- there is no way to see that a feed went bearish ->
 neutral last week. This module keeps a compact record of every distinct view
 alongside those files. It does not change them: the banner and the Consensus
 panel still read the per-feed current_view files, this is purely an additional
-log (the substrate for a future sentiment timeline).
+log. The dashboard's Consensus tab reads it for each feed's recent-view strip
+and the sentiment-balance chart.
 
 ONE shared file with a sidecar lock serializes writers across X/YouTube
 and overlapping manual/cron runs. Corrupt history is preserved for recovery.
@@ -20,8 +21,7 @@ and reruns are idempotent.
 
 Size: ~5 regenerations/day across all 7 feeds in steady state at ~450 bytes a
 record (measured; the Hungarian shift_note dominates) -> ~0.8 MB/year, and
-MAX_PER_SOURCE caps the file at ~1.6 MB no matter how long it runs. Nothing
-reads it on the dashboard request path.
+MAX_PER_SOURCE caps the file at ~1.6 MB no matter how long it runs.
 """
 
 import json

@@ -84,6 +84,7 @@ from google import genai
 from google.genai import types as genai_types
 from google.genai import errors as genai_errors
 
+import cost_log
 from reconcile import write_json_atomic
 # Reuse monitor.py's small, already-tested helpers (env/json loaders, local
 # outage reporting) so this stays DRY and consistent with the rest of the pipeline.
@@ -104,6 +105,8 @@ DATA_DIR = os.path.join(HOME, "data")
 # genuinely quiet run from a blind one -- main() logs errors on it. See
 # monitor.GeminiTally.
 LLM_TALLY = GeminiTally()
+# This run's spend across all channels; main() appends it to data/cost_log.json.
+RUN_COST = cost_log.RunCost()
 WATCH_URL = "https://www.youtube.com/watch?v={vid}"
 
 # Gemini 3.5 Flash was the model through 2026-09-03; switched to 3.7 Flash the
@@ -586,7 +589,7 @@ def run_channel(channel, client, args):
         print("No new videos to process.")
         if not args.dry_run:
             refresh_current_view(client, channel, summaries, _select_current_view_window, generate_current_view,
-                                 INPUT_PER_1M, OUTPUT_PER_1M)
+                                 INPUT_PER_1M, OUTPUT_PER_1M, RUN_COST)
         return
 
     print(f"Processing {len(todo)} video(s)"
@@ -595,6 +598,7 @@ def run_channel(channel, client, args):
 
     cost = in_tok / 1_000_000 * INPUT_PER_1M \
         + out_tok / 1_000_000 * OUTPUT_PER_1M
+    RUN_COST.llm_usd += cost
     print(f"\nAnalyzed {len(records)} video(s); "
           f"Gemini tokens in={in_tok} out={out_tok} (${cost:.4f})")
 
@@ -617,7 +621,7 @@ def run_channel(channel, client, args):
     print(f"Wrote {len(merged)} summaries -> {channel.summaries_file}")
 
     refresh_current_view(client, channel, merged, _select_current_view_window, generate_current_view,
-                                 INPUT_PER_1M, OUTPUT_PER_1M)
+                                 INPUT_PER_1M, OUTPUT_PER_1M, RUN_COST)
 
 
 def main():
@@ -662,6 +666,9 @@ def main():
                 raise
             traceback.print_exc()
             failed.append(channel.key)
+    # A run that found nothing new spends nothing (RSS is free): no row then.
+    if not args.dry_run and RUN_COST.llm_usd:
+        cost_log.append_run("youtube_monitor", RUN_COST.llm_usd)
     # A wholesale Gemini failure never raises (each call site swallows its own
     # APIError), so without this the run exits 0 having written nothing and the
     # dashboard keeps serving the previous cards. Mirrors twitter_digest.main().
