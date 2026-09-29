@@ -890,9 +890,28 @@ app.index_string = """<!DOCTYPE html>
       .lvl-hit { position: absolute; top: 50%; transform: translate(-50%, -50%);
                  width: 18px; height: 18px; display: flex; align-items: center;
                  justify-content: center; z-index: 1; }
-      .lvl-dot { width: 8px; height: 8px; border-radius: 50%; background: #58a6ff;
+      /* BTC level marks by role: shape + color (support filled green,
+         resistance filled red, target blue ring, invalidation yellow diamond);
+         a zone is a bar in the role color; stale levels fade */
+      .lvl-dot { width: 8px; height: 8px; border-radius: 50%; background: #8b949e;
                  box-shadow: 0 0 0 2px #161b22; }
+      .lvl-support .lvl-dot { background: #3fb950; }
+      .lvl-resistance .lvl-dot { background: #f85149; }
+      .lvl-target .lvl-dot { background: #161b22; border: 2px solid #58a6ff; }
+      .lvl-invalidation .lvl-dot { background: #d29922; border-radius: 1px;
+                                   width: 7px; height: 7px; transform: rotate(45deg); }
+      .lvl-zone { position: absolute; top: 50%; height: 6px; min-width: 4px;
+                  transform: translateY(-50%); border-radius: 3px; opacity: .6; }
+      .lvl-zone.lvl-support { background: #3fb950; }
+      .lvl-zone.lvl-resistance { background: #f85149; }
+      .lvl-zone.lvl-target { background: #58a6ff; }
+      .lvl-zone.lvl-invalidation { background: #d29922; }
+      .lvl-hit.lvl-old { opacity: .35; }
+      .lvl-zone.lvl-old { opacity: .22; }
+      .lvl-legend { display: inline-flex; width: 14px; justify-content: center;
+                    align-items: center; vertical-align: middle; }
       .bb-col:hover .bb-bar, .lvl-hit:hover .lvl-dot { filter: brightness(1.35); }
+      .lvl-zone:hover { opacity: 1; }
       .twin { color: #8b949e; font-size: 0.66rem; line-height: 1.5;
               margin: 6px 0 0; white-space: pre; overflow-x: auto; }
       ::-webkit-scrollbar { width: 10px; height: 10px; }
@@ -1955,8 +1974,11 @@ def _table_twin(summary, headers, rows):
     be ~300 nodes in the payload."""
     cols = list(zip(headers, *rows))
     widths = [max(len(str(c)) for c in col) for col in cols]
-    text = "\n".join("  ".join(str(c).rjust(w) if i else str(c).ljust(w)
-                               for i, (c, w) in enumerate(zip(line, widths)))
+    # numbers right-aligned so they line up, text (roles, names, notes) left
+    numeric = [all(re.fullmatch(r"[-+$0-9.,%—]+", str(c)) for c in col[1:])
+               for col in cols]
+    text = "\n".join("  ".join(str(c).rjust(w) if num else str(c).ljust(w)
+                               for c, w, num in zip(line, widths, numeric)).rstrip()
                      for line in [headers, *rows])
     return html.Details([
         html.Summary([html.Span("▸ ", className="caret"), summary],
@@ -2017,43 +2039,57 @@ def sentiment_balance_chart(by_source):
     ])
 
 
-# BTC price levels named in the CURRENT VIEW prose: "83 000 dolláros",
-# "85 000–88 000 dollár", "58 ezer dolláros", "~$82.8k". A dollar unit is
-# required, so quantities ("100 000 BTC") and indicator periods ("50 hetes") are
-# ignored; the band around the live price drops other assets' prices (ETH 2800).
-_LVL_NUM = r"\d{1,3}(?:[   .,]\d{3})+|\d+(?:[.,]\d+)?"
-_LVL_SUF = r"(?:k\b|ezer\b)?"
-_LVL_RE = re.compile(
-    rf"\$\s*(?P<a>{_LVL_NUM})\s*(?P<ak>{_LVL_SUF})"
-    rf"|(?P<b>{_LVL_NUM})\s*(?P<bk>{_LVL_SUF})"
-    rf"(?:\s*(?:[–—-]|és|to)\s*\$?\s*(?P<c>{_LVL_NUM})\s*(?P<ck>{_LVL_SUF}))?"
-    rf"\s*(?:dollár|USD|\$)", re.I)
-_LVL_BAND = (0.5, 1.6)     # kept levels, as multiples of the live BTC price
+# The BTC LEVELS map draws each CURRENT VIEW's structured btc_levels
+# (digest_state.BTC_LEVELS_SCHEMA): the level or zone, its role, a note and the
+# date of the post that stated it. A view generated before they existed has
+# none and gets no row.
+_LVL_ROLES = ("support", "resistance", "target", "invalidation")
+# Kept levels, as multiples of the live price: outside is a unit slip ("84"
+# for $84K), not a level.
+_LVL_SANITY = (0.25, 4.0)
+_LVL_FRESH_DAYS = 7        # older levels are drawn faded
 
 
-def _level_value(num, suffix):
-    s = num.replace(" ", " ").replace(" ", " ")
-    if re.fullmatch(r"\d{1,3}(?:[ .,]\d{3})+", s):      # thousands-grouped
-        v = float(re.sub(r"[ .,]", "", s))
-    else:
-        v = float(s.replace(",", "."))
-    return v * 1000 if (suffix or "").lower() in ("k", "ezer") else v
-
-
-def extract_btc_levels(text, price):
-    """Sorted distinct BTC levels in `text` within _LVL_BAND of `price`."""
-    found = []
-    for m in _LVL_RE.finditer(text or ""):
-        if m.group("a"):
-            found.append(_level_value(m.group("a"), m.group("ak")))
+def view_btc_levels(view, price):
+    """The view's btc_levels as [{low, high, role, stated_role, note, date}]
+    (high == low for a single level); unknown roles and implausible prices
+    dropped. A role is stated as of its post: a resistance the live price has
+    since cleared is shown as support, and a support it has fallen through as
+    resistance (role reversal) -- stated_role keeps what the analyst said."""
+    out = []
+    for lv in view.get("btc_levels") or []:
+        try:
+            low = float(lv["low"])
+            high = float(lv.get("high") or low)
+        except (KeyError, TypeError, ValueError):
             continue
-        ck = m.group("ck")     # "85–88 ezer": the unit covers both bounds
-        found.append(_level_value(m.group("b"), m.group("bk") or ck))
-        if m.group("c"):
-            found.append(_level_value(m.group("c"), ck))
-    lo, hi = (_LVL_BAND[0] * price, _LVL_BAND[1] * price) if price \
-        else (20_000, 500_000)
-    return sorted({round(v) for v in found if lo <= v <= hi})
+        low, high = min(low, high), max(low, high)
+        if lv.get("role") not in _LVL_ROLES or low <= 0:
+            continue
+        if price and not (_LVL_SANITY[0] * price <= low
+                          and high <= _LVL_SANITY[1] * price):
+            continue
+        role = lv["role"]
+        if price and role == "resistance" and high < price:
+            role = "support"
+        elif price and role == "support" and low > price:
+            role = "resistance"
+        out.append({"low": low, "high": high, "role": role,
+                    "stated_role": lv["role"],
+                    "note": _one_line(lv.get("note")),
+                    "date": (lv.get("date") or "")[:10]})
+    return out
+
+
+def _role_text(level):
+    """'support', or 'support (was resistance)' after a role reversal."""
+    if level["role"] == level["stated_role"]:
+        return level["role"]
+    return f"{level['role']} (was {level['stated_role']})"
+
+
+def _level_text(lv):
+    return f"${lv['low']:,.0f}" + (f"-{lv['high']:,.0f}" if lv["high"] > lv["low"] else "")
 
 
 def _nice_step(span):
@@ -2063,18 +2099,31 @@ def _nice_step(span):
     return 100_000
 
 
+def _level_legend():
+    """Role marks as drawn (color + shape), bar = zone, faded = stale."""
+    items = [html.Span([html.Span(html.Span(className="lvl-dot"),
+                                  className=f"lvl-legend lvl-{role}"), role],
+                       style={"marginRight": "10px", "whiteSpace": "nowrap"})
+             for role in _LVL_ROLES]
+    items.append(html.Span(f"bar = zone · faded = older than {_LVL_FRESH_DAYS}d",
+                           style={"whiteSpace": "nowrap"}))
+    return html.Div(items, style={**_CHART_NOTE, "marginTop": "4px",
+                                  "display": "flex", "flexWrap": "wrap",
+                                  "alignItems": "center"})
+
+
 def btc_level_map(sources):
-    """Every BTC level the current views name, on one price axis, one row per
-    source, with the live price as a vertical line. `sources`: [(label, view)].
-    """
+    """Every BTC level the current views name, on one price axis: one row per
+    source, one mark per level by role (a bar for a zone), faded when older
+    than _LVL_FRESH_DAYS, the live price as a vertical line.
+    `sources`: [(label, view)]."""
     price = get_price("BTC-USD")
     rows = [(label, lv) for label, view in sources
-            if (lv := extract_btc_levels(" ".join(
-                [view.get("shift_note") or "", view.get("stance_summary") or ""]),
-                price))]
+            if (lv := view_btc_levels(view, price))]
     if not rows:
         return None
-    vals = [v for _, lv in rows for v in lv] + ([price] if price else [])
+    vals = [v for _, lv in rows for level in lv
+            for v in (level["low"], level["high"])] + ([price] if price else [])
     lo, hi = min(vals), max(vals)
     pad = (hi - lo) * 0.06 or hi * 0.05
     lo, hi = lo - pad, hi + pad
@@ -2082,21 +2131,30 @@ def btc_level_map(sources):
     def x(v):
         return f"{(v - lo) / (hi - lo) * 100:.2f}%"
 
+    def mark(label, level):
+        age = _consensus_age_days(level["date"])
+        cls = f"lvl-{level['role']}" + (
+            " lvl-old" if age is not None and age > _LVL_FRESH_DAYS else "")
+        tip = " · ".join(filter(None, [
+            f"{label}: {_role_text(level)} {_level_text(level)}"
+            + (f" ({(level['low'] / price - 1) * 100:+.1f}% vs now)" if price else ""),
+            level["date"], level["note"]]))
+        if level["high"] > level["low"]:
+            width = (level["high"] - level["low"]) / (hi - lo) * 100
+            return html.Span(className=f"lvl-zone {cls}", title=tip,
+                             style={"left": x(level["low"]), "width": f"{width:.2f}%"})
+        return html.Span(className=f"lvl-hit {cls}", title=tip,
+                         style={"left": x(level["low"])},
+                         children=html.Span(className="lvl-dot"))
+
     now_line = ([html.Div(style={"position": "absolute", "left": x(price),
                                  "top": 0, "bottom": 0, "width": "1px",
                                  "background": C["text"], "opacity": 0.7})]
                 if price else [])
-    label_w = "96px"
-    grid = {"display": "grid", "gridTemplateColumns": f"{label_w} minmax(0,1fr)",
+    grid = {"display": "grid", "gridTemplateColumns": "96px minmax(0,1fr)",
             "alignItems": "center"}
     lines = []
     for label, lv in rows:
-        dots = [html.Span(
-            className="lvl-hit", style={"left": x(v)},
-            title=f"{label}: ${v:,.0f}"
-                  + (f" ({(v / price - 1) * 100:+.1f}% vs now)" if price else ""),
-            children=html.Span(className="lvl-dot"))
-            for v in lv]
         lines.append(html.Div(style=grid, children=[
             html.Div(label, style={"color": C["dim"], "fontSize": "0.66rem",
                                    "whiteSpace": "nowrap", "overflow": "hidden",
@@ -2105,7 +2163,7 @@ def btc_level_map(sources):
                 html.Div(style={"position": "absolute", "left": 0, "right": 0,
                                 "top": "50%", "height": "1px",
                                 "background": C["border"]}),
-                *now_line, *dots]),
+                *now_line, *[mark(label, level) for level in lv]]),
         ]))
     step = _nice_step(hi - lo)
     ticks = range(int(lo // step + 1) * step, int(hi) + 1, step)
@@ -2119,16 +2177,19 @@ def btc_level_map(sources):
                                "top": "2px", "whiteSpace": "nowrap"})
               for t in ticks]]),
     ]))
-    flat = sorted(((v, label) for label, lv in rows for v in lv), reverse=True)
+    flat = sorted(((level, label) for label, lv in rows for level in lv),
+                  key=lambda item: -item[0]["low"])
     return html.Div(style=_CHART_CARD, children=[
         html.Div([html.Span("BTC LEVELS IN THE CURRENT VIEWS", style=_CHART_TITLE),
                   html.Span(f"  now ${price:,.0f} (line)" if price else
                             "  live price unavailable", style=_CHART_NOTE)]),
+        _level_legend(),
         html.Div(lines, style={"marginTop": "8px"}),
-        _table_twin("level list", ["Level", "Source", "vs now"],
-                    [(f"${v:,.0f}", label,
-                      f"{(v / price - 1) * 100:+.1f}%" if price else "—")
-                     for v, label in flat]),
+        _table_twin("level list", ["Level", "Role", "Source", "vs now", "Date", "Note"],
+                    [(_level_text(level), _role_text(level), label,
+                      f"{(level['low'] / price - 1) * 100:+.1f}%" if price else "—",
+                      level["date"] or "—", level["note"])
+                     for level, label in flat]),
     ])
 
 

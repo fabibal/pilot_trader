@@ -8,6 +8,51 @@ from reconcile import write_json_atomic
 from storage import load_ledger
 import sentiment_history
 
+# Folded into every view's input fingerprint: bump it when the CURRENT VIEW
+# schema or prompt changes, and each feed's view is re-synthesized on its next
+# run even though its posts did not change. 2 = structured btc_levels.
+CURRENT_VIEW_VERSION = 2
+
+# The CURRENT VIEW's structured BTC levels, shared by both digests: the
+# dashboard's BTC LEVELS map draws exactly these. Prose parsing could not tell
+# a support from a price print ("$87,000 Bitcoin!") or an abandoned level.
+BTC_LEVELS_SCHEMA = {
+    "type": "array",
+    "items": {
+        "type": "object",
+        "properties": {
+            "low": {"type": "number"},
+            "high": {"type": "number"},
+            "role": {"type": "string",
+                     "enum": ["support", "resistance", "target", "invalidation"]},
+            "note": {"type": "string"},
+            "date": {"type": "string"},
+        },
+        "required": ["low", "role", "note", "date"],
+        "additionalProperties": False,
+    },
+}
+
+
+def btc_levels_prompt(unit):
+    """The btc_levels field instructions; `unit` is 'posts' or 'videos'."""
+    return (
+        "- btc_levels: the Bitcoin (BTC/USD) price levels he is CURRENTLY "
+        f"watching, taken ONLY from numbers the {unit} actually state (the text, "
+        "its key levels or its chart reading) -- never invent, estimate or round "
+        "a level he did not give. One object per level: low = the level in US "
+        "dollars as a plain number (83000, not '83k'); high = the upper bound "
+        "ONLY when he names a zone or range (omit it for a single level); role = "
+        "'support', 'resistance', 'target' (a price he expects BTC to reach) or "
+        "'invalidation' (a level whose break would negate his thesis); note = at "
+        "most 8 words IN HUNGARIAN saying what the level is; date = YYYY-MM-DD of "
+        f"the newest of the {unit} that states it. EXCLUDE prices that only "
+        "report where BTC is or went ('$87,000 Bitcoin!', 'hanging around $76K', "
+        "'touched $86k'), levels he has abandoned or that later "
+        f"{unit} superseded, historical references, and levels of any other "
+        "asset. At most 8, most important first; an empty list if he names "
+        "none.\n")
+
 
 def refresh_current_view(client, source, summaries, select_window, generate,
                          input_rate, output_rate, run_cost=None):
@@ -20,7 +65,8 @@ def refresh_current_view(client, source, summaries, select_window, generate,
     if not window:
         return
     fingerprint = hashlib.sha256(json.dumps(
-        window, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
+        [CURRENT_VIEW_VERSION, window], sort_keys=True,
+        ensure_ascii=False).encode("utf-8")).hexdigest()
     # A view is derived data and may be regenerated if corrupt. Source ledgers
     # must instead fail closed (load_ledger at the pipeline entry point).
     try:

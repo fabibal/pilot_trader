@@ -91,7 +91,7 @@ from reconcile import write_json_atomic
 from ingestion_queue import PendingInputs, discover, report_discovery_errors
 from storage import load_ledger, single_writer
 from llm_support import parse_response, token_usage
-from digest_state import refresh_current_view
+from digest_state import refresh_current_view, BTC_LEVELS_SCHEMA, btc_levels_prompt
 from monitor import (load_env, ENV_FILE,
                      GEMINI_THINKING, _unescape_strings, _looks_mangled,
                      _first_sentence, GeminiTally, report_gemini_outage)
@@ -202,8 +202,9 @@ CURRENT_VIEW_MAX_POSTS = 25      # hard cap so a busy stretch doesn't blow out
 
 CURRENT_VIEW_BODY = (
     "Below is a list of his recent analyzed videos, OLDEST FIRST, each as "
-    "\"[date] sentiment | themes -- outlook\". Synthesize his CURRENT overall "
-    "stance across this window -- do not just rehash the newest video.\n"
+    "\"[date] sentiment | themes -- outlook\", then the price levels the video "
+    "named. Synthesize his CURRENT overall stance across this window -- do not "
+    "just rehash the newest video.\n"
     "Fields:\n"
     "- overall_sentiment: his NET stance across THESE videos -- the EXACT "
     "English enum value 'bullish', 'bearish', 'neutral', or 'mixed'. Use "
@@ -222,6 +223,7 @@ CURRENT_VIEW_BODY = (
     "waiting on. Do NOT write 'unchanged', 'consistent', 'no shift', 'held "
     "his view' or any equivalent, and do not merely restate stance_summary "
     "-- this sentence is read on its own, without it.\n"
+    + btc_levels_prompt("videos") +
     "Return ONLY valid JSON matching the schema. No markdown, no preamble."
 )
 
@@ -232,8 +234,10 @@ CURRENT_VIEW_SCHEMA = {
                               "enum": ["bullish", "bearish", "neutral", "mixed"]},
         "stance_summary": {"type": "string"},
         "shift_note": {"type": "string"},
+        "btc_levels": BTC_LEVELS_SCHEMA,
     },
-    "required": ["overall_sentiment", "stance_summary", "shift_note"],
+    "required": ["overall_sentiment", "stance_summary", "shift_note",
+                 "btc_levels"],
     "additionalProperties": False,
 }
 
@@ -451,13 +455,16 @@ def _select_current_view_window(summaries):
 
 
 def _current_view_entry_text(r):
-    """One video's already-distilled fields, formatted as a single prompt line."""
+    """One video's already-distilled fields, formatted as a single prompt line
+    (its price levels last: btc_levels is built from them)."""
     line = (f"[{(r.get('published') or '')[:10]}] "
             f"{r.get('overall_sentiment') or 'neutral'}")
     themes = r.get("top_themes") or []
     if themes:
         line += " | " + ", ".join(themes)
     line += f" -- {r.get('btc_outlook') or ''}"
+    if r.get("key_price_levels"):
+        line += " [levels: " + "; ".join(r["key_price_levels"]) + "]"
     return line
 
 
@@ -483,7 +490,7 @@ def generate_current_view(client, channel, summaries):
                     response_mime_type="application/json",
                     response_json_schema=CURRENT_VIEW_SCHEMA,
                     thinking_config=GEMINI_THINKING,
-                    max_output_tokens=800,
+                    max_output_tokens=1600,   # +btc_levels (up to 8 objects)
                 ),
             )
         except genai_errors.APIError as e:

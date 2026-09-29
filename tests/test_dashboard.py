@@ -206,10 +206,28 @@ def test_warm_pass_refreshes_prices_before_they_expire(monkeypatch):
     assert fetched == ['BTC-USD'] and dash._price_cache['BTC-USD'][0] == 2.0
 
 
-def test_btc_levels_are_read_from_hungarian_prose():
-    text = ("A 83 000 dolláros kitörési szint, a 85 000–88 000 dollár közötti zóna, "
-            "58 ezer dolláros támasz, ~$82.8k, ETH 2800 dolláros, 100 000 BTC, 50 hetes")
-    assert dash.extract_btc_levels(text, 84_000) == [58000, 82800, 83000, 85000, 88000]
+def test_btc_level_map_draws_structured_levels_by_role(monkeypatch):
+    monkeypatch.setattr(dash, 'get_price', lambda *a: 84_000.0)
+    today = dash.datetime.now(dash.timezone.utc).date()
+    fresh, stale = today.isoformat(), (today - dash.timedelta(days=12)).isoformat()
+    view = {'btc_levels': [
+        {'low': 83000, 'role': 'support', 'note': 'kulcstámasz', 'date': fresh},
+        {'low': 86500, 'high': 90000, 'role': 'resistance', 'note': 'zóna', 'date': fresh},
+        {'low': 150000, 'role': 'target', 'note': 'ciklus cél', 'date': stale},
+        {'low': 84, 'role': 'support', 'note': 'unit slip', 'date': fresh},
+        {'low': 70000, 'role': 'bogus', 'note': '', 'date': fresh},
+        {'low': 80000, 'role': 'resistance', 'note': 'cost basis', 'date': fresh}]}
+    assert [(lv['low'], lv['high'], lv['role']) for lv in dash.view_btc_levels(view, 84_000)] == [
+        (83000, 83000, 'support'), (86500, 90000, 'resistance'), (150000, 150000, 'target'),
+        (80000, 80000, 'support')]          # a resistance the price has since cleared
+    assert dash._role_text(dash.view_btc_levels(view, 84_000)[-1]) == 'support (was resistance)'
+    chart = dash.btc_level_map([('A', view), ('No levels yet', {'stance_summary': '83 000 dollár'})])
+    classes = [getattr(c, 'className', None) or '' for c in _walk(chart)]
+    assert sum('lvl-hit lvl-support' == c for c in classes) == 2   # 83K + reversed 80K
+    assert sum(c.startswith('lvl-zone lvl-resistance') for c in classes) == 1
+    assert sum('lvl-target lvl-old' in c for c in classes) == 1      # 12 days old
+    assert 'No levels yet' not in str(chart)      # prose alone no longer makes a row
+    assert dash.btc_level_map([('B', {'stance_summary': 'x'})]) is None
 
 
 def test_kendrick_forecasts_are_graded_against_the_price_path(monkeypatch):

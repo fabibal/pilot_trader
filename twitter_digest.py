@@ -104,7 +104,7 @@ import monitor
 from ingestion_queue import PendingInputs, discover, report_discovery_errors
 from storage import load_ledger, single_writer
 from llm_support import parse_response, token_usage
-from digest_state import refresh_current_view
+from digest_state import refresh_current_view, BTC_LEVELS_SCHEMA, btc_levels_prompt
 from monitor import (load_env, ENV_FILE,
                      getxapi_get, _normalize_getxapi, _image_block,
                      GETXAPI_BASE, GETXAPI_POSTS_PATH, GETXAPI_COST_PER_CALL,
@@ -252,9 +252,10 @@ CURRENT_VIEW_MAX_POSTS = 25      # hard cap so a firehose feed (joao_wedson)
 
 CURRENT_VIEW_BODY = (
     "Below is a list of his recent analyzed posts, OLDEST FIRST, each as "
-    "\"[date] sentiment | themes -- market view\". Synthesize his CURRENT "
-    "overall stance across this window -- do not just rehash the newest "
-    "post.\n"
+    "\"[date] sentiment | themes -- market view\", then its chart reading, key "
+    "levels and the post text itself when there are any. Synthesize his "
+    "CURRENT overall stance across this window -- do not just rehash the "
+    "newest post.\n"
     "Fields:\n"
     "- overall_sentiment: his NET stance across THESE posts -- the EXACT "
     "English enum value 'bullish', 'bearish', 'neutral', or 'mixed'. Use "
@@ -273,6 +274,7 @@ CURRENT_VIEW_BODY = (
     "waiting on. Do NOT write 'unchanged', 'consistent', 'no shift', 'held "
     "his view' or any equivalent, and do not merely restate stance_summary "
     "-- this sentence is read on its own, without it.\n"
+    + btc_levels_prompt("posts") +
     "Return ONLY valid JSON matching the schema. No markdown, no preamble."
 )
 
@@ -283,10 +285,15 @@ CURRENT_VIEW_SCHEMA = {
                               "enum": ["bullish", "bearish", "neutral", "mixed"]},
         "stance_summary": {"type": "string"},
         "shift_note": {"type": "string"},
+        "btc_levels": BTC_LEVELS_SCHEMA,
     },
-    "required": ["overall_sentiment", "stance_summary", "shift_note"],
+    "required": ["overall_sentiment", "stance_summary", "shift_note",
+                 "btc_levels"],
     "additionalProperties": False,
 }
+# Raw post text handed to the synthesis, per post: the distilled market_view
+# often drops the numbers (Glassnode's cost-basis levels), btc_levels needs them.
+CURRENT_VIEW_TEXT_CHARS = 300
 
 
 # --- forecast-ledger mode (kendrick_sc) -----------------------------------
@@ -1080,7 +1087,8 @@ def _select_current_view_window(summaries):
 
 
 def _current_view_entry_text(r):
-    """One post's already-distilled fields, formatted as a single prompt line."""
+    """One post as a single prompt line: its distilled fields, then its key
+    levels and (trimmed) text, where the stated numbers live."""
     line = (f"[{(r.get('created_at') or '')[:10]}] "
             f"{r.get('overall_sentiment') or 'neutral'}")
     themes = r.get("top_themes") or []
@@ -1089,6 +1097,11 @@ def _current_view_entry_text(r):
     line += f" -- {r.get('market_view') or ''}"
     if r.get("chart_summary"):
         line += f" (chart: {r.get('chart_trend') or 'neutral'} -- {r['chart_summary']})"
+    if r.get("key_levels"):
+        line += " [levels: " + "; ".join(r["key_levels"]) + "]"
+    text = " ".join((r.get("text") or "").split())
+    if text:
+        line += f' [post: "{text[:CURRENT_VIEW_TEXT_CHARS]}"]'
     return line
 
 
@@ -1114,7 +1127,7 @@ def generate_current_view(gemini_client, feed, summaries):
                     response_mime_type="application/json",
                     response_json_schema=CURRENT_VIEW_SCHEMA,
                     thinking_config=GEMINI_THINKING,
-                    max_output_tokens=800,
+                    max_output_tokens=1600,   # +btc_levels (up to 8 objects)
                 ),
             )
         except genai_errors.APIError as e:

@@ -161,3 +161,17 @@ def test_kendrick_failed_triage_keeps_raw_input(tmp_path, monkeypatch):
     tw.run_feed(feed, None, args)
     assert PendingInputs(feed.summaries_file, 'id').rows == {}
     assert json.loads((tmp_path/'kendrick.json').read_text())['seen_ids'] == ['123']
+
+
+def test_current_view_input_carries_levels_and_text():
+    line = tw._current_view_entry_text({
+        'created_at': '2026-09-18T10:00:00+00:00', 'overall_sentiment': 'bullish',
+        'market_view': 'x', 'key_levels': ['ETF cost basis $85k'],
+        'text': 'the corporate treasury cost basis around $80k and ' + 'y' * 400})
+    assert '[levels: ETF cost basis $85k]' in line and 'cost basis around $80k' in line
+    assert len(line) < 500                       # post text is trimmed
+    video = yt._current_view_entry_text({'published': '2026-09-15', 'btc_outlook': 'o',
+                                         'key_price_levels': ['BTC ~$70,000 célzóna']})
+    assert video.endswith('[levels: BTC ~$70,000 célzóna]')
+    assert 'btc_levels' in tw.CURRENT_VIEW_SCHEMA['required']
+    assert 'btc_levels' in yt.CURRENT_VIEW_SCHEMA['required']
