@@ -30,6 +30,7 @@ import urllib.request
 import urllib.error
 from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
+from flask import abort, send_from_directory
 
 import pandas as pd
 import yfinance as yf
@@ -1191,6 +1192,84 @@ def load_jesse_olson_current_view():
     return _load_current_view(JESSE_CURRENT_VIEW_FILE)
 
 
+MAKEITCOUNT_SUMMARIES_FILE = os.path.join(DATA_DIR, "makeitcount_summaries.json")
+MAKEITCOUNT_CURRENT_VIEW_FILE = os.path.join(DATA_DIR, "makeitcount_current_view.json")
+_VIDEO_FRAME_RE = re.compile(r"[A-Za-z0-9_-]{11}_[0-9]+\.jpg")
+
+
+def load_makeitcount_summaries():
+    return _load_summaries(MAKEITCOUNT_SUMMARIES_FILE)
+
+
+def load_makeitcount_current_view():
+    return _load_current_view(MAKEITCOUNT_CURRENT_VIEW_FILE)
+
+
+@app.server.route("/video-frames/<path:filename>")
+def video_frame(filename):
+    if not _VIDEO_FRAME_RE.fullmatch(filename):
+        abort(404)
+    return send_from_directory(os.path.join(DATA_DIR, "video_frames"), filename,
+                               max_age=86400)
+
+
+def _video_time_link(video_id, seconds, label=None):
+    if (not isinstance(video_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{11}", video_id)
+            or type(seconds) is not int or seconds < 0):
+        return None
+    hours, remainder = divmod(seconds, 3600)
+    minutes, sec = divmod(remainder, 60)
+    stamp = f"{hours}:{minutes:02d}:{sec:02d}" if hours else f"{minutes}:{sec:02d}"
+    return html.A(label or stamp,
+                  href=f"https://www.youtube.com/watch?v={video_id}&t={seconds}s",
+                  target="_blank", rel="noopener noreferrer",
+                  style={"color": C["blue"], "textDecoration": "none"})
+
+
+def _yt_frame(video_id, frame):
+    filename = frame.get("image_file") or ""
+    link = _video_time_link(video_id, frame.get("timestamp_seconds"))
+    image = (html.Img(src=f"/video-frames/{filename}", alt=frame.get("caption") or "Videóábra",
+                      style={"width": "100%", "maxWidth": "960px", "height": "auto",
+                             "borderRadius": "6px", "display": "block"})
+             if isinstance(filename, str) and _VIDEO_FRAME_RE.fullmatch(filename) else None)
+    if image is None and link is None:
+        return None
+    return html.Figure([
+        image,
+        html.Figcaption([link, "  ·  " if link else "", frame.get("caption") or ""],
+                        style={"fontSize": "0.73rem", "color": C["dim"],
+                               "lineHeight": "1.5", "marginTop": "5px"}),
+    ], style={"margin": "16px 0 0"})
+
+
+def _yt_details(v):
+    children = []
+    chapters = v.get("chapters") or []
+    frames = list((v.get("important_frames") or [])[:3])
+    if chapters:
+        children.append(html.Div("YouTube-fejezetek" if v.get("chapter_source") == "youtube"
+                                 else "Részletes összefoglaló", style={
+            "color": C["dim"], "fontSize": "0.76rem", "marginTop": "14px"}))
+    for i, chapter in enumerate(chapters):
+        start = chapter.get("start_seconds")
+        end = chapters[i + 1].get("start_seconds") if i + 1 < len(chapters) else None
+        link = _video_time_link(v.get("video_id"), start)
+        body = [html.Div([link, "  " if link else "", chapter.get("title") or ""],
+                         style={"fontWeight": "bold", "marginBottom": "5px"}),
+                html.Div(chapter.get("summary") or "")]
+        for frame in list(frames):
+            seconds = frame.get("timestamp_seconds")
+            if (type(start) is int and type(seconds) is int and start <= seconds
+                    and (end is None or (type(end) is int and seconds < end))):
+                body.append(_yt_frame(v.get("video_id"), frame))
+                frames.remove(frame)
+        children.append(html.Div(body, style={
+            "fontSize": "0.8rem", "lineHeight": "1.6", "marginTop": "12px"}))
+    children.extend(_yt_frame(v.get("video_id"), frame) for frame in frames)
+    return html.Div(children)
+
+
 def _yt_chip(text, color=None):
     return html.Span(text, style={
         "display": "inline-block", "background": C["bg"],
@@ -1232,6 +1311,7 @@ def _yt_card(v):
                                                  "fontSize": "0.8rem",
                                                  "marginTop": "8px",
                                                  "lineHeight": "1.45"}),
+        _yt_details(v),
         html.Div([html.Span("BTC outlook: ", style={"color": C["dim"],
                                                      "fontWeight": "bold"}),
                   html.Span(v.get("btc_outlook") or "—")],
@@ -1878,6 +1958,7 @@ _CONSENSUS_SOURCES = [
     ("DonAlt",      "crypto", load_donalt_current_view,      "posts",  "DonAlt"),
     ("Glassnode",   "crypto", load_glassnode_current_view,   "posts",  "Glassnode"),
     ("Truecrypto",  "crypto", load_truecrypto_current_view,  "posts",  "Truecrypto"),
+    ("MakeItCount", "macro / multi-asset", load_makeitcount_current_view, "videos", "MakeItCount"),
 ]
 
 # Card view -> the registry key its views are logged under in
@@ -1886,7 +1967,8 @@ _HISTORY_KEY = {"BenCowen": "cowen", "CowenX": "cowen_x",
                 "JesseOlson": "jesse_olson", "KiYoungJu": "ki_young_ju",
                 "JoaoWedson": "joao_wedson", "DorkChicken": "dorkchicken",
                 "DaanCrypto": "daancrypto", "DonAlt": "donalt",
-                "Glassnode": "glassnode", "Truecrypto": "truecrypto"}
+                "Glassnode": "glassnode", "Truecrypto": "truecrypto",
+                "MakeItCount": "makeitcount"}
 SENTIMENT_HISTORY_FILE = os.path.join(DATA_DIR, "sentiment_history.json")
 HISTORY_STRIP_LEN = 10     # recent views shown under each row's chip
 BALANCE_DAYS = 60          # span of the bull-bear balance chart
@@ -1990,7 +2072,9 @@ def sentiment_balance_chart(by_source):
     """Bull-bear balance over time: per day, bullish minus bearish sources
     (latest view carried forward). Diverging columns around a zero line --
     position carries the sign, green/red only repeats it."""
-    rows = _daily_balance(by_source, list(_HISTORY_KEY.values()))
+    rows = _daily_balance(by_source, [_HISTORY_KEY[target]
+                                    for _, cls, _, _, target in _CONSENSUS_SOURCES
+                                    if cls == "crypto"])
     if not rows:
         return None
     scale = max(b + r + o for _, b, r, o in rows) or 1
@@ -2546,6 +2630,18 @@ app.layout = html.Div(
                          **{"data-view": "JesseOlson"}),
             ]),
 
+            html.Div(id="makeitcount-view", style={"display": "none"}, children=[
+                html.Div(["YouTube Analysis — MakeItCount",
+                          html.A("→ channel", href="https://www.youtube.com/@makeitcounthu",
+                                 target="_blank", rel="noopener noreferrer",
+                                 style={"color": C["blue"], "marginLeft": "14px",
+                                        "textTransform": "none", "textDecoration": "none",
+                                        "fontWeight": "normal", "fontSize": "0.8rem"})],
+                         style=_SECTION_H),
+                html.Div(id="makeitcount-summaries", style={"marginTop": "4px"},
+                         **{"data-view": "MakeItCount"}),
+            ]),
+
             # Ki Young Ju view: X/Twitter post analysis cards (analysis only —
             # CryptoQuant founder, BTC on-chain macro; never traded/mirrored).
             html.Div(id="ki-view", style={"display": "none"}, children=[
@@ -2788,6 +2884,7 @@ def _influencer_header(title, account):
     Output("glassnode-view", "style"),
     Output("truecrypto-view", "style"),
     Output("kendrick-view", "style"),
+    Output("makeitcount-view", "style"),
     Output("influencer-pos-header", "children"),
     Output("influencer-sig-header", "children"),
     Input("influencer-subtabs", "value"),
@@ -2795,7 +2892,7 @@ def _influencer_header(title, account):
 def switch_influencer_subtab(account):
     panels = ["trades", "BenCowen", "JesseOlson", "KiYoungJu", "JoaoWedson",
               "DorkChicken", "DaanCrypto", "DonAlt", "CowenX", "Glassnode",
-              "Truecrypto", "GeoffKendrick"]
+              "Truecrypto", "GeoffKendrick", "MakeItCount"]
     selected = "trades" if account in INFLUENCER_ACCOUNTS else account
     styles = tuple({"display": "block" if panel == selected else "none"}
                    for panel in panels)
@@ -2821,6 +2918,7 @@ def switch_influencer_subtab(account):
     Output("glassnode-summaries", "children"),
     Output("truecrypto-summaries", "children"),
     Output("kendrick-summaries", "children"),
+    Output("makeitcount-summaries", "children"),
     Input("data-version", "data"),
     Input("influencer-subtabs", "value"),
 )
@@ -2832,43 +2930,46 @@ def refresh_influencers(_version, account):
     if account == "Consensus" or account not in {
         *INFLUENCER_ACCOUNTS, "BenCowen", "JesseOlson", "KiYoungJu",
         "JoaoWedson", "DorkChicken", "DaanCrypto", "DonAlt", "CowenX",
-        "Glassnode", "Truecrypto", "GeoffKendrick",
+        "Glassnode", "Truecrypto", "GeoffKendrick", "MakeItCount",
     }:
-        return "", [], None, None, [], [], [], [], [], [], [], [], [], [], []
+        return "", [], None, None, [], [], [], [], [], [], [], [], [], [], [], []
     if account == "BenCowen":
         children = youtube_section(load_youtube_summaries())
-        return "", [], None, None, children, [], [], [], [], [], [], [], [], [], []
+        return "", [], None, None, children, [], [], [], [], [], [], [], [], [], [], []
     if account == "JesseOlson":
         children = youtube_section(load_jesse_olson_summaries(),
                                     empty_label="Jesse Olson")
-        return "", [], None, None, [], children, [], [], [], [], [], [], [], [], []
+        return "", [], None, None, [], children, [], [], [], [], [], [], [], [], [], []
     if account == "KiYoungJu":
         children = twitter_section(load_twitter_summaries())
-        return "", [], None, None, [], [], children, [], [], [], [], [], [], [], []
+        return "", [], None, None, [], [], children, [], [], [], [], [], [], [], [], []
     if account == "JoaoWedson":
         children = twitter_section(load_joao_summaries(), who="@joao_wedson")
-        return ("", [], None, None, [], [], [], children, [], [], [], [], [], [], [])
+        return ("", [], None, None, [], [], [], children, [], [], [], [], [], [], [], [])
     if account == "DorkChicken":
         children = twitter_section(load_dorkchicken_summaries(), who="@DorkChicken")
-        return ("", [], None, None, [], [], [], [], children, [], [], [], [], [], [])
+        return ("", [], None, None, [], [], [], [], children, [], [], [], [], [], [], [])
     if account == "DaanCrypto":
         children = twitter_section(load_daancrypto_summaries(), who="@DaanCrypto")
-        return ("", [], None, None, [], [], [], [], [], children, [], [], [], [], [])
+        return ("", [], None, None, [], [], [], [], [], children, [], [], [], [], [], [])
     if account == "DonAlt":
         children = twitter_section(load_donalt_summaries(), who="@DonAlt")
-        return ("", [], None, None, [], [], [], [], [], [], children, [], [], [], [])
+        return ("", [], None, None, [], [], [], [], [], [], children, [], [], [], [], [])
     if account == "CowenX":
         children = twitter_section(load_cowen_x_summaries(), who="@benjamincowen")
-        return ("", [], None, None, [], [], [], [], [], [], [], children, [], [], [])
+        return ("", [], None, None, [], [], [], [], [], [], [], children, [], [], [], [])
     if account == "Glassnode":
         children = twitter_section(load_glassnode_summaries(), who="@glassnode")
-        return ("", [], None, None, [], [], [], [], [], [], [], [], children, [], [])
+        return ("", [], None, None, [], [], [], [], [], [], [], [], children, [], [], [])
     if account == "Truecrypto":
         children = twitter_section(load_truecrypto_summaries(), who="@Truecrypto")
-        return ("", [], None, None, [], [], [], [], [], [], [], [], [], children, [])
+        return ("", [], None, None, [], [], [], [], [], [], [], [], [], children, [], [])
     if account == "GeoffKendrick":
         return ("", [], None, None, [], [], [], [], [], [], [], [], [], [],
-                kendrick_forecast_section(load_kendrick_forecasts()))
+                kendrick_forecast_section(load_kendrick_forecasts()), [])
+    if account == "MakeItCount":
+        return ("", [], None, None, [], [], [], [], [], [], [], [], [], [], [],
+                youtube_section(load_makeitcount_summaries(), empty_label="MakeItCount"))
     positions = load_positions()
     warm_prices({_yf_symbol(p["ticker"], p.get("asset_type") or "unknown")
                  for p in influencer_positions(positions)
@@ -2879,7 +2980,7 @@ def refresh_influencers(_version, account):
             html.Div([influencer_positions_table(resolutions),
                       _setups_block(positions, account)]),
             influencer_winrate_card(resolutions),
-            [], [], [], [], [], [], [], [], [], [], [])
+            [], [], [], [], [], [], [], [], [], [], [], [])
 
 
 def _setups_block(positions, account):

@@ -85,6 +85,7 @@ from google.genai import types as genai_types
 from google.genai import errors as genai_errors
 
 import cost_log
+from video_frames import inspect_video, extract_frames
 from reconcile import write_json_atomic
 # Reuse monitor.py's small, already-tested helpers (env/json loaders, local
 # outage reporting) so this stays DRY and consistent with the rest of the pipeline.
@@ -183,6 +184,61 @@ ANALYSIS_SCHEMA = {
     "additionalProperties": False,
 }
 
+# Only MakeItCount requests chapter summaries and useful chart frames.
+DETAILED_ANALYSIS_BODY = (
+    "\nADDITIONAL FIELDS for this channel:\n"
+    "- chapters: summarize EACH supplied YouTube chapter separately, in order, "
+    "keeping its exact title and start_seconds. Write each summary in fluent "
+    "HUNGARIAN, usually 3-5 sentences: the argument, evidence/numbers, "
+    "conditions, risks and conclusion actually stated. Aim for about 300-500 "
+    "words across the chapter summaries for a substantive video; expand if "
+    "needed to cover many chapters, and keep short clips proportionately short. "
+    "Promotion/intro chapters need only one sentence. If NO chapter list was "
+    "supplied, split the content into actual topics with Hungarian titles "
+    "(usually 3-6 for a long video, just one for a short clip) "
+    "and their observed start_seconds (null if you cannot determine the time). "
+    "Do not invent official YouTube chapters. Each text field is one paragraph "
+    "without newline or tab characters. Distinguish the speaker's opinion "
+    "and predictions from facts and examples. Attribute interviewees' claims "
+    "explicitly (e.g. 'a megszólaló szerint'), especially claims about "
+    "regulatory protection or guaranteed safety; never present them as "
+    "independently verified facts. Never pad with outside knowledge. Name "
+    "projects and tickers only if actually stated in that chapter.\n"
+    "- important_frames: 0-3 visually useful charts, data tables or diagrams "
+    "whose inclusion helps explain a key argument. For each, give the precise "
+    "timestamp_seconds at which it is clearly visible and a short Hungarian "
+    "caption explaining what the image shows and why it matters. Check the "
+    "actual frame at that time; do not choose a talking head, generic B-roll "
+    "or promotional slide. Empty list if no meaningful visual exists. "
+    "Use seconds from the start of the video, never a price or chapter index.\n"
+)
+DETAILED_ANALYSIS_SCHEMA = {
+    **ANALYSIS_SCHEMA,
+    "properties": {
+        **ANALYSIS_SCHEMA["properties"],
+        "chapters": {"type": "array", "items": {
+            "type": "object",
+            "properties": {
+                "title": {"type": "string"},
+                "start_seconds": {"type": ["integer", "null"], "minimum": 0},
+                "summary": {"type": "string"},
+            },
+            "required": ["title", "start_seconds", "summary"],
+            "additionalProperties": False,
+        }},
+        "important_frames": {"type": "array", "maxItems": 3, "items": {
+            "type": "object",
+            "properties": {
+                "timestamp_seconds": {"type": "integer", "minimum": 0},
+                "caption": {"type": "string"},
+            },
+            "required": ["timestamp_seconds", "caption"],
+            "additionalProperties": False,
+        }},
+    },
+    "required": [*ANALYSIS_SCHEMA["required"], "chapters", "important_frames"],
+}
+
 # --- rolling "current view" synthesis --------------------------------------
 # Once per run, IF new videos were processed, synthesize a short rolling
 # stance from the channel's recent video history -- shown as a banner above
@@ -257,6 +313,7 @@ class Channel:
     # marker in the title -- within seconds/minutes of each other. Filter the
     # duplicate before it's ever analyzed (see _drop_shorts_duplicates).
     drop_shorts_dupes: bool = False
+    detailed_summary: bool = False
 
     @property
     def rss_url(self):
@@ -265,7 +322,12 @@ class Channel:
 
     @property
     def analysis_system(self):
-        return self.persona + " " + ANALYSIS_BODY
+        return (self.persona + " " + ANALYSIS_BODY
+                + (DETAILED_ANALYSIS_BODY if self.detailed_summary else ""))
+
+    @property
+    def analysis_schema(self):
+        return DETAILED_ANALYSIS_SCHEMA if self.detailed_summary else ANALYSIS_SCHEMA
 
     @property
     def current_view_system(self):
@@ -306,6 +368,26 @@ CHANNELS = {c.key: c for c in [
             "it; leave it out of key_price_levels entirely."),
         current_view_file=os.path.join(DATA_DIR, "jesse_olson_current_view.json"),
         drop_shorts_dupes=True,
+    ),
+    Channel(
+        key="makeitcount",
+        channel_id="UC0kQor-W5fLMsYfcGtK1FoA",  # @makeitcounthu
+        display_name="MakeItCount",
+        summaries_file=os.path.join(DATA_DIR, "makeitcount_summaries.json"),
+        persona=(
+            "You analyze a HUNGARIAN-language YouTube video by MakeItCount "
+            "(@makeitcounthu), covering crypto, stocks, commodities, macro, "
+            "AI and technology. Understand the original Hungarian audio and "
+            "on-screen charts directly. Ignore promotional material when "
+            "extracting market claims. Preserve conditional scenarios and "
+            "their time horizons; a historical comparison is not a guaranteed "
+            "forecast. Do not infer a BTC view from unrelated AI, technology "
+            "or social commentary: if Bitcoin is not discussed, leave "
+            "btc_outlook empty and the crypto sentiment neutral. In the "
+            "rolling current view, cover the actual themes across all assets "
+            "and do not turn non-crypto commentary into a crypto prediction."),
+        current_view_file=os.path.join(DATA_DIR, "makeitcount_current_view.json"),
+        detailed_summary=True,
     ),
 ]}
 
@@ -395,9 +477,13 @@ def analyze(client, channel, video):
                                        mime_type="video/mp4"),
         media_processing=genai_types.MediaProcessing.AGENTIC,
     )
-    text_part = genai_types.Part(
-        text=f"Video title: {video['title']}\n\n"
-             "Analyze this video per the schema.")
+    text = f"Video title: {video['title']}\n\nAnalyze this video per the schema."
+    if channel.detailed_summary:
+        text += "\nYouTube chapters (authoritative; [] means unavailable): "
+        text += json.dumps(video.get("youtube_chapters") or [], ensure_ascii=False)
+        if video.get("duration_seconds"):
+            text += f"\nVideo duration: {video['duration_seconds']} seconds."
+    text_part = genai_types.Part(text=text)
     contents = [video_part, text_part]
     in_tok = out_tok = 0
     parsed = None
@@ -409,7 +495,7 @@ def analyze(client, channel, video):
                 config=genai_types.GenerateContentConfig(
                     system_instruction=channel.analysis_system,
                     response_mime_type="application/json",
-                    response_json_schema=ANALYSIS_SCHEMA,
+                    response_json_schema=channel.analysis_schema,
                     thinking_config=GEMINI_THINKING,
                     max_output_tokens=6000,
                 ),
@@ -421,11 +507,20 @@ def analyze(client, channel, video):
         i, o = token_usage(resp)
         in_tok += i
         out_tok += o
-        parsed = parse_response(resp, ANALYSIS_SCHEMA, _unescape_strings)
+        parsed = parse_response(resp, channel.analysis_schema, _unescape_strings)
         if parsed is None:
             LLM_TALLY.fail()
             return None, in_tok, out_tok
         if not _looks_mangled(parsed):
+            supplied = video.get("youtube_chapters") or []
+            if supplied and channel.detailed_summary:
+                expected = [(c["title"], c["start_seconds"]) for c in supplied]
+                actual = [(c["title"], c["start_seconds"]) for c in parsed["chapters"]]
+                if actual != expected:
+                    print("  [chapter error] analysis did not preserve the supplied chapters",
+                          file=sys.stderr)
+                    LLM_TALLY.fail()
+                    return None, in_tok, out_tok
             LLM_TALLY.ok()
             break
         if attempt == _MANGLED_MAX_ATTEMPTS - 1:
@@ -463,6 +558,8 @@ def _current_view_entry_text(r):
     if themes:
         line += " | " + ", ".join(themes)
     line += f" -- {r.get('btc_outlook') or ''}"
+    if r.get("chapters"):
+        line += f" [summary: {r.get('summary') or ''}]"
     if r.get("key_price_levels"):
         line += " [levels: " + "; ".join(r["key_price_levels"]) + "]"
     return line
@@ -534,18 +631,33 @@ def generate_current_view(client, channel, summaries):
 
 
 # --- main -----------------------------------------------------------------
-def process(videos, client, channel):
+def process(videos, client, channel, save_frames=True):
     """Analyze each video dict directly from native video; return
     (records, in_tok, out_tok)."""
     records, total_in, total_out = [], 0, 0
     for v in videos:
         print(f"- {v['video_id']}  {v['title'][:70]}")
+        metadata = None
+        if channel.detailed_summary:
+            try:
+                metadata = inspect_video(v["video_id"])
+                v = {**v, "youtube_chapters": metadata["chapters"],
+                     "duration_seconds": metadata["duration"]}
+            except (OSError, ValueError, TimeoutError) as exc:
+                print(f"    [video metadata unavailable] {type(exc).__name__}; using topics",
+                      file=sys.stderr)
         analysis, in_tok, out_tok = analyze(client, channel, v)
         total_in += in_tok
         total_out += out_tok
         if not analysis:
             print("    video analysis failed; skipping", file=sys.stderr)
             continue
+        if channel.detailed_summary:
+            analysis["chapter_source"] = "youtube" if v.get("youtube_chapters") else "topics"
+            if save_frames:
+                analysis["important_frames"] = extract_frames(
+                    v["video_id"], analysis["important_frames"], metadata,
+                    os.path.join(DATA_DIR, "video_frames"))
         records.append({
             "video_id": v["video_id"],
             "title": v["title"],
@@ -601,7 +713,7 @@ def run_channel(channel, client, args):
 
     print(f"Processing {len(todo)} video(s)"
           + (" [FORCE]" if args.force else "") + ":")
-    records, in_tok, out_tok = process(todo, client, channel)
+    records, in_tok, out_tok = process(todo, client, channel, not args.dry_run)
 
     cost = in_tok / 1_000_000 * INPUT_PER_1M \
         + out_tok / 1_000_000 * OUTPUT_PER_1M

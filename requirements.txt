@@ -2,3 +2,5 @@
 # The native-video pipeline requires Part.media_processing / AGENTIC support.
 # Version present in the audited environment; avoid an unbounded SDK upgrade.
 google-genai==2.22.0
+# Optional chart frames and chapter metadata for the MakeItCount digest.
+yt-dlp==2026.08.19

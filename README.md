@@ -45,6 +45,10 @@ curiosity, not to give or follow investment advice.
 - **Analysis-only research digests** — separate, never-traded feeds summarize
   on-chain/macro analysts on X and YouTube, plus a forecast ledger that
   clusters echoed price calls into one row per forecast.
+- **Hungarian YouTube summaries** — MakeItCount joins Benjamin Cowen and
+  Jesse Olson. Its videos get separate summaries for the published YouTube
+  chapters, timestamp links, and up to three useful chart images from the
+  actual video. Videos without chapters are organized by topic.
 - **Consensus view** — every analyst's rolling "current view" (sentiment,
   freshness, stance) side by side on one panel.
 - **Live dashboard** — a dark-themed web app showing trade-call performance
@@ -94,6 +98,12 @@ Separate, **never-traded** pipelines (`youtube_monitor.py`, `twitter_digest.py`)
 dashboard. Each keeps its own append-only ledger, which doubles as its
 deduplication set, so re-runs are idempotent.
 
+MakeItCount's chapter and frame enrichment requires `yt-dlp` in the host
+environment and FFmpeg on `PATH`. If that enrichment is unavailable, the
+video summary still appears with topic sections and any identified timestamp
+links. Selected frame images are stored under `data/video_frames/` and
+served by the dashboard.
+
 ---
 
 ## Tech Stack
@@ -104,7 +114,7 @@ deduplication set, so re-runs are idempotent.
 | LLM | **Google Gemini** — `gemini-2.5-flash-lite` for text extraction and cheap triage, `gemini-3.7-flash` for vision, long-form analysis and native video, via the real-time Gemini API (schema-constrained JSON) |
 | Dashboard | **Dash / Plotly** (dark, GitHub-style theme) |
 | Market data | **yfinance** (prices), RSS (YouTube detection) |
-| Data sources | Third-party X/Twitter APIs; YouTube videos read natively by Gemini (no local download or transcript step) |
+| Data sources | Third-party X/Twitter APIs; YouTube videos read natively by Gemini; MakeItCount chapter metadata and selected real frames fetched with yt-dlp / FFmpeg |
 | Packaging / ops | **Docker** + Docker Compose, cron pipelines, health checks |
 | Storage | Plain JSON event logs + state files (no database) |
 | Diagnostics | Local logs, exit codes and dashboard freshness indicators |

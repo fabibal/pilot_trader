@@ -18,7 +18,7 @@ def test_non_trading_tabs_do_not_warm_prices(monkeypatch, tab):
         raise AssertionError('Irrelevant tab requested price data')
     monkeypatch.setattr(dash, 'warm_prices', forbidden)
     monkeypatch.setattr(dash, 'load_positions', forbidden)
-    assert len(dash.refresh_influencers(0, tab)) == 15
+    assert len(dash.refresh_influencers(0, tab)) == 16
 
 
 def test_intraday_close_expires_instead_of_being_cached_forever(monkeypatch):
@@ -46,13 +46,13 @@ def test_retired_feature_absent_and_remaining_tabs_switch():
             assert 'reddit' not in client.get(url).get_data(as_text=True).lower()
     tabs = ['IncomeSharks', 'traderstewie', 'BenCowen', 'JesseOlson',
             'KiYoungJu', 'JoaoWedson', 'DorkChicken', 'DaanCrypto', 'DonAlt',
-            'CowenX', 'Glassnode', 'Truecrypto', 'GeoffKendrick']
+            'CowenX', 'Glassnode', 'Truecrypto', 'GeoffKendrick', 'MakeItCount']
     for tab in tabs:
         result = dash.switch_influencer_subtab(tab)
-        assert len(result) == 14
-        assert sum(style['display'] == 'block' for style in result[:12]) == 1
+        assert len(result) == 15
+        assert sum(style['display'] == 'block' for style in result[:-2]) == 1
     assert all(style['display'] == 'none'
-               for style in dash.switch_influencer_subtab('Consensus')[:12])
+               for style in dash.switch_influencer_subtab('Consensus')[:-2])
 
 
 def test_youtube_rejects_non_web_href():
@@ -102,7 +102,7 @@ def test_consensus_sources_open_their_feed_view(monkeypatch):
            if isinstance(c, dash.html.Button)]
     assert sorted(i['view'] for i in ids) == sorted(targets)
     for target in targets:
-        styles = dash.switch_influencer_subtab(target)[:12]
+        styles = dash.switch_influencer_subtab(target)[:-2]
         assert sum(style['display'] == 'block' for style in styles) == 1
         assert any(out for out in dash.refresh_influencers(0, target)[4:])
         back = dash.refresh_consensus(0, target)

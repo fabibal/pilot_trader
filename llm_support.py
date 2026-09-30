@@ -20,6 +20,8 @@ def matches_schema(value, schema):
               else "string" if isinstance(value, str)
               else "array" if isinstance(value, list)
               else "object" if isinstance(value, dict) else "invalid")
+    if actual == "number" and "integer" in kinds and type(value) is int:
+        actual = "integer"
     if kinds and actual not in kinds:
         return False
     if actual == "number" and not math.isfinite(value):
