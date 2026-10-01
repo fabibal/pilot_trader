@@ -146,23 +146,27 @@ def test_yahoo_symbol_aliases_and_non_tickers():
     assert [p['ticker'] for p in dash.influencer_positions(positions)] == ['HOOD']
 
 
-def test_recap_entry_is_priced_from_the_trade_date_close(monkeypatch):
-    monkeypatch.setattr(dash, 'get_hist_close', lambda *a, **k: 84.84)
-    recap = {'ticker': 'HOOD', 'asset_type': 'stock', 'trade_date': '2026-05-28',
+def test_verified_fill_is_not_replaced_by_an_arbitrary_close(monkeypatch):
+    import pandas as pd
+    hist = pd.DataFrame([{'Open': 85, 'High': 90, 'Low': 80, 'Close': 84.84}], index=['2026-05-29'])
+    monkeypatch.setattr(dash, 'get_ohlc', lambda *a, **k: hist)
+    recap = {'ticker': 'HOOD', 'asset_type': 'stock', 'opened_at': '2026-05-28T22:00:00Z',
              'entry_price': 8}
-    assert dash._entry_for(recap) == (84.84, True)
+    assert dash._entry_for(recap) == (8, False)
     assert dash._entry_for(dict(recap, entry_price=80)) == (80, False)
-    assert dash._entry_for(dict(recap, entry_price=None)) == (84.84, True)
+    assert dash._entry_for(dict(recap, entry_price=None)) == (85, True)
 
 
 def test_bad_levels_exclude_an_open_call_but_a_closed_one_still_counts(monkeypatch):
-    monkeypatch.setattr(dash, 'get_ohlc', lambda *a, **k: None)
+    import pandas as pd
+    hist = pd.DataFrame([{'High': 250, 'Low': 220}], index=['2026-08-28'])
+    monkeypatch.setattr(dash, 'get_ohlc', lambda *a, **k: hist)
     monkeypatch.setattr(dash, '_entry_for', lambda *a, **k: (228.0, True))
     monkeypatch.setattr(dash, 'get_hist_close', lambda *a, **k: 250.0)
     monkeypatch.setattr(dash, 'get_price', lambda *a: 250.0)
     open_call = dict(account='IncomeSharks', ticker='CRWD', status='open', side='long',
-                     trade_date='2026-08-27', target=31.0)
-    closed = dict(open_call, status='closed', closed_at='2026-09-01')
+                     trade_date='2026-08-27', target=31.0, entry_status='confirmed', asset_type='stock')
+    closed = dict(open_call, status='closed', closed_at='2026-09-01', exit_fills=[{'price': 250, 'fraction': 1}])
     res = dash.influencer_resolutions([open_call, closed])
     assert [r['status'] for _, r in res] == [dash.resolver.INCONSISTENT,
                                              dash.resolver.CLOSED_WIN]
@@ -313,6 +317,6 @@ def test_setups_list_newest_first_with_date_and_safe_link():
         dict(account='traderstewie', ticker='AXTI', status='setup', signals=[]),
     ]
     text = str(dash._setups_block(positions, 'IncomeSharks'))
-    assert 'Setups / needs review (2)' in text
+    assert 'Ideas / needs review (2)' in text
     assert text.index('2026-09-25') < text.index('2026-09-10')
     assert 'javascript' not in text and 'https://x.com/a/status/1' in text

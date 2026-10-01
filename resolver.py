@@ -13,6 +13,7 @@ batching live in one place).
 """
 
 from datetime import datetime, timedelta, timezone
+from evaluation import instant, session_open
 
 EXPIRY_DAYS = 30
 HIT_TARGET = "hit_target"
@@ -26,6 +27,8 @@ CLOSED_LOSS = "closed_loss"
 # The call's own levels were already on the wrong side of its entry when it was
 # made (see levels_inconsistent): excluded from the win rate like a live call.
 INCONSISTENT = "inconsistent"
+UNPRICED = "unpriced"
+CLOSED_FLAT = "closed_flat"
 
 
 def _date(s):
@@ -80,18 +83,26 @@ def resolve_position(pos, ohlc, until=None, entry=None):
     `entry`: the price the call was made at (stated or estimated). When given,
     a call whose levels were already past it resolves as inconsistent instead
     of as a day-one target hit or stop-out."""
-    if pos.get("entry_status") in ("setup", "review"):
+    if pos.get("entry_status") in ("setup", "review", "legacy", "recap", "commentary"):
         return None
+    entry = entry or pos.get("entry_price")
+    if not entry:
+        return {"status": UNPRICED, "date": None, "price": None}
+    if ohlc is None or ohlc.empty:
+        return {"status": UNPRICED, "date": None, "price": None}
     if levels_inconsistent(pos, entry):
         return {"status": INCONSISTENT, "date": None, "price": None}
     target = pos.get("target")
     stop = pos.get("stop_loss")
-    tdate = pos.get("trade_date") or (pos.get("opened_at") or "")[:10]
+    tdate = pos.get("evaluation_date") or pos.get("trade_date") or (pos.get("opened_at") or "")[:10]
     td = _date(tdate)
     if not td:
         return None
     age_days = (datetime.now(timezone.utc) - td).days
     expiry_date = (td + timedelta(days=EXPIRY_DAYS)).strftime("%Y-%m-%d")
+    available = instant(pos.get("evaluation_available_at") or pos.get("first_observed_at") or pos.get("opened_at"))
+    close_time = instant(pos.get("closed_at")) if until else None
+    changes = sorted(pos.get("level_history") or [], key=lambda h: h.get("effective_at") or "")
 
     if (target is not None or stop is not None) and ohlc is not None \
             and not ohlc.empty:
@@ -101,6 +112,26 @@ def resolve_position(pos, ohlc, until=None, entry=None):
                 continue
             if until and str(day)[:10] > until:
                 break
+            opened = session_open(day, pos.get("asset_type") or "stock")
+            if available and opened <= available:
+                continue
+            # Daily OHLC cannot separate pre/post intraday exit or level update.
+            if close_time and opened <= close_time < opened + timedelta(hours=6, minutes=30):
+                continue
+            ambiguous_update = False
+            for change in changes:
+                changed = instant(change.get("observed_at") or change.get("effective_at"))
+                if not changed:
+                    continue
+                if changed < opened:
+                    if change.get("target") is not None:
+                        target = change["target"]
+                    if change.get("stop_loss") is not None:
+                        stop = change["stop_loss"]
+                elif opened <= changed < opened + timedelta(hours=6, minutes=30):
+                    ambiguous_update = True
+            if ambiguous_update:
+                continue
             # An expired open call must not turn into a winner months later.
             # Explicit closes retain their documented holding-window policy.
             if until is None and str(day)[:10] >= expiry_date:
@@ -116,8 +147,10 @@ def resolve_position(pos, ohlc, until=None, entry=None):
                 stopped = stop is not None and hi >= stop
             # If both trip on the same bar, treat as stopped (conservative).
             if stopped:
+                px = row.get("Open")
+                fill = min(stop, px) if long and px else max(stop, px) if not long and px else stop
                 return {"status": STOPPED_OUT, "date": str(day),
-                        "price": stop}
+                        "price": fill}
             if hit:
                 return {"status": HIT_TARGET, "date": str(day),
                         "price": target}
@@ -133,13 +166,13 @@ def resolve_closed(pos, entry, exit_px, closed_date):
     Returns {status: closed_win|closed_loss, date, price}, or None when the
     entry or exit price is unknown (the caller should then exclude the call
     rather than pollute the live count)."""
-    if pos.get("entry_status") in ("setup", "review"):
+    if pos.get("entry_status") in ("setup", "review", "legacy", "recap", "commentary"):
         return None
     if not entry or not exit_px:
         return None
     long = is_long(pos, entry)
     win = exit_px > entry if long else exit_px < entry
-    return {"status": CLOSED_WIN if win else CLOSED_LOSS,
+    return {"status": CLOSED_FLAT if exit_px == entry else CLOSED_WIN if win else CLOSED_LOSS,
             "date": closed_date, "price": exit_px}
 
 
@@ -153,13 +186,16 @@ def win_stats(resolutions):
     closed_win = sum(1 for r in resolutions if r and r["status"] == CLOSED_WIN)
     closed_loss = sum(1 for r in resolutions if r and r["status"] == CLOSED_LOSS)
     inconsistent = sum(1 for r in resolutions if r and r["status"] == INCONSISTENT)
+    unpriced = sum(1 for r in resolutions if r and r["status"] == UNPRICED)
+    flat = sum(1 for r in resolutions if r and r["status"] == CLOSED_FLAT)
     live = sum(1 for r in resolutions if r is None)
-    decided = hit + stopped + closed_win + closed_loss
+    decided = hit + stopped + closed_win + closed_loss + flat
     win_rate = round((hit + closed_win) / decided * 100, 1) if decided else None
     return {"hit": hit, "stopped": stopped, "expired": expired,
             "closed_win": closed_win, "closed_loss": closed_loss, "live": live,
             "inconsistent": inconsistent, "decided": decided,
-            "win_rate": win_rate}
+            "win_rate": win_rate, "unpriced": unpriced, "closed_flat": flat,
+            "total": len(resolutions), "coverage_pct": round(decided / len(resolutions) * 100, 1) if resolutions else None}
 
 
 def is_long(pos, entry=None):

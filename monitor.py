@@ -38,10 +38,13 @@ import re
 import sys
 import time
 import traceback
+import copy
+import hashlib
 import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
+from signal_semantics import normalize_event, quote_in_text, EVENT_KINDS, is_junk_ticker
 from email.utils import parsedate_to_datetime
 
 from google import genai
@@ -210,9 +213,14 @@ SIGNAL_SCHEMA = {
         "ticker": {"type": ["string", "null"]},
         "asset_type": {"type": "string", "enum": ["stock", "crypto", "unknown"]},
         "action": {"type": "string", "enum": ["buy", "sell", "position", "none"]},
-        "side": {"type": "string", "enum": ["long", "short"]},
-        "position_action": {"type": "string", "enum": ["open", "add", "reduce", "close", "hold"]},
-        "entry_status": {"type": "string", "enum": ["confirmed", "setup"]},
+        "side": {"type": ["string", "null"], "enum": ["long", "short", None]},
+        "position_action": {"type": ["string", "null"], "enum": ["open", "add", "reduce", "close", "hold", None]},
+        "entry_status": {"type": "string", "enum": ["confirmed", "setup", "review", "recap", "commentary"]},
+        "event_kind": {"type": "string", "enum": list(EVENT_KINDS)},
+        "execution_evidence": {"type": ["string", "null"]},
+        "exit_price": {"type": ["number", "null"]},
+        "exit_fraction": {"type": ["number", "null"]},
+        "entry_trigger": {"type": ["string", "null"]},
         "sell_kind": {"anyOf": [
             {"type": "string", "enum": ["full", "partial"]},
             {"type": "null"},
@@ -235,9 +243,48 @@ SIGNAL_SCHEMA = {
     "required": ["ticker", "asset_type", "action", "sell_kind", "size_pct",
                  "entry_price", "stop_loss", "target", "trade_date",
                  "holding_thesis", "confidence", "portfolio", "reasoning",
-                 "side", "position_action", "entry_status"],
+                 "side", "position_action", "entry_status", "event_kind",
+                 "execution_evidence", "exit_price", "exit_fraction", "entry_trigger"],
     "additionalProperties": False,
 }
+
+LEVEL_EVIDENCE_SCHEMA = {
+    "type": "object", "properties": {k: {"type": ["string", "null"]}
+        for k in ("entry_price", "stop_loss", "target", "exit_price")},
+    "required": ["entry_price", "stop_loss", "target", "exit_price"],
+    "additionalProperties": False,
+}
+SIGNAL_SCHEMA["properties"]["level_evidence"] = LEVEL_EVIDENCE_SCHEMA
+SIGNAL_SCHEMA["required"].append("level_evidence")
+# One independent event per instrument; kept in a single billed text call.
+_ADDITIONAL_SIGNAL_SCHEMA = copy.deepcopy(SIGNAL_SCHEMA)
+SIGNAL_SCHEMA["properties"]["additional_signals"] = {"type": "array", "items": _ADDITIONAL_SIGNAL_SCHEMA}
+SIGNAL_SCHEMA["required"].append("additional_signals")
+EXTRACTION_SYSTEM += (
+    "\nCLASSIFY BEFORE EXTRACTING PRICES: event_kind is setup, entry, add, trim, "
+    "exit, holding, recap, commentary, or review. Watching/targets/new highs/"
+    "chart strength alone are never a confirmed holding. Top Pick weekly/YTD "
+    "results and educational reviews of completed trades are recap, action none; "
+    "they do not open/close a current position. For commentary/recap set side "
+    "and position_action null. Confirmed requires execution_evidence: a literal "
+    "fragment of THIS author's text explicitly saying they bought, sold, "
+    "trimmed, shorted, covered, or are currently holding THIS asset. A third "
+    "party's action is not their execution. Conditional entries are setup; "
+    "put the condition in entry_trigger. Do not invent activation thresholds. "
+    "level_evidence contains literal source fragments for every non-null price. "
+    "Do not treat a previous low, MA, support, resistance, current quote, "
+    "average exit or a return percentage as an entry/stop/target. exit_price "
+    "is an explicitly filled exit; exit_fraction is the fraction of the "
+    "REMAINING position sold (half=0.5), null if unspecified. Preserve the "
+    "nearest stated target in target, not the average of a target range. "
+    "For multiple assets return the first as the main event and one separately "
+    "classified event per other asset in additional_signals (otherwise []). "
+    "Execution and price evidence must belong to that specific instrument. "
+    "A watchlist addition is setup (not review), with null execution_evidence. "
+    "Never quote only 'Added $XYZ' and omit 'to the watchlist' as fill evidence."
+    " trade_date must be an exact stated day; vague phrases like early April "
+    "do not justify inventing April 5. Return null for uncertain dates."
+)
 
 # --- Chart-image (vision) extraction --------------------------------------
 # Influencer tweets frequently attach an annotated chart whose levels are NOT
@@ -276,6 +323,23 @@ CHART_SCHEMA = {
     "required": ["ticker", "tp1", "tp2", "stop_loss", "trend", "chart_notes"],
     "additionalProperties": False,
 }
+CHART_SCHEMA["properties"]["chart_kind"] = {"type": "string", "enum": ["price_chart", "performance_table", "other"]}
+CHART_SCHEMA["properties"]["level_evidence"] = {
+    "type": "object", "properties": {k: {"type": ["string", "null"]} for k in ("stop_loss", "tp1", "tp2")},
+    "required": ["stop_loss", "tp1", "tp2"], "additionalProperties": False,
+}
+CHART_SCHEMA["required"] += ["chart_kind", "level_evidence"]
+VISION_SYSTEM += (
+    "\nSet chart_kind to price_chart, performance_table, or other. A performance "
+    "table has no actionable price levels. For each non-null stop/tp give the "
+    "literal visible label in level_evidence (including its number and explicit "
+    "Stop/SL/Target/TP label). MA/support/resistance/axis values are not stops "
+    "or targets. Trend alone never proves an executed trade."
+)
+PROMPT_FINGERPRINT = hashlib.sha256(json.dumps(
+    [EXTRACTION_SYSTEM, SIGNAL_SCHEMA, VISION_SYSTEM, CHART_SCHEMA], sort_keys=True).encode()).hexdigest()
+with open(__file__, "rb") as _source_file, open(os.path.join(os.path.dirname(__file__), "signal_semantics.py"), "rb") as _semantics_file:
+    PARSER_FINGERPRINT = hashlib.sha256(_source_file.read() + _semantics_file.read()).hexdigest()
 
 
 class _NoMediaRedirects(urllib.request.HTTPRedirectHandler):
@@ -437,6 +501,11 @@ class Interpreter:
         """Return the parsed signal dict, or None on API/parse error."""
         user = (f"Posted by @{account}\nTweet date: {tweet_date}\n"
                 f"Tweet:\n{text}")
+        context = getattr(self, "thread_context", None)
+        if context:
+            user += ("\nEarlier OWN thread context, for instrument/direction ONLY. "
+                     "Extract executions and prices solely from the CURRENT tweet above; "
+                     "do not repeat the earlier entry or target:\n" + json.dumps(context))
         try:
             resp = self.gemini_client.models.generate_content(
                 model=MODEL,
@@ -446,7 +515,7 @@ class Interpreter:
                     response_mime_type="application/json",
                     response_json_schema=SIGNAL_SCHEMA,
                     thinking_config=EXTRACT_THINKING,
-                    max_output_tokens=300,
+                    max_output_tokens=1800,
                 ),
             )
         except genai_errors.APIError as e:
@@ -484,7 +553,7 @@ class Interpreter:
                     response_mime_type="application/json",
                     response_json_schema=CHART_SCHEMA,
                     thinking_config=GEMINI_THINKING,
-                    max_output_tokens=300,
+                    max_output_tokens=650,
                 ),
             )
         except genai_errors.APIError as e:
@@ -573,12 +642,73 @@ def is_duplicate_retweet(text):
     return bool(m) and m.group(1).lower() in _MONITORED_LC
 
 
+def _grounded_price(value, evidence, role, text=None):
+    """Accept a level only with a literal source label and matching number."""
+    if not isinstance(value, (int, float)) or isinstance(value, bool) or not 0 < value < float("inf"):
+        return None
+    if not isinstance(evidence, str) or not evidence.strip():
+        return None
+    if text is not None and not quote_in_text(evidence, text):
+        return None
+    if role == "target" and text is not None:
+        own_target = re.search(r"\$?(\d[\d,]*(?:\.\d+)?)([kKmM]?)\s+(?:is\s+)?(?:my|our)\s+target\b", evidence, re.I)
+        if own_target:
+            return float(own_target[1].replace(",", "")) * {"k": 1000, "m": 1_000_000}.get(own_target[2].lower(), 1)
+    if role == "target" and text is not None:
+        flat, quote = " ".join(text.split()).casefold(), " ".join(evidence.split()).casefold()
+        index = flat.find(quote)
+        context = flat[max(0, index - 35):index + len(quote)]
+        if re.search(r"\b(?:analysts?|consensus|wall street)\b", context, re.I):
+            return None
+    roles = {"entry_price": r"\b(?:entry|bought|buy|buying|entered|purchased|filled|fill|shorted)\b",
+             "exit_price": r"\b(?:sold|exit|exited|covered|closed|trimmed|booked|profits)\b",
+             "stop_loss": r"\b(?:stop|sl|stoploss)\b",
+             "target": r"\b(?:target|targets|tp|tp1|tp2|take.profit)\b"}
+    if not re.search(roles[role], evidence, re.I):
+        return None
+    numbers = []
+    for match in re.finditer(r"(?<![A-Za-z0-9])(\d[\d,]*(?:\.\d+)?)([kKmM]?)(?![A-Za-z0-9])", evidence):
+        if evidence[match.end():].lstrip().startswith("%"):
+            continue
+        n = float(match[1].replace(",", "")) * {"k": 1000, "m": 1_000_000}.get(match[2].lower(), 1)
+        numbers.append(n)
+    if role in ("entry_price", "exit_price"):
+        anchors = []
+        for match in re.finditer(r"\b(?:at|entry(?: price)?|exit(?: price)?|fill(?: price)?|price)\b\s*[:=@]?\s*\$?\s*(\d[\d,]*(?:\.\d+)?)([kKmM]?)", evidence, re.I):
+            if not evidence[match.end():].lstrip().startswith("%"):
+                anchors.append(float(match[1].replace(",", "")) * {"k": 1000, "m": 1_000_000}.get(match[2].lower(), 1))
+        numbers = anchors
+    if role == "stop_loss":
+        numbers = []
+        for match in re.finditer(r"\b(?:stop(?:[ -]?loss)?|sl)\b\s*(?:at\s+|is\s+|price\s+)?[:=@-]?\s*\$?\s*(\d[\d,]*(?:\.\d+)?)([kKmM]?)", evidence, re.I):
+            if not evidence[match.end():].lstrip().startswith("%"):
+                numbers.append(float(match[1].replace(",", "")) * {"k": 1000, "m": 1_000_000}.get(match[2].lower(), 1))
+    if role == "target":
+        numbers = []
+        for match in re.finditer(r"\b(?:targets?|tp\d*|take.profit)\b\s*(?:are\s+|at\s+)?[:=@-]?\s*\$?\s*(\d[\d,]*(?:\.\d+)?)([kKmM]?)", evidence, re.I):
+            if not evidence[match.end():].lstrip().startswith("%"):
+                numbers.append(float(match[1].replace(",", "")) * {"k": 1000, "m": 1_000_000}.get(match[2].lower(), 1))
+    if role == "target" and text is not None:
+        first = re.search(r"\b(?:targets?|tp\d*|take.profit)\b\s*(?:are\s+|at\s+)?[:=@-]?\s*\$?\s*(\d[\d,]*(?:\.\d+)?)([kKmM]?)", evidence, re.I)
+        if first:
+            if not evidence[first.end():].lstrip().startswith("%"):
+                return float(first[1].replace(",", "")) * {"k": 1000, "m": 1_000_000}.get(first[2].lower(), 1)
+    return next((n for n in numbers if abs(value - n) <= max(0.01, abs(value) * 0.00001)), None)
+
+
 def merge_chart(parsed, chart):
     """Fold a vision/chart extraction into the text-extracted signal dict.
     Image data only FILLS GAPS — text-stated values win. Chart-only fields
     (tp1/tp2/trend/chart_notes) are added. Returns True if anything improved."""
     if not parsed or not chart:
         return False
+    if chart.get("chart_kind") != "price_chart":
+        return False
+    chart = dict(chart)
+    evidence = chart.get("level_evidence") or {}
+    for key, role in (("stop_loss", "stop_loss"), ("tp1", "target"), ("tp2", "target")):
+        chart[key] = _grounded_price(chart.get(key), evidence.get(key), role)
+    sources = parsed.setdefault("level_sources", {})
     improved = False
     # ticker / stop_loss: backfill only when text gave nothing.
     if not parsed.get("ticker") and chart.get("ticker"):
@@ -586,10 +716,12 @@ def merge_chart(parsed, chart):
         improved = True
     if parsed.get("stop_loss") is None and chart.get("stop_loss") is not None:
         parsed["stop_loss"] = chart["stop_loss"]
+        sources["stop_loss"] = {"source": "chart", "evidence": evidence.get("stop_loss")}
         improved = True
     # target: text `target`, else the chart's first take-profit.
     if parsed.get("target") is None and chart.get("tp1") is not None:
         parsed["target"] = chart["tp1"]
+        sources["target"] = {"source": "chart", "evidence": evidence.get("tp1")}
         improved = True
     # Chart-only enrichments (always recorded when present).
     for k in ("tp1", "tp2", "trend", "chart_notes"):
@@ -610,13 +742,18 @@ def promote_with_chart(parsed, chart):
     if parsed.get("action") != "none" or not parsed.get("ticker"):
         return False
     trend = chart.get("trend")
+    if chart.get("chart_kind") != "price_chart":
+        return False
     if trend == "bullish":
         parsed["action"] = "buy"
+        parsed["side"] = "long"
     elif trend == "bearish":
         parsed["action"] = "sell"
-        parsed["sell_kind"] = "full"
+        parsed["side"] = "short"
     else:
         return False
+    parsed.update(event_kind="setup", position_action="open", entry_status="setup",
+                  sell_kind=None, execution_evidence=None)
     # Chart-only calls are inherently softer; medium keeps them out of the
     # low/none confidence gate so they still register as positions.
     if parsed.get("confidence") in (None, "none", "low"):
@@ -681,15 +818,15 @@ def record_from_parsed(account, tw, parsed):
     it isn't an actionable signal. Shared by the real-time and batch paths."""
     if not parsed:
         return None
-    if parsed["action"] == "none" or not parsed.get("ticker"):
+    if parsed.get("action") == "none" and parsed.get("event_kind") not in ("recap", "setup", "review"):
+        return None
+    if not parsed.get("ticker"):
         return None
     parsed["size_pct"] = _sane_size_pct(parsed.get("size_pct"))
-    _asset = parsed.get("asset_type", "unknown")
-    _ref = _crypto_ref(parsed.get("entry_price"),
-                       parsed.get("tp1"), parsed.get("tp2"))
-    _stop = _sane_crypto_level(parsed.get("stop_loss"), _ref, _asset)
-    _target = _sane_crypto_level(parsed.get("target"), _ref, _asset)
-    return {
+    _stop = parsed.get("stop_loss")
+    _target = parsed.get("target")
+    now = datetime.now(timezone.utc).isoformat()
+    record = {
         "account": account,
         "source_type": SOURCE_TYPE.get(account, "portfolio"),
         "portfolio": parsed.get("portfolio"),
@@ -697,6 +834,7 @@ def record_from_parsed(account, tw, parsed):
         "timestamp": tw.get("created_at"),
         "signal_type": parsed["action"],
         "side": parsed.get("side"),
+        "model_side": parsed.get("side"),
         "position_action": parsed.get("position_action"),
         "entry_status": parsed.get("entry_status"),
         "sell_kind": parsed.get("sell_kind"),
@@ -720,28 +858,83 @@ def record_from_parsed(account, tw, parsed):
         "has_chart": bool(tw.get("media")),
         "url": f"https://x.com/{account}/status/{tw['id']}",
         "text": tw.get("text", ""),
+        "event_kind": parsed.get("event_kind"),
+        "execution_evidence": parsed.get("execution_evidence"),
+        "entry_trigger": parsed.get("entry_trigger"),
+        "exit_price": parsed.get("exit_price"),
+        "exit_fraction": parsed.get("exit_fraction"),
+        "level_sources": parsed.get("level_sources", {}),
+        "published_at": tw.get("created_at"),
+        "first_observed_at": tw.get("first_observed_at") if "first_observed_at" in tw else now,
+        "extracted_at": now,
+        "model": MODEL,
+        "prompt_version": "signal-v3",
+        "prompt_fingerprint": PROMPT_FINGERPRINT,
+        "parser_fingerprint": PARSER_FINGERPRINT,
+        "reply_to_tweet_id": tw.get("reply_to_tweet_id"),
+        "conversation_id": tw.get("conversation_id"),
+        "thread_context": tw.get("thread_context"),
+        "media": tw.get("media", []),
     }
+    record = normalize_event(record)
+    if record["event_kind"] == "commentary":
+        return None
+    if not record["tickers"]:
+        return None
+    record["signal_id"] = f"{tw['id']}:{record['tickers'][0]}:{record['event_kind']}"
+    return record
+
+
+def build_signals(account, tw, interp):
+    tweet_date = (tw.get("created_at") or "")[:10]
+    text = tw.get("text", "")
+    interp.thread_context = tw.get("thread_context")
+    parsed = interp.extract(text, account, tweet_date)
+    if parsed is None:
+        return []
+    interp.last_decision = copy.deepcopy(parsed)
+    entries = [parsed, *parsed.get("additional_signals", [])]
+    records = []
+    for parsed in entries:
+        parsed = copy.deepcopy(parsed)
+        context = tw.get("thread_context") or {}
+        context_symbols = context.get("tickers") or []
+        if not parsed.get("ticker") and len(context_symbols) == 1:
+            parsed["ticker"] = context_symbols[0]
+        explicit = set(re.findall(r"\$([A-Z][A-Z0-9.]*)", text))
+        if len(context_symbols) > 1 and parsed.get("ticker") not in explicit and parsed.get("event_kind") in ("entry", "add", "trim", "exit", "holding"):
+            parsed.update(event_kind="review", entry_status="review", execution_evidence=None)
+        sources = parsed.setdefault("level_sources", {})
+        proof = parsed.get("level_evidence") or {}
+        for key in ("entry_price", "stop_loss", "target", "exit_price"):
+            parsed[key] = _grounded_price(parsed.get(key), proof.get(key), key, text)
+            if parsed[key] is not None:
+                sources[key] = {"source": "text", "evidence": proof[key]}
+        # Explicitly labelled chart levels may enrich this instrument's idea.
+        # A bare chart may become a setup, never an executed holding.
+        actionable = parsed["action"] != "none" and parsed.get("ticker")
+        bare_chart = bool(re.fullmatch(r"\s*\$[A-Za-z][A-Za-z0-9.]*\s*(?:https?://\S+\s*)?", text))
+        if (SOURCE_TYPE.get(account) == "influencer" and tw.get("media")
+                and parsed.get("event_kind") != "recap"
+                and (parsed.get("event_kind") != "commentary" or bare_chart)
+                and (actionable or _mentions_asset(parsed, text))):
+            chart = interp.extract_chart(tw["media"], text, account, tweet_date)
+            # Never attach another instrument's chart levels to this event.
+            if chart and chart.get("ticker") and parsed.get("ticker") and chart["ticker"].lstrip("$").upper() != parsed["ticker"].lstrip("$").upper():
+                chart = None
+            merge_chart(parsed, chart)
+            if not actionable:
+                promote_with_chart(parsed, chart)
+        record = record_from_parsed(account, tw, parsed)
+        if record:
+            records.append(record)
+    return records
 
 
 def build_signal(account, tw, interp):
-    tweet_date = (tw.get("created_at") or "")[:10]
-    text = tw.get("text", "")
-    parsed = interp.extract(text, account, tweet_date)
-    if parsed is None:
-        return None
-    # Influencer chart-image pass (Gemini vision). Runs when the tweet carries a
-    # photo AND either (a) the text pass already yielded an actionable signal —
-    # vision backfills its chart-only levels — or (b) the text was NOT actionable
-    # but an asset is plausibly in play (ticker/cashtag): the annotated chart may
-    # BE the signal, so a clearly-directional chart can promote it to a trade.
-    actionable = parsed and parsed["action"] != "none" and parsed.get("ticker")
-    if (SOURCE_TYPE.get(account) == "influencer" and tw.get("media")
-            and (actionable or _mentions_asset(parsed, text))):
-        chart = interp.extract_chart(tw["media"], text, account, tweet_date)
-        merge_chart(parsed, chart)
-        if not actionable:
-            promote_with_chart(parsed, chart)
-    return record_from_parsed(account, tw, parsed)
+    """Compatibility wrapper for callers interested in the first event."""
+    records = build_signals(account, tw, interp)
+    return records[0] if records else None
 
 
 def should_send_to_llm(tw):
@@ -878,6 +1071,9 @@ def _normalize_getxapi(tw):
         # own signals (see foreign_author()).
         "author": (tw.get("author") or {}).get("userName"),
         "media": media,
+        "reply_to_tweet_id": tw.get("inReplyToStatusId") or tw.get("inReplyToId"),
+        "conversation_id": tw.get("conversationId"),
+        "first_observed_at": datetime.now(timezone.utc).isoformat(),
     }
 
 
@@ -997,13 +1193,15 @@ def main():
     # OTHER account's, then re-interpret it from its snapshot. A live --account
     # run must NOT drop (the incremental since_id fetch won't re-add history), so
     # it just restricts the loop and adds incrementally.
-    if args.account and args.backfill:
-        existing = [r for r in load_ledger(TRADES_FILE, [])
-                    if r.get("account") != args.account]
-    else:
-        existing = [] if (args.backfill or args.dry_run) \
-            else load_ledger(TRADES_FILE, [])
-    seen_ids = {r["tweet_id"] for r in existing}
+    existing = [] if args.dry_run else load_ledger(TRADES_FILE, [])
+    decisions_file = os.path.join(os.path.dirname(TRADES_FILE), "data", "signal_decisions.json")
+    decisions = [] if args.dry_run else load_ledger(decisions_file, [])
+    source_posts = {(r["account"], str(r["tweet_id"])): r for r in [*existing, *decisions]}
+    seen_ids = {r["tweet_id"] for r in existing} | {r["tweet_id"] for r in decisions
+        if r.get("prompt_fingerprint") == PROMPT_FINGERPRINT and r.get("parser_fingerprint") == PARSER_FINGERPRINT}
+    if args.backfill:
+        seen_ids = set()  # replace only IDs actually present in the snapshot
+    replacement_keys = set()
     run_state = {} if args.dry_run else state    # throwaway state in dry-run
     accounts = [args.account] if args.account else ACCOUNTS
 
@@ -1054,18 +1252,17 @@ def main():
             if not args.backfill else []
         retry_ids = {tw["id"] for tw in pending}
         tweets = list({tw["id"]: tw for tw in [*tweets, *pending]}.values())
+        for tw in tweets:
+            if not foreign_author(account, tw):
+                source_posts[(account, str(tw["id"]))] = tw
         still_pending = []
         new, skipped, sell_cand, foreign, seen, retweet = 0, 0, 0, 0, 0, 0
         for tw in tweets:
             if tw["id"] in seen_ids:
                 continue
-            # Already processed in a prior run (id at/below the high-water mark):
-            # skip BEFORE the LLM so non-signal tweets aren't re-interpreted.
-            if (prior_newest and str(tw["id"]).isdigit()
-                    and int(tw["id"]) <= int(prior_newest)
-                    and tw["id"] not in retry_ids):
-                seen += 1
-                continue
+            # A lower ID is not proof we processed it: newly fetched own replies
+            # and posts revealed behind pins can be older than newest_id.
+            # Successful rejection decisions now provide durable dedup too.
             # Drop thread replies authored by OTHER users (tweets_and_replies
             # returns the whole conversation). Without this a follower's reply
             # is mis-extracted as the account's own signal.
@@ -1095,14 +1292,43 @@ def main():
                     skipped += 1
                     continue
             errors_before = interp.errors
-            sig = build_signal(account, tw, interp)
+            tw.setdefault("first_observed_at", None if args.backfill else now.isoformat())
+            earlier = next((r.get("first_observed_at") for r in decisions
+                            if r.get("account") == account and r.get("tweet_id") == tw["id"] and r.get("first_observed_at")), None)
+            if earlier:
+                tw["first_observed_at"] = min(earlier, tw.get("first_observed_at") or earlier)
+            parent_id = tw.get("reply_to_tweet_id") or tw.get("conversation_id")
+            parent = source_posts.get((account, str(parent_id)))
+            if parent is None and tw.get("conversation_id"):
+                parent_id = tw["conversation_id"]
+                parent = source_posts.get((account, str(parent_id)))
+            if parent and str(parent_id) != str(tw["id"]):
+                symbols = parent.get("tickers") or list(dict.fromkeys(
+                    s for s in re.findall(r"\$([A-Z][A-Z0-9.]*)", parent.get("text") or "") if not is_junk_ticker(s)))
+                if symbols:
+                    tw["thread_context"] = dict(tweet_id=str(parent_id), tickers=symbols,
+                        side=parent.get("side"), text=(parent.get("text") or "")[:1200])
+            sigs = build_signals(account, tw, interp)
             if interp.errors > errors_before:
                 still_pending.append(tw)
                 continue
-            if sig:
-                all_new.append(sig)
-                seen_ids.add(tw["id"])
-                new += 1
+            if args.backfill:
+                replacement_keys.add((account, tw["id"]))
+            decision = {
+                "account": account, "tweet_id": tw["id"], "published_at": tw.get("created_at"),
+                "first_observed_at": tw.get("first_observed_at"), "text": tw.get("text", ""),
+                "media": tw.get("media", []), "reply_to_tweet_id": tw.get("reply_to_tweet_id"),
+                "conversation_id": tw.get("conversation_id"), "thread_context": tw.get("thread_context"),
+                "extracted_at": datetime.now(timezone.utc).isoformat(), "model": MODEL,
+                "prompt_version": "signal-v3", "accepted_signal_ids": [s["signal_id"] for s in sigs],
+                "prompt_fingerprint": PROMPT_FINGERPRINT, "parser_fingerprint": PARSER_FINGERPRINT,
+                "decision": getattr(interp, "last_decision", None),
+                "reason": "classified" if sigs else "no_grounded_trade_or_setup",
+            }
+            decisions.append(decision)
+            all_new.extend(sigs)
+            seen_ids.add(tw["id"])
+            new += len(sigs)
         if not (args.backfill or args.dry_run):
             run_state.setdefault(account, {})["pending_tweets"] = still_pending
         total_skipped += skipped
@@ -1137,6 +1363,10 @@ def main():
 
     if args.backfill and (interp.errors or fetch_failures) and not args.dry_run:
         raise RuntimeError("Backfill incomplete; preserving the existing trades ledger")
+    if args.backfill:
+        existing = [r for r in existing if (r.get("account"), r.get("tweet_id")) not in replacement_keys]
+        # Keep the latest reviewed decision per account/tweet.
+        decisions = list({(r["account"], r["tweet_id"]): r for r in decisions}.values())
     merged = existing + all_new
     merged.sort(key=lambda r: r.get("timestamp") or "", reverse=True)
     if args.dry_run:
@@ -1148,6 +1378,8 @@ def main():
     else:
         write_json_atomic(TRADES_FILE, merged)    # atomic: temp + os.replace
         reconcile(TRADES_FILE, POSITIONS_FILE)    # fold events -> positions.json
+        os.makedirs(os.path.dirname(decisions_file), exist_ok=True)
+        write_json_atomic(decisions_file, decisions)
         if not args.backfill:
             # Heartbeat: the dashboard reads this to flag stale data if a cron
             # run stops succeeding.

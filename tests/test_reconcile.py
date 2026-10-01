@@ -35,6 +35,8 @@ def _event(account, ticker, signal_type, ts, **kw):
         "target": kw.get("target"),
         "trade_date": kw.get("trade_date"),
         "url": "http://x",
+        "text": kw.get("text", {"buy": "Bought " + ticker, "sell": "Sold " + ticker, "position": "I am holding " + ticker}[signal_type]),
+        "exit_fraction": kw.get("exit_fraction"),
     }
     return e
 
@@ -81,9 +83,8 @@ def test_sell_partial_reduces_keeps_open():
     assert p["size_pct"] == 4
 
 
-def test_trim_halves_when_no_size():
-    """The old bug: a trim (partial sell) without a stated size must REDUCE,
-    not fully close. Defaults to ~half."""
+def test_unknown_trim_does_not_invent_half_a_position():
+    """Unknown trim quantity stays unknown, preserving the last stated size."""
     pos = _run([
         _event("grkportfolio", "NVDA", "buy", "2026-01-01T00:00:00Z",
                portfolio="grok", size=8),
@@ -92,7 +93,8 @@ def test_trim_halves_when_no_size():
     ])
     p = pos[("grkportfolio", "grok", "NVDA")]
     assert p["status"] == "open"
-    assert p["size_pct"] == 4.0
+    assert p["size_pct"] == 8
+    assert p["remaining_fraction"] is None
 
 
 def test_null_portfolio_maps_to_account_default(monkeypatch):
@@ -197,9 +199,9 @@ def test_duplicate_tweet_id_ignored():
         _event("grkportfolio", "NVDA", "buy", "2026-01-01T00:00:00Z",
                portfolio="grok", size=8, tweet_id="t1"),
         _event("grkportfolio", "NVDA", "sell", "2026-02-01T00:00:00Z",
-               portfolio="grok", sell_kind="partial", tweet_id="t2"),
+               portfolio="grok", sell_kind="partial", exit_fraction=0.5, tweet_id="t2"),
         _event("grkportfolio", "NVDA", "sell", "2026-02-01T00:00:00Z",
-               portfolio="grok", sell_kind="partial", tweet_id="t2"),  # dup
+               portfolio="grok", sell_kind="partial", exit_fraction=0.5, tweet_id="t2"),  # dup
     ])
     p = pos[("grkportfolio", "grok", "NVDA")]
     assert p["status"] == "open"

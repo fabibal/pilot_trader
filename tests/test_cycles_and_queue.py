@@ -13,6 +13,8 @@ from ingestion_queue import PendingInputs
 
 
 def event(id, action, **kwargs):
+    default = 'Covered $TEST' if kwargs.get('side') == 'short' and kwargs.get('position_action') == 'close' else 'Shorted $TEST' if kwargs.get('side') == 'short' else {'buy': 'Bought $TEST', 'sell': 'Sold $TEST', 'position': 'I am holding $TEST'}[action]
+    kwargs.setdefault('text', default)
     return dict(account='traderstewie', tickers=['TEST'], portfolio=None,
                 tweet_id=id, timestamp=f'2026-01-{id.zfill(2)}T12:00:00Z',
                 signal_type=action, confidence='high', **kwargs)
@@ -118,7 +120,8 @@ def test_x_failed_post_retried_after_leaving_window(tmp_path, monkeypatch):
 def test_dashboard_scores_archived_cycles_and_excludes_setups(monkeypatch):
     import dashboard as dash
     old = dict(account='traderstewie', ticker='TEST', status='closed', opened_at='2026-01-01',
-               closed_at='2026-01-02', entry_price=100, side='long')
+               closed_at='2026-01-02', entry_price=100, side='long', entry_status='confirmed', asset_type='stock',
+               exit_fills=[{'price': 110, 'fraction': 1}])
     current = dict(old, status='open', opened_at='2026-01-03', prior_cycles=[old])
     setup = dict(old, status='setup', entry_status='setup')
     monkeypatch.setattr(dash, 'get_ohlc', lambda *a, **k: None)

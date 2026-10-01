@@ -48,7 +48,7 @@ def test_levels_already_past_the_entry_resolve_as_inconsistent():
     # Consistent levels, or no entry to judge against, resolve on the path as before.
     sane = {'trade_date': '2020-01-01', 'side': 'long', 'target': 120, 'stop_loss': 90}
     assert resolver.resolve_position(sane, history, entry=100)['status'] == resolver.HIT_TARGET
-    assert resolver.resolve_position(long_low_target, history)['status'] == resolver.HIT_TARGET
+    assert resolver.resolve_position(long_low_target, history)['status'] == resolver.UNPRICED
 
 
 def test_inconsistent_calls_are_counted_but_never_decided():

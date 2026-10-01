@@ -94,13 +94,15 @@ def test_monitor_retries_saved_payload_after_it_leaves_feed(tmp_path, monkeypatc
     monkeypatch.setattr(monitor, '_report_staleness', lambda _: None)
     monkeypatch.setattr(monitor.sys, 'argv', ['monitor.py', '--account', 'IncomeSharks'])
     state.write_text(json.dumps({'IncomeSharks': {'newest_id': '10'}, '_last_run': 'old'}))
-    failed = {'id': '11', 'text': 'A call', 'created_at': '2026-09-01T00:00:00Z'}
+    failed = {'id': '11', 'text': 'Bought $BTC at $100', 'created_at': '2026-09-01T00:00:00Z'}
     newer = {'id': '12', 'text': 'Nothing', 'created_at': '2026-09-02T00:00:00Z'}
     fetch = Mock(side_effect=[([newer, failed], 1), ([], 1)])
     monkeypatch.setattr(monitor, 'fetch_getxapi', fetch)
     valid = schema_value(monitor.SIGNAL_SCHEMA)
     valid.update(action='buy', ticker='BTC', asset_type='crypto', entry_price=100,
-                 confidence='high', trade_date='2026-09-01')
+                 confidence='high', trade_date='2026-09-01', event_kind='entry',
+                 execution_evidence='Bought $BTC at $100')
+    valid['level_evidence']['entry_price'] = 'Bought $BTC at $100'
     neutral = dict(valid, action='none')
     client = SimpleNamespace(models=SimpleNamespace(generate_content=Mock(
         side_effect=[response(neutral), response(None), response(valid)])))
@@ -280,7 +282,7 @@ def test_forecast_wrong_shape_is_preserved(tmp_path):
 
 def test_optional_chart_failure_keeps_text_signal():
     valid = schema_value(monitor.SIGNAL_SCHEMA)
-    valid.update(action='sell', ticker='BTC', confidence='high')
+    valid.update(action='sell', ticker='BTC', confidence='high', event_kind='exit', execution_evidence='Sold $BTC')
     interp = SimpleNamespace(extract=Mock(return_value=valid), extract_chart=Mock(return_value=None))
     signal = monitor.build_signal('IncomeSharks', {'id': '123', 'text': 'Sold $BTC', 'media': ['photo']}, interp)
     assert signal['signal_type'] == 'sell'

@@ -21,6 +21,7 @@ Run with the project venv:
 """
 
 import glob
+import copy
 import json
 import os
 import re
@@ -38,6 +39,8 @@ from dash import (Dash, dash_table, dcc, html, Input, Output, State, ALL,
                   no_update)
 
 import resolver
+import evaluation
+from signal_semantics import is_junk_ticker
 
 HOME = "/home/fbazsa/pilot_trader"
 TRADES_FILE = "/home/fbazsa/pilot_trader/trades.json"
@@ -193,7 +196,7 @@ _NOT_TICKERS = {"NONE", "NYMO"}
 
 
 def _is_ticker(ticker):
-    return bool(ticker) and ticker.lstrip("$").upper() not in _NOT_TICKERS
+    return not is_junk_ticker(ticker)
 
 
 def influencer_positions(positions):
@@ -394,31 +397,66 @@ def warm_prices(symbols, max_age=PRICE_TTL):
 
 
 # --- entry price -------------------------------------------------------------
-# A stated entry further than this from the trade date's close is a recap of an
-# old fill, not the price the call was made at.
-RECAP_TOLERANCE = 0.30
-
-
 def _trade_date(p):
     return p.get("trade_date") or (p.get("opened_at") or "")[:10] or None
 
 
 def _entry_for(p, max_age=PRICE_TTL):
-    """(entry, estimated) for a call. The stated entry_price wins unless it is
-    more than RECAP_TOLERANCE away from the close on the trade date: then the
-    tweet quoted an old fill (IncomeSharks' 'HOOD from $8' on a day HOOD closed
-    at $84.84) and the call is priced from that close instead, marked
-    estimated like any call without a stated entry."""
+    """Source-grounded fill, else first regular open after availability.
+
+    Reported fills are adjusted for splits; an arbitrary price-distance rule
+    must never replace them with another day's close.
+    """
+    if p.get("asset_type") not in ("stock", "crypto"):
+        return None, False
     sym = _yf_symbol(p.get("ticker"), p.get("asset_type") or "unknown")
     tdate = _trade_date(p)
-    close = get_hist_close(sym, tdate, max_age=max_age) if tdate else None
+    hist = get_ohlc(sym, tdate, max_age=max_age) if tdate else None
+    if not p.get("_split_adjusted"):
+        p = _adjust_splits(p, hist)
     stated = p.get("entry_price")
     # NaN-guard: pandas coerces a JSON null entry_price to truthy NaN.
     if isinstance(stated, (int, float)) and stated == stated and stated > 0:
-        if close and abs(stated / close - 1) > RECAP_TOLERANCE:
-            return close, True
         return stated, False
-    return close, close is not None
+    available = p.get("first_observed_at") or p.get("published_at") or p.get("opened_at")
+    dt = evaluation.instant(available)
+    if dt and hist is not None and "Open" in hist:
+        for day, row in hist.sort_index().iterrows():
+            if evaluation.session_open(day, p.get("asset_type") or "stock") > dt:
+                px = row.get("Open")
+                if px is not None and px == px and px > 0:
+                    return float(px), True
+                return None, False
+    return None, False
+
+
+def _adjust_splits(position, history):
+    """Yahoo OHLC is split-adjusted; dated source prices must use that scale."""
+    p = copy.deepcopy(position)
+    p["_split_adjusted"] = True
+    if history is None or "Stock Splits" not in history:
+        return p
+    def factor(timestamp):
+        dt = evaluation.instant(timestamp)
+        day = dt.astimezone(evaluation.NEW_YORK).date().isoformat() if dt else (timestamp or "")[:10]
+        result = 1.0
+        for d, ratio in history["Stock Splits"].items():
+            if day and str(d)[:10] > day and ratio and ratio == ratio:
+                result /= float(ratio)
+        return result
+    initial = factor(p.get("trade_date") or p.get("opened_at"))
+    for field in ("entry_price", "target", "stop_loss"):
+        if p.get(field) is not None:
+            p[field] *= initial
+    for h in p.get("level_history", []):
+        scale = factor(h.get("effective_at"))
+        for field in ("target", "stop_loss"):
+            if h.get(field) is not None:
+                h[field] *= scale
+    for fill in p.get("exit_fills", []):
+        if fill.get("price") is not None:
+            fill["price"] *= factor(fill.get("timestamp"))
+    return p
 
 
 _ohlc_cache = {}   # (symbol, start) -> (DataFrame[High,Low] | None, ts)
@@ -435,9 +473,9 @@ def get_ohlc(symbol, start_date, max_age=PRICE_TTL):
         return hit[0]
     df = None
     try:
-        hist = yf.Ticker(symbol).history(start=start_date)
+        hist = yf.Ticker(symbol).history(start=start_date, auto_adjust=False)
         if not hist.empty:
-            hist = hist[["High", "Low"]].copy()
+            hist = hist[["Open", "High", "Low", "Close", *(["Stock Splits"] if "Stock Splits" in hist else [])]].copy()
             hist.index = hist.index.strftime("%Y-%m-%d")
             df = hist[~hist.index.duplicated(keep="last")].sort_index()
     except Exception:
@@ -484,6 +522,7 @@ INFLUENCER_TABLE_COLUMNS = [
     {"name": "ACTION", "id": "signal_type"},
     {"name": "SIDE", "id": "side"},
     {"name": "ENTRY STATUS", "id": "entry_status"},
+    {"name": "EVENT", "id": "event_kind"},
     {"name": "CONF", "id": "confidence"},
     {"name": "ENTRY $", "id": "entry_price"},
     {"name": "STOP $", "id": "stop_loss"},
@@ -578,6 +617,7 @@ def influencer_signals_data(df, account=None):
             "signal_type": _s(r.get("position_action")) if isinstance(r.get("position_action"), str) else r.get("signal_type"),
             "side": _s(r.get("side")),
             "entry_status": _s(r.get("entry_status")),
+            "event_kind": _s(r.get("event_kind")),
             "confidence": r.get("confidence"),
             "entry_price": _m(r.get("entry_price")),
             "stop_loss": _m(r.get("stop_loss")),
@@ -597,6 +637,62 @@ _STATUS_LABEL = {resolver.HIT_TARGET: ("target hit", "green"),
                  resolver.CLOSED_WIN: ("closed (win)", "green"),
                  resolver.CLOSED_LOSS: ("closed (loss)", "red"),
                  resolver.INCONSISTENT: ("bad levels", "yellow")}
+_STATUS_LABEL.update({resolver.UNPRICED: ("unpriced", "yellow"),
+                      resolver.CLOSED_FLAT: ("closed (flat)", "dim")})
+
+
+def influencer_replays(positions, account, max_age=PRICE_TTL):
+    candidates = [c for p in positions for c in [*p.get("prior_cycles", []), p]
+                  if c.get("account") == account and _is_ticker(c.get("ticker"))
+                  and c.get("entry_status") in ("confirmed", "setup")
+                  and c.get("status") in ("open", "closed", "setup")]
+    starts = {}
+    for p in candidates:
+        if p.get("asset_type") not in ("stock", "crypto"):
+            continue
+        date = (p.get("published_at") or p.get("opened_at") or
+                (p.get("signals") or [{}])[0].get("timestamp") or "")[:10]
+        if date:
+            sym = _yf_symbol(p["ticker"], p.get("asset_type") or "unknown")
+            starts[sym] = min(date, starts.get(sym, date))
+    history = {s: get_ohlc(s, d, max_age=max_age) for s, d in starts.items()}
+    first = min(starts.values()) if starts else None
+    benchmarks = {s: get_ohlc(s, first, max_age=max_age) for s in
+                  {"BTC-USD" if p.get("asset_type") == "crypto" else "QQQ" for p in candidates}} if first else {}
+    publication, observed, latencies = [], [], []
+    for p in candidates:
+        symbol = _yf_symbol(p["ticker"], p.get("asset_type") or "unknown")
+        reference = "BTC-USD" if p.get("asset_type") == "crypto" else "QQQ"
+        kwargs = dict(benchmark=benchmarks.get(reference))
+        original = evaluation.replay(p, history.get(symbol), **kwargs)
+        delayed = evaluation.replay(p, history.get(symbol), observed=True, **kwargs)
+        original["benchmark_symbol"] = reference
+        delayed["benchmark_symbol"] = reference
+        publication.append((p, original)); observed.append((p, delayed))
+        published = evaluation.instant(p.get("published_at") or p.get("opened_at"))
+        seen = evaluation.instant(p.get("first_observed_at"))
+        if published and seen and seen >= published:
+            latencies.append((seen - published).total_seconds() / 60)
+    unique = evaluation.deduplicate_replays(publication)
+    return dict(publication=unique, observed=evaluation.deduplicate_replays(observed),
+                duplicates=len(publication) - len(unique), latencies=latencies)
+
+
+def _replay_table(replays):
+    rows = []
+    for p, r in replays["publication"]:
+        sig = (p.get("signals") or [{}])[0]
+        rows.append(((p["ticker"] + (" SHORT" if p.get("side") == "short" else ""), C["blue"]),
+            _local_date(p.get("published_at") or p.get("opened_at") or sig.get("timestamp")) or "—",
+            r.get("entry_date") or "—", r.get("exit_date") or "—",
+            (_fmt_pct(r.get("gross_pct")), _color(r.get("gross_pct"))),
+            (_fmt_pct(r.get("net_pct")), _color(r.get("net_pct"))),
+            _fmt_pct(r.get("benchmark_pct")), _fmt_pct(r.get("adverse_pct")),
+            r["status"], html.A("↗", href=_safe_href(sig.get("url")), target="_blank", rel="noopener noreferrer")))
+    rows.sort(key=lambda r: r[1], reverse=True)
+    return html.Details([html.Summary("5-session idea replay — all evaluated windows", style={"cursor": "pointer", "padding": "8px 0"}),
+        _table(["Ticker", "Published", "Entry", "Exit", "Gross", "Net*", "Benchmark", "Adverse", "Status", "Source"], rows,
+               empty="No eligible ideas", hide_sm={1, 2, 3, 6, 7})])
 
 
 def influencer_resolutions(positions, account=None, max_age=PRICE_TTL):
@@ -612,15 +708,29 @@ def influencer_resolutions(positions, account=None, max_age=PRICE_TTL):
     cycles = [cycle for position in positions
               for cycle in [*position.get("prior_cycles", []), position]]
     for p in influencer_positions(cycles):
+        if p.get("entry_status") != "confirmed":
+            continue
         status = p.get("status")
         if status not in ("open", "closed"):
             continue
         if account and p.get("account") != account:
             continue
+        if p.get("asset_type") not in ("stock", "crypto"):
+            out.append((p, {"status": resolver.UNPRICED, "date": None, "price": None}))
+            continue
         sym = _yf_symbol(p["ticker"], p.get("asset_type") or "unknown")
         tdate = _trade_date(p)
         ohlc = get_ohlc(sym, tdate, max_age=max_age) if tdate else None
+        p = _adjust_splits(p, ohlc)
         entry, _ = _entry_for(p, max_age=max_age)
+        p = dict(p)
+        p["evaluation_available_at"] = p.get("first_observed_at") or p.get("published_at") or p.get("opened_at")
+        available = evaluation.instant(p["evaluation_available_at"])
+        if available and ohlc is not None:
+            later = [str(d)[:10] for d in ohlc.index
+                     if evaluation.session_open(d, p.get("asset_type") or "stock") > available]
+            if later:
+                p["evaluation_date"] = min(later)
         if status == "open":
             out.append((p, resolver.resolve_position(p, ohlc, entry=entry)))
             continue
@@ -629,11 +739,13 @@ def influencer_resolutions(positions, account=None, max_age=PRICE_TTL):
         # The influencer's own close still classifies the call by realized
         # return when the path says nothing: no target/stop hit inside the
         # holding window, or levels that were inconsistent from the start.
-        if cdate and (res is None or res["status"] == resolver.INCONSISTENT):
-            res = resolver.resolve_closed(
-                p, entry, get_hist_close(sym, cdate, max_age=max_age), cdate)
-        if res is not None:    # unpriceable closed calls are excluded entirely
-            out.append((p, res))
+        if cdate:
+            fills = p.get("exit_fills") or []
+            valid = p.get("pnl_comparable", True) and fills and all(f.get("price") and f.get("fraction") is not None for f in fills)
+            exit_price = sum(f["price"] * f["fraction"] for f in fills) if valid and abs(sum(f["fraction"] for f in fills) - 1) < 0.00001 else None
+            # Executed exit evidence takes priority over hypothetical barriers.
+            res = resolver.resolve_closed(p, entry, exit_price, cdate) if exit_price else {"status": resolver.UNPRICED, "date": cdate, "price": None}
+        out.append((p, res))
     return out
 
 
@@ -668,7 +780,7 @@ def _win_rate_caveats(resolutions):
             "inconsistent": inconsistent, "total": len(resolutions)}
 
 
-def influencer_winrate_card(resolutions):
+def influencer_winrate_card(resolutions, replays=None):
     s = resolver.win_stats([r for _, r in resolutions])
     c = _win_rate_caveats(resolutions)
     wr = "n/a" if s["win_rate"] is None else f"{s['win_rate']:.0f}%"
@@ -678,11 +790,32 @@ def influencer_winrate_card(resolutions):
     lines = [html.Div(children=[
         html.Span(wr, style={"color": wr_color, "fontWeight": "bold",
                              "fontSize": "1.1rem"}),
-        html.Span(f" win rate  ({s['decided']} decided: "
+        html.Span(f" barrier / reported-close success  ({s['decided']} decided of {s['total']}: "
                   f"{s['hit']} target / {s['stopped']} stopped / "
-                  f"{s['closed_win'] + s['closed_loss']} closed)",
+                  f"{s['closed_win'] + s['closed_loss'] + s['closed_flat']} closed)",
                   style={"color": C["dim"], "fontSize": "0.8rem"}),
     ])]
+    lines.append(html.Div(f"Secondary measure · {s['unpriced']} unpriced · {s['expired']} expired · {s['live']} pending · {s['inconsistent']} bad levels",
+                          style={"color": C["dim"], "fontSize": "0.76rem"}))
+    if replays is not None:
+        stats = evaluation.replay_stats([r for _, r in replays["publication"]])
+        observed = evaluation.replay_stats([r for _, r in replays["observed"]])
+        lines.insert(0, html.Div(f"5-session replay: {stats['scored']} scored / {stats['total']} eligible · "
+            f"{stats['statuses'].get('pending', 0)} pending · {stats['statuses'].get('unpriced', 0) + stats['statuses'].get('instrument_unknown', 0)} unpriced/unknown instrument · "
+            f"{replays['duplicates']} overlapping ideas skipped", style={"color": C["text"], "marginBottom": "5px"}))
+        lines.insert(1, html.Div(f"Next regular open after publication → fifth completed-session close. "
+            f"Net assumes {evaluation.ROUNDTRIP_COST_BPS / 100:.2f}% round-trip cost. "
+            "Conditional ideas assume entry; this is an idea test, not actual fills or a portfolio return. "
+            "Gross benchmark: direction-matched QQQ for stocks, BTC for crypto.",
+            style={"color": C["dim"], "fontSize": "0.76rem", "maxWidth": "850px", "marginBottom": "8px"}))
+        lines.insert(2, html.Div(f"Median net {_fmt_pct(stats['median_net_pct'])} · Worst {_fmt_pct(stats['worst_pct'])} · "
+            f"Profit factor {stats['profit_factor']:.2f}" if stats['profit_factor'] is not None else
+            f"Median net {_fmt_pct(stats['median_net_pct'])} · Worst {_fmt_pct(stats['worst_pct'])} · Profit factor n/a",
+            style={"color": C["text"], "fontSize": "0.8rem", "marginBottom": "6px"}))
+        lines.insert(3, html.Div(f"From first recorded monitor observation: {observed['scored']}/{observed['total']} scored, "
+            f"mean net {_fmt_pct(observed['mean_net_pct'])}; "
+            f"{observed['statuses'].get('observation_unknown', 0)} historical observation times unknown.",
+            style={"color": C["dim"], "fontSize": "0.76rem", "marginBottom": "10px"}))
 
     if c["excluded"]:
         uw_txt = (f"{c['excluded_underwater'] / c['excluded_priced'] * 100:.0f}%"
@@ -744,7 +877,7 @@ def _influencer_returns(account, resolutions):
     return rr
 
 
-def influencer_header_card(account, resolutions=None):
+def influencer_header_card(account, resolutions=None, replays=None):
     """Per-influencer header card: @handle + descriptor + win rate + open call
     count + best performer. A left accent border in the handle's color makes
     each visually distinct."""
@@ -759,14 +892,13 @@ def influencer_header_card(account, resolutions=None):
     wr_txt = "n/a" if wr is None else f"{wr:.0f}%"
     wr_color = C["dim"] if wr is None else (
         C["green"] if wr >= 50 else C["red"])
-    metrics.append(_hdr_metric("win rate", wr_txt, wr_color,
-                               f"{st['decided']} decided, "
-                               f"{st['expired'] + st['live'] + st['inconsistent']}"
-                               f" excl."))
-    metrics.append(_hdr_metric("open calls", str(len(rr)), C["text"]))
-    metrics.append(_hdr_metric("best", best[0] if best else "—",
-                               _color(best[1] if best else None),
-                               _fmt_pct(best[1]) if best else None))
+    stats = evaluation.replay_stats([r for _, r in (replays or {}).get("publication", [])])
+    metrics.append(_hdr_metric("5-session mean net*", _fmt_pct(stats['mean_net_pct']), _color(stats['mean_net_pct']),
+                               f"{stats['scored']}/{stats['total']} windows scored"))
+    positive = f"{stats['positive'] / stats['scored'] * 100:.0f}%" if stats['scored'] else "n/a"
+    metrics.append(_hdr_metric("positive windows", positive, C["text"], f"{stats['positive']} positive of {stats['scored']}"))
+    metrics.append(_hdr_metric("benchmark mean gross", _fmt_pct(stats['mean_benchmark_pct']), C["dim"],
+                               f"{stats['benchmark_n']} matched windows"))
 
     return html.Div(style={
         "background": C["card"], "border": f"1px solid {C['border']}",
@@ -795,7 +927,7 @@ def influencer_positions_table(resolutions):
             continue
         atype = p.get("asset_type") or "unknown"
         entry, est = _entry_for(p)
-        cur = get_price(_yf_symbol(p["ticker"], atype))
+        cur = get_price(_yf_symbol(p["ticker"], atype)) if atype in ("stock", "crypto") else None
         ret = resolver.return_pct(p, entry, cur)
         tdate = p.get("trade_date") or _local_date(p.get("opened_at")) or None
         if res:
@@ -815,8 +947,8 @@ def influencer_positions_table(resolutions):
             status_cell,
         ))
     rows.sort(key=lambda r: r[2], reverse=True)
-    return _table(["Ticker", "Asset", "Trade Date", "Entry", "Current",
-                   "Return %", "Stop", "Target", "Status"], rows,
+    return _table(["Ticker", "Asset", "Source date", "Entry", "Current",
+                   "Price change", "Stop", "Target", "Status"], rows,
                   empty="No open influencer positions",
                   hide_sm={1, 2, 6, 7})   # phones: drop asset/date/stop/target
 
@@ -1231,6 +1363,7 @@ def _yt_frame(video_id, frame):
     link = _video_time_link(video_id, frame.get("timestamp_seconds"))
     image = (html.Img(src=f"/video-frames/{filename}", alt=frame.get("caption") or "Videóábra",
                       style={"width": "100%", "maxWidth": "960px", "height": "auto",
+                             "maxHeight": "540px", "objectFit": "contain", "objectPosition": "left",
                              "borderRadius": "6px", "display": "block"})
              if isinstance(filename, str) and _VIDEO_FRAME_RE.fullmatch(filename) else None)
     if image is None and link is None:
@@ -2896,7 +3029,7 @@ def switch_influencer_subtab(account):
     selected = "trades" if account in INFLUENCER_ACCOUNTS else account
     styles = tuple({"display": "block" if panel == selected else "none"}
                    for panel in panels)
-    headers = ((_influencer_header(f"{account} — Open Positions", account),
+    headers = ((_influencer_header(f"{account} — Reported holdings and outcomes", account),
                 _influencer_header(f"{account} — Signals", account))
                if selected == "trades" else ("", ""))
     return styles + headers
@@ -2969,17 +3102,19 @@ def refresh_influencers(_version, account):
                 kendrick_forecast_section(load_kendrick_forecasts()), [])
     if account == "MakeItCount":
         return ("", [], None, None, [], [], [], [], [], [], [], [], [], [], [],
-                youtube_section(load_makeitcount_summaries(), empty_label="MakeItCount"))
+                youtube_section(load_makeitcount_summaries(), limit=2, empty_label="MakeItCount"))
     positions = load_positions()
     warm_prices({_yf_symbol(p["ticker"], p.get("asset_type") or "unknown")
                  for p in influencer_positions(positions)
                  if p.get("status") == "open"})
     resolutions = influencer_resolutions(positions, account=account)
-    return (influencer_header_card(account, resolutions=resolutions),
+    replays = influencer_replays(positions, account)
+    return (influencer_header_card(account, resolutions=resolutions, replays=replays),
             influencer_signals_data(load_trades(), account=account),
             html.Div([influencer_positions_table(resolutions),
+                      _replay_table(replays),
                       _setups_block(positions, account)]),
-            influencer_winrate_card(resolutions),
+            influencer_winrate_card(resolutions, replays=replays),
             [], [], [], [], [], [], [], [], [], [], [], [])
 
 
@@ -3003,8 +3138,7 @@ def _setups_block(positions, account):
             for ts, p, url in items]
     return html.Details([
         html.Summary([html.Span("▸ ", className="caret"),
-                      f"Setups / needs review ({len(items)}) — excluded from "
-                      f"win rate"],
+                      f"Ideas / needs review ({len(items)}) — no confirmed fills"],
                      style={"color": C["dim"], "fontSize": "0.78rem",
                             "cursor": "pointer", "padding": "8px 2px"}),
         _table(["Date", "Ticker", "Side", "Status", "Target", "Stop", "Tweet"],
@@ -3112,6 +3246,8 @@ def _warm_all():
     try:
         # every cycle's OHLC path and entry/exit closes (incl. the recap check)
         influencer_resolutions(positions, max_age=WARM_MAX_AGE)
+        for account in INFLUENCER_ACCOUNTS:
+            influencer_replays(positions, account, max_age=WARM_MAX_AGE)
     except Exception:
         pass
     for sym in kndr_syms:

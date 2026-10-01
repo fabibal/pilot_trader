@@ -24,7 +24,7 @@ Or import reconcile() from monitor.py after each fetch.
 
 import copy
 import hashlib
-from signal_semantics import semantics
+from signal_semantics import normalize_event, is_junk_ticker, NON_TRADEABLE_TICKERS
 import json
 import os
 import tempfile
@@ -44,31 +44,6 @@ POSITIONS_FILE = os.path.join(HOME, "positions.json")
 # Signals at this confidence are logged to trades.json but must NOT move
 # position state (see confidence gate).
 GATED_CONFIDENCE = {"low", "none"}
-
-# Non-tradeable pseudo-tickers — market indices / commodities / forex / crypto
-# dominance the LLM sometimes lifts from macro commentary. They are NOT
-# positions; reject them so they never enter positions.json.
-NON_TRADEABLE_TICKERS = {
-    "BTCDOMINANCE", "BTC.D", "ETH.D", "USDT.D", "TOTAL", "TOTAL2", "TOTAL3",
-    "DXY", "XAUUSD", "XAGUSD", "SPX", "SPX500", "VIX", "DJI", "DJIA",
-    "US10Y", "US30", "NAS100", "GOLD", "SILVER",
-}
-
-
-def is_junk_ticker(ticker):
-    """True for index/commodity/forex/dominance pseudo-tickers that aren't real
-    positions (BTCDOMINANCE, XAUUSD, DXY, BTC.D, ...). Explicit blocklist plus a
-    couple of unambiguous patterns; conservative to avoid rejecting real equities."""
-    t = (ticker or "").upper().strip()
-    if not t:
-        return True
-    if t in NON_TRADEABLE_TICKERS:
-        return True
-    if t.endswith(".D"):                # crypto dominance (BTC.D, ETH.D, ...)
-        return True
-    if t.startswith(("XAU", "XAG")):    # gold / silver spot pairs (XAUUSD, ...)
-        return True
-    return False
 
 
 def pf_of(account, portfolio):
@@ -94,160 +69,110 @@ def write_json_atomic(path, data):
         raise
 
 
+def fold_events(events):
+    """Pure replay; each setup keeps its own identity and levels over time."""
+    positions, seen = {}, set()
+    for original in sorted(events, key=lambda e: e.get("timestamp") or ""):
+        e = normalize_event(original)
+        if (e.get("confidence") or "").lower() in GATED_CONFIDENCE:
+            continue
+        for ticker in e.get("tickers", []):
+            kind = e["event_kind"]
+            if kind == "commentary":
+                continue
+            account, side = e.get("account"), e.get("side")
+            portfolio = pf_of(account, e.get("portfolio"))
+            tid = e.get("tweet_id") or e.get("timestamp")
+            identity = (account, tid, ticker, kind)
+            if identity in seen:
+                continue
+            seen.add(identity)
+            action, state = e.get("position_action"), e["entry_status"]
+            separate = kind in ("setup", "review", "recap")
+            key = (account, portfolio, ticker, side)
+            if separate:
+                key += (str(tid),)
+            pos = positions.get(key)
+            history = pos.get("prior_cycles", []) if pos else []
+            if pos and pos["status"] == "closed" and action in ("open", "add"):
+                history = history + [{k: copy.deepcopy(v) for k, v in pos.items() if k != "prior_cycles"}]
+                pos = None
+            if pos is None:
+                pos = dict(
+                    schema_version=3,
+                    cycle_id=hashlib.sha256(repr((key, tid)).encode()).hexdigest()[:24],
+                    account=account, portfolio=portfolio, ticker=ticker, side=side,
+                    source_type=e.get("source_type", "portfolio"), asset_type=e.get("asset_type", "unknown"),
+                    entry_status=state, event_kind=kind, status=None, prior_cycles=history,
+                    entry_price=None, stop_loss=None, target=None, size_pct=None, trade_date=None,
+                    opened_at=None, closed_at=None, first_observed_at=None, holding_thesis=None,
+                    signals=[], level_history=[], exit_fills=[], remaining_fraction=1.0,
+                    pnl_comparable=True, level_sources={},
+                )
+                positions[key] = pos
+            pos["signals"].append({k: e.get(k) for k in
+                ("tweet_id", "signal_id", "signal_type", "event_kind", "timestamp", "first_observed_at", "confidence", "url")})
+            if e.get("asset_type") not in (None, "unknown"):
+                pos["asset_type"] = e["asset_type"]
+            if e.get("holding_thesis"):
+                pos["holding_thesis"] = e["holding_thesis"]
+            if separate:
+                pos.update(status=state, published_at=e.get("timestamp"), first_observed_at=e.get("first_observed_at"),
+                           entry_trigger=e.get("entry_trigger"), classification_reason=e.get("classification_reason"))
+                for field in ("entry_price", "stop_loss", "target", "trade_date", "level_sources"):
+                    pos[field] = e.get(field)
+                continue
+            if action in ("open", "add", "hold"):
+                if pos["status"] is None:
+                    pos.update(status="open", opened_at=e.get("timestamp"), first_observed_at=e.get("first_observed_at"))
+                    pos["entry_price"] = e.get("entry_price")
+                    pos["trade_date"] = e.get("trade_date")
+                elif pos["status"] == "closed":
+                    continue  # a holding disclosure does not reopen a cycle
+                elif action == "add" and e.get("entry_price") != pos["entry_price"]:
+                    pos["pnl_comparable"] = False  # unknown size cannot determine average cost
+                if e.get("position_size_pct") is not None:
+                    pos["size_pct"] = e["position_size_pct"]
+                for field in ("target", "stop_loss"):
+                    if e.get(field) is not None:
+                        if pos[field] is None:
+                            pos[field] = e[field]
+                        pos["current_" + field] = e[field]
+                if e.get("target") is not None or e.get("stop_loss") is not None:
+                    pos["level_history"].append(dict(
+                        effective_at=e.get("timestamp"), observed_at=e.get("first_observed_at"),
+                        target=e.get("target"), stop_loss=e.get("stop_loss"), signal_id=e.get("signal_id"),
+                    ))
+                if e.get("level_sources"):
+                    pos["level_sources"].update(e["level_sources"])
+            elif action in ("reduce", "close"):
+                if pos["status"] != "open":
+                    # Keep the unpaired exit visible without inventing an entry.
+                    pos.update(status="review", entry_status="review", classification_reason="unmatched_exit")
+                    continue
+                fraction = e.get("exit_fraction") if action == "reduce" else 1.0
+                if not isinstance(fraction, (int, float)) or isinstance(fraction, bool) or not 0 < fraction <= 1:
+                    fraction = None
+                remaining = pos["remaining_fraction"]
+                weight = remaining * fraction if remaining is not None and fraction is not None else None
+                pos["exit_fills"].append(dict(price=e.get("exit_price"), fraction=weight,
+                    timestamp=e.get("timestamp"), first_observed_at=e.get("first_observed_at"),
+                    signal_id=e.get("signal_id"), level_source=(e.get("level_sources") or {}).get("exit_price")))
+                if action == "close":
+                    pos.update(status="closed", closed_at=e.get("timestamp"), remaining_fraction=0.0)
+                else:
+                    pos["remaining_fraction"] = remaining - weight if weight is not None else None
+                    if e.get("position_size_pct") is not None:
+                        pos["size_pct"] = e["position_size_pct"]
+                    elif pos.get("size_pct") is not None and fraction is not None:
+                        pos["size_pct"] = round(pos["size_pct"] * (1 - fraction), 4)
+    return sorted(positions.values(), key=lambda p: (p.get("account") or "", p["ticker"], p["cycle_id"]))
+
+
 def reconcile(trades_file=TRADES_FILE, positions_file=POSITIONS_FILE):
     with open(trades_file) as f:
         events = json.load(f)
-
-    # chronological order so opens precede closes
-    events.sort(key=lambda e: e.get("timestamp", ""))
-
-    positions = {}
-    seen_tweet_ids = set()
-    for e in events:
-        tickers = e.get("tickers") or []
-        if not tickers:
-            continue
-        # Idempotency guard: each tweet is one signal. monitor.py already dedups
-        # by tweet_id before writing trades.json, but fold defensively here too —
-        # a duplicate partial-sell would otherwise halve size_pct twice.
-        tid = e.get("tweet_id")
-        if tid is not None:
-            if tid in seen_tweet_ids:
-                continue
-            seen_tweet_ids.add(tid)
-        # Confidence gate: low/none-confidence signals stay in trades.json but
-        # must not move position state.
-        if (e.get("confidence") or "").lower() in GATED_CONFIDENCE:
-            continue
-        ticker = tickers[0]
-        # Drop index/commodity/forex pseudo-tickers (not real positions).
-        if is_junk_ticker(ticker):
-            continue
-        account = e.get("account")
-        portfolio = pf_of(account, e.get("portfolio"))
-        side, action, entry_status = semantics(e)
-        key = (account, portfolio, ticker, side)
-        if entry_status in ("setup", "review"):
-            key += (str(tid or e.get("timestamp")),)
-        pos = positions.get(key)
-        if pos and pos["status"] == "closed" and action in ("open", "add"):
-            history = pos.get("prior_cycles", []) + [
-                {k: copy.deepcopy(v) for k, v in pos.items() if k != "prior_cycles"}]
-            pos = None
-        else:
-            history = pos.get("prior_cycles", []) if pos else []
-        if pos is None:
-            pos = {
-                "schema_version": 2,
-                "cycle_id": hashlib.sha256(
-                    repr((key, tid or e.get("timestamp"))).encode()).hexdigest()[:24],
-                "side": side,
-                "entry_status": entry_status,
-                "prior_cycles": history,
-                "account": account,
-                "source_type": e.get("source_type", "portfolio"),
-                "portfolio": portfolio,
-                "ticker": ticker,
-                "asset_type": e.get("asset_type", "unknown"),
-                "status": None,
-                "entry_price": None,
-                "stop_loss": None,
-                "target": None,
-                "size_pct": None,
-                "trade_date": None,
-                "holding_thesis": None,
-                "opened_at": None,
-                "closed_at": None,
-                "signals": [],
-            }
-            positions[key] = pos
-
-        pos["signals"].append({
-            "tweet_id": e.get("tweet_id"),
-            "signal_type": e.get("signal_type"),
-            "timestamp": e.get("timestamp"),
-            "confidence": e.get("confidence"),
-            "url": e.get("url"),
-        })
-
-        # asset_type: upgrade from "unknown" to a concrete value when seen.
-        if e.get("asset_type") and e["asset_type"] != "unknown":
-            pos["asset_type"] = e["asset_type"]
-
-        # holding_thesis: keep the most recent stated conviction reason.
-        if e.get("holding_thesis"):
-            pos["holding_thesis"] = e["holding_thesis"]
-
-        if entry_status in ("setup", "review"):
-            pos["status"] = "setup" if entry_status == "setup" else "review"
-            for field in ("entry_price", "stop_loss", "target", "trade_date"):
-                pos[field] = e.get(field)
-            continue
-        st = {"open": "buy", "add": "buy", "reduce": "sell",
-              "close": "sell", "hold": "position"}.get(action)
-        if st == "buy":
-            if pos["status"] != "open":
-                # A buy that RE-opens a previously closed position starts a
-                # fresh trade cycle: the prior cycle's entry/stop/target/size
-                # must not leak into it (they made re-entry returns compute
-                # off the OLD entry price).
-                if pos["status"] == "closed":
-                    pos["entry_price"] = None
-                    pos["trade_date"] = None
-                    pos["stop_loss"] = None
-                    pos["target"] = None
-                    pos["size_pct"] = None
-                pos["status"] = "open"
-                pos["opened_at"] = e.get("timestamp")
-                pos["closed_at"] = None        # re-opened after a prior close
-            if pos["entry_price"] is None and e.get("entry_price"):
-                pos["entry_price"] = e["entry_price"]
-            if pos["trade_date"] is None and e.get("trade_date"):
-                pos["trade_date"] = e["trade_date"]
-            if e.get("position_size_pct") is not None:
-                pos["size_pct"] = e["position_size_pct"]
-            if e.get("stop_loss") is not None:
-                pos["stop_loss"] = e["stop_loss"]
-            if e.get("target") is not None:
-                pos["target"] = e["target"]
-        elif st == "sell":
-            # A sell only acts on a position ALREADY observed as open. A sell
-            # that is the first event for a ticker (no prior buy/position seen)
-            # is not evidence of a holding we can price or size, so it must NOT
-            # materialize a phantom open/closed record; and a sell never reopens
-            # or mutates a closed cycle (only a buy re-opens).
-            if pos["status"] == "open":
-                if action == "reduce":
-                    # Partial sell (trim/scale-out): stays open, update remaining
-                    # size (disclosed, else assume ~half trimmed).
-                    if e.get("position_size_pct") is not None:
-                        pos["size_pct"] = e["position_size_pct"]
-                    elif pos.get("size_pct") is not None:
-                        pos["size_pct"] = round(pos["size_pct"] / 2, 2)
-                else:                            # full exit closes it
-                    pos["status"] = "closed"
-                    pos["closed_at"] = e.get("timestamp")
-        elif st == "position":
-            # Only a never-seen ticker opens here; a CLOSED position stays
-            # closed (disclosures recap old holdings — only a buy re-opens).
-            if pos["status"] is None:           # disclosure implies it's held
-                pos["status"] = "open"
-                pos["opened_at"] = e.get("timestamp")
-            # A recap must not mutate a CLOSED position's sold-cycle fields.
-            if pos["status"] != "closed":
-                if e.get("position_size_pct") is not None:
-                    pos["size_pct"] = e["position_size_pct"]
-                if pos["entry_price"] is None and e.get("entry_price"):
-                    pos["entry_price"] = e["entry_price"]
-                if pos["trade_date"] is None and e.get("trade_date"):
-                    pos["trade_date"] = e["trade_date"]
-                if e.get("stop_loss") is not None:
-                    pos["stop_loss"] = e["stop_loss"]
-                if e.get("target") is not None:
-                    pos["target"] = e["target"]
-
-    result = sorted(positions.values(),
-                    key=lambda p: (p["account"], p["ticker"]))
+    result = fold_events(events)
     write_json_atomic(positions_file, result)
     return result
 

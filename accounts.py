@@ -23,7 +23,7 @@ ACCOUNTS = ["IncomeSharks", "traderstewie"]
 SOURCE_TYPE = {"IncomeSharks": "influencer", "traderstewie": "influencer"}
 
 # Accounts fetched from the POSTS-ONLY endpoint (no @-replies in the thread).
-POSTS_ONLY_ACCOUNTS = {"traderstewie"}
+POSTS_ONLY_ACCOUNTS = set()
 
 # Account -> default portfolio when the LLM left portfolio null. No account is
 # portfolio-kind any more (see module docstring), so this is permanently empty;

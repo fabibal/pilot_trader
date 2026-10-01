@@ -37,6 +37,9 @@ curiosity, not to give or follow investment advice.
 
 - **Multi-account X/Twitter monitoring** — polls a registry of public human
   trade-call accounts and extracts their calls into positions.
+- **Source-grounded signal types** — distinguishes prospective setups, explicit
+  execution/holding disclosures, recaps and commentary; captures multiple assets
+  and own-thread updates without inventing fills or inheriting earlier prices.
 - **LLM signal extraction** — each tweet is read by Google Gemini under a strict
   JSON schema, yielding ticker, direction, sizing, entry, stop/target, thesis,
   and the *actual trade date* (posts often recap older trades).
@@ -49,10 +52,15 @@ curiosity, not to give or follow investment advice.
   Jesse Olson. Its videos get separate summaries for the published YouTube
   chapters, timestamp links, and up to three useful chart images from the
   actual video. Videos without chapters are organized by topic.
+  MakeItCount processes only the latest two uploads, then picks up new uploads;
+  older channel history is excluded. Its dashboard and current view also use
+  only the latest two analyzed videos.
 - **Consensus view** — every analyst's rolling "current view" (sentiment,
   freshness, stance) side by side on one panel.
 - **Live dashboard** — a dark-themed web app showing trade-call performance
   (win rate, target/stop resolution), holdings, and the research digests.
+  Trade feeds lead with a five-session next-open idea replay, full coverage,
+  matched benchmarks and a stated cost assumption; barrier success is secondary.
 - **Cost-aware by design** — high-water-mark deduplication, pre-LLM gating,
   cheap real-time Gemini calls, and a cheaper third-party tweet source keep the
   monthly LLM/API spend in the low-single-digit-dollar range.
@@ -155,6 +163,10 @@ tests/                 # unit tests (ordering, reconciliation, helpers)
 The [September 2026 audit](docs/audit_2026-09-08.md) documents reliability and
 security fixes, regression coverage, deployment changes, and remaining limits
 on signal completeness and performance statistics.
+
+The [signal-accuracy update](docs/signal_accuracy_2026-09-30.md) describes
+the event/price evidence rules, own-thread handling, historical review,
+15-minute market-hours monitoring and the dashboard's replay assumptions.
 
 ## Security & contributing
 

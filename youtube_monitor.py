@@ -23,9 +23,8 @@ yt-dlp audio download); native video hands the URL to Gemini, which fetches
 it server-side, so that whole class of failure no longer applies. Whatever
 native video CAN fail on gets the same self-heal-by-retry treatment every
 other failure mode here already uses: log, don't mark the video seen, next
-cron run retries. youtube-transcript-api/faster-whisper/yt-dlp stay installed
-but unused (see CLAUDE.md venv note) -- same call already made for ib_insync
-post-IBKR-mirror-removal.
+cron run retries. youtube-transcript-api/faster-whisper remain unused;
+yt-dlp supplies MakeItCount's chapter metadata and selected frame stream.
 
 The summaries file is also the dedup ledger: a video_id already present is
 skipped, so reruns / cron are idempotent (no reprocessing, no double LLM
@@ -59,8 +58,13 @@ Channels (see CHANNELS):
       applies, but it isn't proven over many runs yet -- any video-fetch
       error self-heals the same way (stays unseen, retried next run).
 
-ANALYSIS ONLY: neither channel is in accounts.ACCOUNTS; neither is written to
-trades.json / positions.json; neither is mirrored to IBKR.
+  - makeitcount (@makeitcounthu; Hungarian crypto/stocks/macro/AI commentary)
+      -> data/makeitcount_summaries.json. Separate summaries for supplied
+      YouTube chapters, else actual topics. Optional real chart images use
+      host yt-dlp + FFmpeg; this enrichment never replaces native analysis.
+
+ANALYSIS ONLY: no channel is in accounts.ACCOUNTS or written to
+trades.json / positions.json.
 
   python youtube_monitor.py                       # process new videos, ALL channels
   python youtube_monitor.py --channel jesse_olson  # only this channel
@@ -114,7 +118,7 @@ WATCH_URL = "https://www.youtube.com/watch?v={vid}"
 # same day the pipeline moved from transcript to native video, since agentic
 # video processing needs it (see the module docstring and memory
 # agentic-video-mode-2026-09) and it's also strictly cheaper per token. Shared
-# across channels -- same model/pricing for both, only the prompt persona
+# across channels -- same model/pricing for all, only the prompt persona
 # differs. Also used by generate_current_view() (text-only, unaffected by the
 # video switch) so the whole file runs on one model.
 # max_output_tokens stays high (was sized for thinking + JSON sharing the
@@ -208,7 +212,10 @@ DETAILED_ANALYSIS_BODY = (
     "whose inclusion helps explain a key argument. For each, give the precise "
     "timestamp_seconds at which it is clearly visible and a short Hungarian "
     "caption explaining what the image shows and why it matters. Check the "
-    "actual frame at that time; do not choose a talking head, generic B-roll "
+    "actual frame at that time: choose a fully displayed chart AFTER its "
+    "animation has finished. Describe only what is visibly present in that "
+    "frame; do not claim a table breaks down categories it does not show. "
+    "Do not choose a talking head, generic B-roll "
     "or promotional slide. Empty list if no meaningful visual exists. "
     "Use seconds from the start of the video, never a price or chapter index.\n"
 )
@@ -314,6 +321,7 @@ class Channel:
     # duplicate before it's ever analyzed (see _drop_shorts_duplicates).
     drop_shorts_dupes: bool = False
     detailed_summary: bool = False
+    recent_uploads: int = None     # restrict automatic discovery and current view
 
     @property
     def rss_url(self):
@@ -332,6 +340,10 @@ class Channel:
     @property
     def current_view_system(self):
         return self.persona + " " + CURRENT_VIEW_BODY
+
+    def select_current_view_window(self, summaries):
+        window = _select_current_view_window(summaries)
+        return window[:self.recent_uploads] if self.recent_uploads is not None else window
 
 
 CHANNELS = {c.key: c for c in [
@@ -388,6 +400,7 @@ CHANNELS = {c.key: c for c in [
             "and do not turn non-crypto commentary into a crypto prediction."),
         current_view_file=os.path.join(DATA_DIR, "makeitcount_current_view.json"),
         detailed_summary=True,
+        recent_uploads=2,
     ),
 ]}
 
@@ -570,7 +583,7 @@ def generate_current_view(client, channel, summaries):
     history (see _select_current_view_window) -- fed the already-distilled
     per-video fields, not the video itself. Returns (view_dict|None, in_tok,
     out_tok); None if there is nothing to synthesize from or the call fails."""
-    window = _select_current_view_window(summaries)
+    window = channel.select_current_view_window(summaries)
     if not window:
         return None, 0, 0
     entries = "\n".join(_current_view_entry_text(r) for r in reversed(window))
@@ -684,6 +697,10 @@ def run_channel(channel, client, args):
     pending.acknowledge(seen - set(args.force or []))
     feed = discover(pending, lambda: fetch_feed(channel), [])
     feed = list({**pending.rows, **{v["video_id"]: v for v in feed}}.values())
+    if channel.recent_uploads is not None and not args.force:
+        feed = sorted(feed, key=lambda v: v.get("published") or "", reverse=True)[:channel.recent_uploads]
+        allowed = {v["video_id"] for v in feed}
+        pending.acknowledge(set(pending.rows) - allowed)
     print(f"Feed: {len(feed)} videos in channel RSS")
 
     if args.force:
@@ -707,7 +724,7 @@ def run_channel(channel, client, args):
     if not todo:
         print("No new videos to process.")
         if not args.dry_run:
-            refresh_current_view(client, channel, summaries, _select_current_view_window, generate_current_view,
+            refresh_current_view(client, channel, summaries, channel.select_current_view_window, generate_current_view,
                                  INPUT_PER_1M, OUTPUT_PER_1M, RUN_COST)
         return
 
@@ -739,7 +756,7 @@ def run_channel(channel, client, args):
     pending.acknowledge(by_id)
     print(f"Wrote {len(merged)} summaries -> {channel.summaries_file}")
 
-    refresh_current_view(client, channel, merged, _select_current_view_window, generate_current_view,
+    refresh_current_view(client, channel, merged, channel.select_current_view_window, generate_current_view,
                                  INPUT_PER_1M, OUTPUT_PER_1M, RUN_COST)
 
 

@@ -4,4 +4,6 @@
 !dashboard.py
 !resolver.py
 !accounts.py
+!evaluation.py
+!signal_semantics.py
 !assets
