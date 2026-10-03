@@ -115,7 +115,8 @@ def test_makeitcount_callback_renders_chapters_and_frames(monkeypatch):
         response = client.post('/_dash-update-component', json=dict(
             output=key, outputs=outputs, inputs=[
                 dict(id='data-version', property='data', value='test'),
-                dict(id='influencer-subtabs', property='value', value='MakeItCount')],
+                dict(id='influencer-subtabs', property='value', value='MakeItCount'),
+                dict(id='signals-commentary', property='value', value=[])],
             state=[], changedPropIds=['influencer-subtabs.value']))
     assert response.status_code == 200
     content = response.get_json()['response']['makeitcount-summaries']['children']

@@ -42,6 +42,7 @@ def event(text, **kwargs):
     ('$TEST Adding another win to the data set.', 'commentary'),
     ('$TEST Still holding at a 80% win rate.', 'commentary'),
     ('$TEST has this covered', 'commentary'),
+    ('Jumped in, price hit target, trade closed for 30%.', 'recap'),
 ])
 def test_classification_uses_execution_evidence(text, kind):
     row = normalize_event(event(text, entry_status='confirmed', position_action='hold', side='long'))
@@ -109,6 +110,13 @@ def test_watchlist_addition_with_model_action_none_is_retained_as_a_setup():
     row = monitor.build_signal('traderstewie', dict(id='1', text=text, created_at='2026-01-05T12:00:00Z'), interp)
     assert row['event_kind'] == 'setup' and row['entry_status'] == 'setup'
     assert row['execution_evidence'] is None and not row['actionable']
+
+
+@pytest.mark.parametrize('raw,ticker', [
+    ('FETUSDT', 'FET'), ('$btc/usd', 'BTC'), ('ETHUSD', 'ETH'), ('USDT', 'USDT'),
+    ('SUSD', 'SUSD'), ('HOOD', 'HOOD')])
+def test_exchange_pairs_name_their_base_coin(raw, ticker):
+    assert normalize_event(dict(event('$X'), tickers=[raw]))['tickers'] == [ticker]
 
 
 def test_recaps_cannot_close_a_position_and_setups_cannot_rewrite_levels():
@@ -262,3 +270,14 @@ def test_short_interest_and_short_term_do_not_invert_a_bullish_idea(text):
 def test_own_thread_chatter_cannot_inherit_an_old_setup(text, expected):
     row = normalize_event(event(text, event_kind='setup', thread_context=dict(tickers=['TEST'])))
     assert row['event_kind'] == expected and not row['actionable']
+
+
+def test_running_window_reports_its_entry_open_but_no_entry_date():
+    pos = dict(asset_type='stock', published_at='2026-09-28T22:00:00Z')
+    hist = pd.DataFrame([{'Open': 10, 'High': 11, 'Low': 9, 'Close': 10.5}], index=['2026-09-29'])
+    now = datetime(2026, 9, 29, 15, 0, tzinfo=timezone.utc)      # 11:00 New York
+    assert evaluation.replay(pos, hist, now=now) == {
+        'status': 'pending', 'completed_sessions': 0,
+        'started_date': '2026-09-29', 'started_price': 10.0}
+    assert evaluation.replay(pos, hist, now=datetime(2026, 9, 29, 12, 0, tzinfo=timezone.utc)) == {
+        'status': 'pending', 'completed_sessions': 0}            # before the open

@@ -45,11 +45,13 @@ def replay(position, ohlc, *, observed=False, benchmark=None, now=None,
         return {"status": "unpriced"}
     now = now or datetime.now(timezone.utc)
     atype = position.get("asset_type") or "stock"
-    bars = []
+    bars, started = [], None
     for day, row in ohlc.sort_index().iterrows():
         opened = session_open(day, atype)
         if opened <= dt:
             continue
+        if started is None and opened <= now:
+            started = (str(day)[:10], row.get("Open"))
         complete_at = opened + (timedelta(days=1) if atype == "crypto" else timedelta(hours=6, minutes=30))
         if complete_at > now:
             continue
@@ -60,7 +62,12 @@ def replay(position, ohlc, *, observed=False, benchmark=None, now=None,
         if len(bars) == horizon:
             break
     if len(bars) < horizon:
-        return {"status": "pending", "completed_sessions": len(bars)}
+        # The entry open of a window still running (not entry_date: that key
+        # marks a finished window for deduplicate_replays).
+        pending = {"status": "pending", "completed_sessions": len(bars)}
+        if started and started[1] == started[1] and started[1] and started[1] > 0:
+            pending.update(started_date=started[0], started_price=float(started[1]))
+        return pending
     entry_day, entry_bar = bars[0]
     exit_day, exit_bar = bars[-1]
     entry = float(entry_bar["Open"])

@@ -13,7 +13,9 @@ NON_TRADEABLE_TICKERS = {
     "GOLD", "SILVER", "BTCDOMINANCE", "BTC.D", "ETH.D", "USDT.D", "TOTAL", "TOTAL2", "TOTAL3",
 }
 _ACTION = {"entry": "open", "add": "add", "trim": "reduce", "exit": "close", "holding": "hold", "setup": "open"}
-_RECAP = re.compile(r"\btop picks?\b.*\b(?:ytd|week\s*\d+|results?|performance|strategy)\b|\b(?:educational post|trade review)\b.*\b(?:we did|we traded|yesterday|today|this week)\b", re.I | re.S)
+_RECAP = re.compile(r"\btop picks?\b.*\b(?:ytd|week\s*\d+|results?|performance|strategy)\b|\b(?:educational post|trade review)\b.*\b(?:we did|we traded|yesterday|today|this week)\b"
+                    # "jumped in, price hit target, trade closed for 30%"
+                    r"|\b(?:trade|position)\s+closed\s+for\s+(?:a\s+)?[+-]?\d", re.I | re.S)
 _BUY = re.compile(r"\b(?:bought|purchased|entered|initiated|re-?entered|shorted|buying|shorting|added|adding)\b", re.I)
 _SELL = re.compile(r"\b(?:sold|exited|trimmed|reduced|covered|stopped out|stopping out)\b|\bclosed\s+(?:(?:the|my|our|this|a)\s+)?(?:position|trade|it|one|out|early myself)\b|\btook\s+(?:(?:all|some|partial)\s+)?(?:gains|profits)\b|\bbooked\s+(?:gains|profits|the trade|this one)\b|\b(?:took|taking) a loss\b", re.I)
 _HOLD = re.compile(r"\bstill holding(?=\s*(?:[.!?;\n]|$|(?:this|it|them|\$)))|\b(?:i|we)(?:'m| am| are)?\s+(?:holding|long|short)\b|\bmy position\b|\bour position\b", re.I)
@@ -23,7 +25,13 @@ _CONDITIONAL = re.compile(r"\b(?:if|would|could|should|might|will|can|may|prefer
 
 
 def clean_ticker(ticker):
-    return ticker.strip().lstrip("$").upper() if isinstance(ticker, str) else ""
+    """'$fet' -> 'FET'; an exchange pair names its base coin (FETUSDT, BTC/USD,
+    ETHUSD -> FET, BTC, ETH), else Yahoo prices a symbol that does not exist."""
+    if not isinstance(ticker, str):
+        return ""
+    t = ticker.strip().lstrip("$").upper()
+    pair = re.fullmatch(r"([A-Z0-9]{2,10}?)/?USDT?", t)
+    return pair.group(1) if pair else t
 
 
 def is_junk_ticker(ticker):
